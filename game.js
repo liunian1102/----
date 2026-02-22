@@ -61,14 +61,20 @@ class Game {
         this.canvas.addEventListener('click', (e) => {
             if (this.showingPotentialMenu || this.showingClassSelection) {
                 const rect = this.canvas.getBoundingClientRect();
-                const mouseX = e.clientX - rect.left;
-                const mouseY = e.clientY - rect.top;
+                // 计算点击坐标，考虑canvas的实际尺寸与显示尺寸的比例
+                const scaleX = this.canvas.width / rect.width;
+                const scaleY = this.canvas.height / rect.height;
+                const mouseX = (e.clientX - rect.left) * scaleX;
+                const mouseY = (e.clientY - rect.top) * scaleY;
                 this.checkButtonClick(mouseX, mouseY);
             } else {
                 // 点击地图控制角色移动
                 const rect = this.canvas.getBoundingClientRect();
-                const clickX = e.clientX - rect.left;
-                const clickY = e.clientY - rect.top;
+                // 计算点击坐标，考虑canvas的实际尺寸与显示尺寸的比例
+                const scaleX = this.canvas.width / rect.width;
+                const scaleY = this.canvas.height / rect.height;
+                const clickX = (e.clientX - rect.left) * scaleX;
+                const clickY = (e.clientY - rect.top) * scaleY;
                 this.setPlayerTarget(clickX, clickY);
             }
         });
@@ -79,8 +85,13 @@ class Game {
             if (!this.showingPotentialMenu && !this.showingClassSelection) {
                 const rect = this.canvas.getBoundingClientRect();
                 const touch = e.touches[0];
-                const clickX = touch.clientX - rect.left;
-                const clickY = touch.clientY - rect.top;
+                
+                // 计算触摸坐标，考虑canvas的实际尺寸与显示尺寸的比例
+                const scaleX = this.canvas.width / rect.width;
+                const scaleY = this.canvas.height / rect.height;
+                const clickX = (touch.clientX - rect.left) * scaleX;
+                const clickY = (touch.clientY - rect.top) * scaleY;
+                
                 this.setPlayerTarget(clickX, clickY);
             }
         });
