@@ -82,7 +82,16 @@ class Game {
         // 添加触摸事件监听
         this.canvas.addEventListener('touchstart', (e) => {
             e.preventDefault();
-            if (!this.showingPotentialMenu && !this.showingClassSelection) {
+            if (this.showingPotentialMenu || this.showingClassSelection) {
+                const rect = this.canvas.getBoundingClientRect();
+                const touch = e.touches[0];
+                // 计算触摸坐标，考虑canvas的实际尺寸与显示尺寸的比例
+                const scaleX = this.canvas.width / rect.width;
+                const scaleY = this.canvas.height / rect.height;
+                const touchX = (touch.clientX - rect.left) * scaleX;
+                const touchY = (touch.clientY - rect.top) * scaleY;
+                this.checkButtonClick(touchX, touchY);
+            } else {
                 const rect = this.canvas.getBoundingClientRect();
                 const touch = e.touches[0];
                 
@@ -604,19 +613,24 @@ class Game {
             this.ctx.fillStyle = 'rgba(0, 0, 0, 0.8)';
             this.ctx.fillRect(0, 0, this.width, this.height);
             
+            // 根据屏幕尺寸调整字体大小
+            const titleFontSize = Math.min(30, this.width * 0.07);
+            const subtitleFontSize = Math.min(20, this.width * 0.05);
+            const descFontSize = Math.min(16, this.width * 0.04);
+            
             // 绘制菜单标题
             this.ctx.fillStyle = '#ffffff';
-            this.ctx.font = '30px Arial';
+            this.ctx.font = titleFontSize + 'px Arial';
             this.ctx.textAlign = 'center';
-            this.ctx.fillText('恭喜达到等级3！', this.width / 2, 100);
-            this.ctx.font = '20px Arial';
-            this.ctx.fillText('请选择你的职业：', this.width / 2, 140);
+            this.ctx.fillText('恭喜达到等级3！', this.width / 2, this.height * 0.2);
+            this.ctx.font = subtitleFontSize + 'px Arial';
+            this.ctx.fillText('请选择你的职业：', this.width / 2, this.height * 0.28);
             
-            // 绘制职业选择按钮
-            const buttonWidth = 200;
-            const buttonHeight = 60;
-            const buttonY = 200;
-            const buttonSpacing = 40;
+            // 根据屏幕尺寸调整按钮大小和位置
+            const buttonWidth = Math.min(200, this.width * 0.45);
+            const buttonHeight = Math.max(60, Math.min(80, this.height * 0.12));
+            const buttonY = this.height * 0.4;
+            const buttonSpacing = Math.min(40, this.width * 0.05);
             
             // 战士按钮
             this.drawButton(this.width / 2 - buttonWidth - buttonSpacing / 2, buttonY, buttonWidth, buttonHeight, '#ff6b6b', '战士 - 舍命一击', 1);
@@ -625,7 +639,7 @@ class Game {
             this.drawButton(this.width / 2 + buttonSpacing / 2, buttonY, buttonWidth, buttonHeight, '#4ecdc4', '法师 - 魔法弹', 2);
             
             // 绘制职业描述
-            this.ctx.font = '16px Arial';
+            this.ctx.font = descFontSize + 'px Arial';
             this.ctx.fillText('战士：牺牲10%生命，对范围内敌人造成伤害', this.width / 2 - buttonWidth - buttonSpacing / 2, buttonY + buttonHeight + 20);
             this.ctx.fillText('法师：消耗1法力，发射魔法弹攻击敌人', this.width / 2 + buttonSpacing / 2, buttonY + buttonHeight + 20);
         }
@@ -696,28 +710,33 @@ class Game {
             this.ctx.fillStyle = 'rgba(0, 0, 0, 0.8)';
             this.ctx.fillRect(0, 0, this.width, this.height);
             
+            // 根据屏幕尺寸调整字体大小
+            const titleFontSize = Math.min(30, this.width * 0.07);
+            const subtitleFontSize = Math.min(20, this.width * 0.05);
+            const descFontSize = Math.min(16, this.width * 0.04);
+            
             // 绘制菜单标题
             this.ctx.fillStyle = '#ffffff';
-            this.ctx.font = '30px Arial';
+            this.ctx.font = titleFontSize + 'px Arial';
             this.ctx.textAlign = 'center';
-            this.ctx.fillText('恭喜升级！', this.width / 2, 100);
-            this.ctx.font = '20px Arial';
-            this.ctx.fillText(`获得1点潜能点`, this.width / 2, 140);
-            this.ctx.fillText(`当前潜能点: ${this.player.potentialPoints}`, this.width / 2, 180);
+            this.ctx.fillText('恭喜升级！', this.width / 2, this.height * 0.15);
+            this.ctx.font = subtitleFontSize + 'px Arial';
+            this.ctx.fillText(`获得1点潜能点`, this.width / 2, this.height * 0.22);
+            this.ctx.fillText(`当前潜能点: ${this.player.potentialPoints}`, this.width / 2, this.height * 0.29);
             
             // 绘制当前属性
-            this.ctx.font = '16px Arial';
-            this.ctx.fillText(`当前属性:`, this.width / 2, 220);
-            this.ctx.fillText(`攻击力: ${this.player.attack}`, this.width / 2 - 100, 250);
-            this.ctx.fillText(`防御力: ${this.player.defense}`, this.width / 2 + 100, 250);
-            this.ctx.fillText(`最大生命值: ${this.player.maxHealth}`, this.width / 2 - 100, 280);
-            this.ctx.fillText(`速度: ${this.player.speed.toFixed(1)}`, this.width / 2 + 100, 280);
+            this.ctx.font = descFontSize + 'px Arial';
+            this.ctx.fillText(`当前属性:`, this.width / 2, this.height * 0.36);
+            this.ctx.fillText(`攻击力: ${this.player.attack}`, this.width / 2 - this.width * 0.25, this.height * 0.42);
+            this.ctx.fillText(`防御力: ${this.player.defense}`, this.width / 2 + this.width * 0.25, this.height * 0.42);
+            this.ctx.fillText(`最大生命值: ${this.player.maxHealth}`, this.width / 2 - this.width * 0.25, this.height * 0.48);
+            this.ctx.fillText(`速度: ${this.player.speed.toFixed(1)}`, this.width / 2 + this.width * 0.25, this.height * 0.48);
             
-            // 绘制选择按钮
-            const buttonWidth = 150;
-            const buttonHeight = 50;
-            const buttonY = 330;
-            const buttonSpacing = 20;
+            // 根据屏幕尺寸调整按钮大小和位置
+            const buttonWidth = Math.min(150, this.width * 0.4);
+            const buttonHeight = Math.max(50, Math.min(60, this.height * 0.1));
+            const buttonY = this.height * 0.55;
+            const buttonSpacing = Math.min(20, this.width * 0.05);
             
             // 攻击力按钮
             this.drawButton(this.width / 2 - buttonWidth - buttonSpacing / 2, buttonY, buttonWidth, buttonHeight, '#ff6b6b', '攻击力 (+5)', 1);
