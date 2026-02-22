@@ -1,0 +1,80 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>方块快跑</title>
+    <link rel="stylesheet" href="style.css">
+</head>
+<body>
+    <div class="game-container">
+        <h1>方块快跑</h1>
+        <canvas id="gameCanvas" width="800" height="600"></canvas>
+        <div class="game-info">
+            <div class="info-item">
+                <span>生命:</span>
+                <span id="life">3</span>
+            </div>
+            <div class="info-item">
+                <span>等级:</span>
+                <span id="level">1</span>
+            </div>
+            <div class="info-item">
+                <span>经验:</span>
+                <span id="exp">0</span>/<span id="expToNext">100</span>
+            </div>
+            <div class="info-item">
+                <span>潜能点:</span>
+                <span id="potentialPoints">0</span>
+            </div>
+            <div class="info-item">
+                <span>攻击力:</span>
+                <span id="attack">20</span>
+            </div>
+            <div class="info-item">
+                <span>防御力:</span>
+                <span id="defense">10</span>
+            </div>
+            <div class="info-item">
+                <span>最大生命值:</span>
+                <span id="maxHealth">100</span>
+            </div>
+            <div class="info-item">
+                <span>速度:</span>
+                <span id="speed">5</span>
+            </div>
+            <div class="info-item">
+                <span>职业:</span>
+                <span id="class">无</span>
+            </div>
+            <div class="info-item">
+                <span>技能CD:</span>
+                <span id="skillCooldown">0</span>s
+            </div>
+            <div class="info-item">
+                <span>法力值:</span>
+                <span id="mana">0</span>/<span id="maxMana">0</span>
+            </div>
+            <div class="info-item">
+                <span>时间:</span>
+                <span id="time">0</span>s
+            </div>
+            <div class="info-item">
+                <span>分数:</span>
+                <span id="score">0</span>
+            </div>
+        </div>
+        <div class="game-controls">
+            <button id="startBtn">开始游戏</button>
+            <button id="pauseBtn">暂停</button>
+        </div>
+        <div id="gameOver" class="game-over">
+            <h2>游戏结束</h2>
+            <p>生存时间: <span id="finalTime">0</span>秒</p>
+            <p>最终分数: <span id="finalScore">0</span></p>
+            <button id="restartBtn">重新开始</button>
+        </div>
+    </div>
+    <script src="game.js"></script>
+</body>
+</html>
