@@ -113,6 +113,8 @@ button:active {
     padding: 15px 30px;
 }
 
+/* 虚拟控制按钮样式已移除，改为点击地图控制移动 */
+
 @media (max-width: 768px) {
     .game-container {
         width: 90%;
@@ -132,4 +134,8 @@ button:active {
         font-size: 0.9em;
         padding: 8px 12px;
     }
+}
+
+@media (max-width: 480px) {
+    /* 响应式调整已简化，移除了虚拟按钮相关样式 */
 }

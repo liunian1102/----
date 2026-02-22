@@ -34,6 +34,10 @@ class Game {
     
     bindEvents() {
         document.addEventListener('keydown', (e) => {
+            // 防止空格键导致页面翻页
+            if (e.key === ' ') {
+                e.preventDefault();
+            }
             this.keys[e.key] = true;
         });
         
@@ -60,8 +64,33 @@ class Game {
                 const mouseX = e.clientX - rect.left;
                 const mouseY = e.clientY - rect.top;
                 this.checkButtonClick(mouseX, mouseY);
+            } else {
+                // 点击地图控制角色移动
+                const rect = this.canvas.getBoundingClientRect();
+                const clickX = e.clientX - rect.left;
+                const clickY = e.clientY - rect.top;
+                this.setPlayerTarget(clickX, clickY);
             }
         });
+        
+        // 添加触摸事件监听
+        this.canvas.addEventListener('touchstart', (e) => {
+            e.preventDefault();
+            if (!this.showingPotentialMenu && !this.showingClassSelection) {
+                const rect = this.canvas.getBoundingClientRect();
+                const touch = e.touches[0];
+                const clickX = touch.clientX - rect.left;
+                const clickY = touch.clientY - rect.top;
+                this.setPlayerTarget(clickX, clickY);
+            }
+        });
+    }
+    
+    setPlayerTarget(x, y) {
+        // 设置玩家的目标位置
+        this.player.targetX = x;
+        this.player.targetY = y;
+        this.player.moving = true;
     }
     
     startGame() {
@@ -848,20 +877,59 @@ class Player {
         this.mana = 10; // 法力值
         this.maxMana = 10; // 最大法力值
         this.manaRegen = 0.1; // 每秒法力回复
+        
+        // 点击移动相关属性
+        this.targetX = null;
+        this.targetY = null;
+        this.moving = false;
     }
     
     update(keys, width, height) {
+        // 键盘控制
         if (keys['ArrowUp'] || keys['w']) {
             this.y = Math.max(0, this.y - this.speed);
+            // 重置目标位置，优先键盘控制
+            this.moving = false;
+            this.targetX = null;
+            this.targetY = null;
         }
         if (keys['ArrowDown'] || keys['s']) {
             this.y = Math.min(height - this.size, this.y + this.speed);
+            this.moving = false;
+            this.targetX = null;
+            this.targetY = null;
         }
         if (keys['ArrowLeft'] || keys['a']) {
             this.x = Math.max(0, this.x - this.speed);
+            this.moving = false;
+            this.targetX = null;
+            this.targetY = null;
         }
         if (keys['ArrowRight'] || keys['d']) {
             this.x = Math.min(width - this.size, this.x + this.speed);
+            this.moving = false;
+            this.targetX = null;
+            this.targetY = null;
+        }
+        
+        // 点击移动
+        if (this.moving && this.targetX !== null && this.targetY !== null) {
+            const dx = this.targetX - (this.x + this.size / 2);
+            const dy = this.targetY - (this.y + this.size / 2);
+            const distance = Math.sqrt(dx * dx + dy * dy);
+            
+            if (distance > 5) { // 到达目标附近时停止
+                const moveX = (dx / distance) * this.speed;
+                const moveY = (dy / distance) * this.speed;
+                
+                // 边界检查
+                this.x = Math.max(0, Math.min(width - this.size, this.x + moveX));
+                this.y = Math.max(0, Math.min(height - this.size, this.y + moveY));
+            } else {
+                this.moving = false;
+                this.targetX = null;
+                this.targetY = null;
+            }
         }
         
         // 更新职业相关逻辑
