@@ -9,7 +9,8 @@ class Game {
         this.enemies = [];
         this.items = [];
         this.projectiles = [];
-        
+        this.effects = [];
+
         this.keys = {};
         this.gameLoop = null;
         this.isRunning = false;
@@ -22,7 +23,11 @@ class Game {
         this.score = 0;
         this.gameTime = 0;
         this.difficulty = 1;
-        
+
+        this.enemyFreezeTimer = 0;
+        this.autoAttackTimer = 0;
+        this.autoAttackInterval = 0.6;
+
         this.init();
     }
     
@@ -136,6 +141,7 @@ class Game {
         this.enemies = [];
         this.items = [];
         this.projectiles = [];
+        this.effects = [];
         this.keys = {};
         this.isRunning = false;
         this.isPaused = false;
@@ -146,6 +152,10 @@ class Game {
         this.score = 0;
         this.gameTime = 0;
         this.difficulty = 1;
+        this.enemyFreezeTimer = 0;
+        this.autoAttackTimer = 0;
+        this.showingPotentialMenu = false;
+        this.showingClassSelection = false;
         document.getElementById('gameOver').style.display = 'none';
         this.updateUI();
         this.render();
@@ -154,8 +164,20 @@ class Game {
     update() {
         if (!this.isPaused) {
             this.gameTime += 0.016;
-            this.difficulty = 1 + this.gameTime / 60;
-            
+            // 难度更平缓且封顶，避免后期速度碾压必死
+            this.difficulty = Math.min(4, 1 + this.gameTime / 90);
+
+            // 计时器随暂停一起停（按帧推进，不再用 setTimeout）
+            if (this.enemyFreezeTimer > 0) this.enemyFreezeTimer -= 0.016;
+            this.updateInvincible();
+
+            // 基础自动攻击：朝最近敌人发射，无职业/前期也有输出
+            this.autoAttackTimer -= 0.016;
+            if (this.autoAttackTimer <= 0 && this.enemies.length > 0) {
+                this.shoot();
+                this.autoAttackTimer = this.autoAttackInterval;
+            }
+
             // 检查空格键使用技能
             if (this.keys[' '] && this.player.class) {
                 if (this.player.class === 'warrior') {
@@ -171,6 +193,7 @@ class Game {
             this.updateEnemies();
             this.updateItems();
             this.updateProjectiles();
+            this.updateEffects();
             this.checkCollisions();
             this.spawnEnemies();
             this.spawnItems();
@@ -185,7 +208,9 @@ class Game {
     
     updateEnemies() {
         for (let i = this.enemies.length - 1; i >= 0; i--) {
-            this.enemies[i].update(this.player.x, this.player.y, this.width, this.height);
+            if (this.enemyFreezeTimer <= 0) {
+                this.enemies[i].update(this.player.x, this.player.y, this.width, this.height);
+            }
             if (this.enemies[i].currentHealth <= 0) {
                 this.score += 10;
                 this.exp += 5;
@@ -217,8 +242,11 @@ class Game {
     checkCollisions() {
         for (let i = this.enemies.length - 1; i >= 0; i--) {
             if (this.checkCollision(this.player, this.enemies[i])) {
-                // 双方互相伤害
-                this.player.takeDamage(this.enemies[i].attack);
+                // 受击无敌帧：冷却期内不再结算玩家受伤，避免重叠时血量瞬间被掏空
+                if (this.player.hurtCooldown <= 0) {
+                    this.player.takeDamage(this.enemies[i].attack);
+                    this.player.hurtCooldown = 0.6;
+                }
                 this.enemies[i].takeDamage(this.player.attack);
                 
                 // 简单的碰撞后分离，避免持续碰撞
@@ -253,10 +281,11 @@ class Game {
                 if (this.player.currentHealth <= 0) {
                     this.life--;
                     if (this.life > 0) {
-                        // 重置玩家位置和状态
+                        // 重置玩家位置和状态，复活后给一小段无敌避免连死
                         this.player.x = this.width / 2;
                         this.player.y = this.height / 2;
                         this.player.currentHealth = this.player.maxHealth;
+                        this.player.hurtCooldown = 1.5;
                     }
                 }
                 
@@ -278,19 +307,23 @@ class Game {
         }
         
         for (let i = this.projectiles.length - 1; i >= 0; i--) {
+            let hit = false;
             for (let j = this.enemies.length - 1; j >= 0; j--) {
                 if (this.checkCollision(this.projectiles[i], this.enemies[j])) {
-                    if (this.projectiles[i] instanceof MagicProjectile) {
-                        // 魔法弹伤害
-                        this.enemies[j].takeDamage(this.projectiles[i].damage);
-                    } else {
-                        // 普通子弹伤害
-                        this.enemies[j].takeDamage(15);
+                    const dmg = this.projectiles[i].damage != null ? this.projectiles[i].damage : 15;
+                    this.enemies[j].takeDamage(dmg);
+                    // 投射物击杀立即结算，不再依赖下一帧 updateEnemies
+                    if (this.enemies[j].currentHealth <= 0) {
+                        this.score += 10;
+                        this.exp += 5;
+                        this.checkLevelUp();
+                        this.enemies.splice(j, 1);
                     }
-                    this.projectiles.splice(i, 1);
+                    hit = true;
                     break;
                 }
             }
+            if (hit) this.projectiles.splice(i, 1);
         }
     }
     
@@ -369,31 +402,25 @@ class Game {
     }
     
     freezeEnemies(duration) {
-        for (let enemy of this.enemies) {
-            enemy.isFrozen = true;
-            // 保存原始速度
-            if (!enemy.originalSpeed) {
-                enemy.originalSpeed = enemy.speed;
-            }
-            enemy.speed = 0;
-            
-            // 一段时间后恢复
-            setTimeout(() => {
-                if (enemy) {
-                    enemy.isFrozen = false;
-                    enemy.speed = enemy.originalSpeed || 2;
-                }
-            }, duration);
+        // 按帧计时，暂停时一起停，且对定身期间新刷出的敌人同样生效
+        this.enemyFreezeTimer = duration / 1000;
+    }
+
+    addEffect(x, y, radius, color, duration) {
+        this.effects.push({ x, y, radius, color, ttl: duration, maxTtl: duration });
+    }
+
+    updateEffects() {
+        for (let i = this.effects.length - 1; i >= 0; i--) {
+            this.effects[i].ttl -= 0.016;
+            if (this.effects[i].ttl <= 0) this.effects.splice(i, 1);
         }
     }
     
     explodeBomb(x, y, radius) {
-        // 绘制爆炸效果
-        this.ctx.fillStyle = 'rgba(255, 165, 0, 0.8)';
-        this.ctx.beginPath();
-        this.ctx.arc(x, y, radius, 0, Math.PI * 2);
-        this.ctx.fill();
-        
+        // 特效交给 render 绘制（在 update 阶段直接画会被随后的 clearRect 抹掉）
+        this.addEffect(x + this.player.size / 2, y + this.player.size / 2, radius, '#ffa500', 0.45);
+
         // 检查并秒杀范围内的敌人
         for (let i = this.enemies.length - 1; i >= 0; i--) {
             const enemy = this.enemies[i];
@@ -412,32 +439,34 @@ class Game {
     }
     
     activateInvincible(duration) {
-        // 保存原始属性
-        if (!this.player.originalSize) {
-            this.player.originalSize = this.player.size;
+        // 已在无敌中则只续时，避免叠加翻倍
+        if (this.player.invincibleTimer > 0) {
+            this.player.invincibleTimer = duration / 1000;
+            return;
         }
-        if (!this.player.originalAttack) {
-            this.player.originalAttack = this.player.attack;
-        }
-        if (!this.player.originalDefense) {
-            this.player.originalDefense = this.player.defense;
-        }
-        
-        // 应用无敌效果
-        this.player.size = this.player.originalSize * 2;
-        this.player.attack = this.player.originalAttack * 2;
-        this.player.defense = this.player.originalDefense * 2;
-        this.player.color = '#ffeb3b'; // 变色效果
-        
-        // 一段时间后恢复
-        setTimeout(() => {
-            if (this.player) {
-                this.player.size = this.player.originalSize;
-                this.player.attack = this.player.originalAttack;
-                this.player.defense = this.player.originalDefense;
-                this.player.color = '#4CAF50'; // 恢复原始颜色
+        // 记录当前属性为基准（含已加点），还原时按基准恢复
+        this.player.baseSize = this.player.size;
+        this.player.baseAttack = this.player.attack;
+        this.player.baseDefense = this.player.defense;
+
+        this.player.size = this.player.baseSize * 2;
+        this.player.attack = this.player.baseAttack * 2;
+        this.player.defense = this.player.baseDefense * 2;
+        this.player.color = '#ffeb3b';
+        this.player.invincibleTimer = duration / 1000;
+    }
+
+    updateInvincible() {
+        if (this.player.invincibleTimer > 0) {
+            this.player.invincibleTimer -= 0.016;
+            if (this.player.invincibleTimer <= 0) {
+                this.player.invincibleTimer = 0;
+                this.player.size = this.player.baseSize;
+                this.player.attack = this.player.baseAttack;
+                this.player.defense = this.player.baseDefense;
+                this.player.color = '#4CAF50';
             }
-        }, duration);
+        }
     }
     
     warriorSkill() {
@@ -485,22 +514,11 @@ class Game {
             }
         }
         
-        // 显示技能效果
-        this.showSkillEffect(this.player.x, this.player.y, skillRange, '#ff6b6b');
-        
+        // 显示技能效果（交给 render 绘制并淡出）
+        this.addEffect(this.player.x + this.player.size / 2, this.player.y + this.player.size / 2, skillRange, '#ff6b6b', 0.4);
+
         // 设置技能冷却
         this.player.skillCooldown = this.player.maxSkillCooldown;
-    }
-    
-    showSkillEffect(x, y, radius, color) {
-        // 绘制技能效果
-        const originalAlpha = this.ctx.globalAlpha;
-        this.ctx.globalAlpha = 0.6;
-        this.ctx.fillStyle = color;
-        this.ctx.beginPath();
-        this.ctx.arc(x + this.player.size / 2, y + this.player.size / 2, radius, 0, Math.PI * 2);
-        this.ctx.fill();
-        this.ctx.globalAlpha = originalAlpha;
     }
     
     mageSkill() {
@@ -558,20 +576,33 @@ class Game {
     }
     
     shoot() {
-        const directions = [
-            { dx: this.player.speed * 2, dy: 0 },
-            { dx: -this.player.speed * 2, dy: 0 },
-            { dx: 0, dy: this.player.speed * 2 },
-            { dx: 0, dy: -this.player.speed * 2 }
-        ];
-        
-        for (let dir of directions) {
-            this.projectiles.push(new Projectile(
-                this.player.x + this.player.size / 2 - 5,
-                this.player.y + this.player.size / 2 - 5,
-                dir.dx, dir.dy
-            ));
+        // 锁定最近敌人发射一发普通弹，伤害随攻击力成长
+        let closest = null;
+        let closestDist = Infinity;
+        for (let enemy of this.enemies) {
+            const dx = enemy.x - this.player.x;
+            const dy = enemy.y - this.player.y;
+            const d = dx * dx + dy * dy;
+            if (d < closestDist) {
+                closestDist = d;
+                closest = enemy;
+            }
         }
+        if (!closest) return;
+
+        const cx = this.player.x + this.player.size / 2;
+        const cy = this.player.y + this.player.size / 2;
+        const dx = closest.x + closest.size / 2 - cx;
+        const dy = closest.y + closest.size / 2 - cy;
+        const dist = Math.sqrt(dx * dx + dy * dy);
+        if (dist <= 0) return;
+
+        const speed = 7;
+        this.projectiles.push(new Projectile(
+            cx - 5, cy - 5,
+            (dx / dist) * speed, (dy / dist) * speed,
+            this.player.attack
+        ));
     }
     
     checkLevelUp() {
@@ -609,6 +640,8 @@ class Game {
     
     renderClassSelection() {
         if (this.showingClassSelection) {
+            // 每帧重建按钮命中区，避免暂停期间无限累积
+            this.buttons = [];
             // 绘制半透明背景
             this.ctx.fillStyle = 'rgba(0, 0, 0, 0.8)';
             this.ctx.fillRect(0, 0, this.width, this.height);
@@ -657,7 +690,12 @@ class Game {
         }
         
         this.showingClassSelection = false;
-        this.isPaused = false;
+        // 3 级这一次升级同样发了潜能点，选完职业接着弹分配菜单，避免被吞
+        if (this.player.potentialPoints > 0) {
+            this.showPotentialMenu();
+        } else {
+            this.isPaused = false;
+        }
         this.updateUI();
     }
     
@@ -706,6 +744,8 @@ class Game {
     
     renderPotentialMenu() {
         if (this.showingPotentialMenu) {
+            // 每帧重建按钮命中区，避免暂停期间无限累积
+            this.buttons = [];
             // 绘制半透明背景
             this.ctx.fillStyle = 'rgba(0, 0, 0, 0.8)';
             this.ctx.fillRect(0, 0, this.width, this.height);
@@ -873,7 +913,19 @@ class Game {
         for (let projectile of this.projectiles) {
             projectile.render(this.ctx);
         }
-        
+
+        // 爆炸/技能特效（带淡出），最后再叠到画面上
+        for (let fx of this.effects) {
+            const alpha = Math.max(0, fx.ttl / fx.maxTtl);
+            this.ctx.save();
+            this.ctx.globalAlpha = alpha * 0.6;
+            this.ctx.fillStyle = fx.color;
+            this.ctx.beginPath();
+            this.ctx.arc(fx.x, fx.y, fx.radius, 0, Math.PI * 2);
+            this.ctx.fill();
+            this.ctx.restore();
+        }
+
         // 渲染职业选择界面
         if (this.showingClassSelection) {
             this.renderClassSelection();
@@ -906,8 +958,12 @@ class Player {
         // 法师相关属性
         this.mana = 10; // 法力值
         this.maxMana = 10; // 最大法力值
-        this.manaRegen = 0.1; // 每秒法力回复
-        
+        this.manaRegen = 1; // 每秒法力回复（约1法力/秒，法师可持续输出）
+
+        // 受击无敌帧 / 无敌药水计时（秒）
+        this.hurtCooldown = 0;
+        this.invincibleTimer = 0;
+
         // 点击移动相关属性
         this.targetX = null;
         this.targetY = null;
@@ -962,6 +1018,12 @@ class Player {
             }
         }
         
+        // 受击无敌帧倒计时
+        if (this.hurtCooldown > 0) {
+            this.hurtCooldown -= 0.016;
+            if (this.hurtCooldown < 0) this.hurtCooldown = 0;
+        }
+
         // 更新职业相关逻辑
         this.updateClass();
     }
@@ -1016,17 +1078,22 @@ class Player {
     }
     
     render(ctx) {
+        // 受击无敌帧期间闪烁提示
+        const flicker = this.hurtCooldown > 0 && Math.floor(this.hurtCooldown * 20) % 2 === 0;
+        ctx.save();
+        ctx.globalAlpha = flicker ? 0.35 : 1;
         ctx.fillStyle = this.color;
         ctx.fillRect(this.x, this.y, this.size, this.size);
         ctx.strokeStyle = '#333';
         ctx.lineWidth = 2;
         ctx.strokeRect(this.x, this.y, this.size, this.size);
-        
-        // 绘制生命值条
+        ctx.restore();
+
+        // 绘制生命值条（始终不透明便于读数）
         const healthBarWidth = this.size;
         const healthBarHeight = 4;
         const healthPercentage = this.currentHealth / this.maxHealth;
-        
+
         ctx.fillStyle = '#ff4444';
         ctx.fillRect(this.x, this.y - 10, healthBarWidth, healthBarHeight);
         ctx.fillStyle = '#44ff44';
@@ -1319,13 +1386,14 @@ class Item {
 }
 
 class Projectile {
-    constructor(x, y, dx, dy) {
+    constructor(x, y, dx, dy, damage = 15) {
         this.x = x;
         this.y = y;
         this.size = 10;
         this.dx = dx;
         this.dy = dy;
         this.color = '#ff9800';
+        this.damage = damage;
     }
     
     update() {
