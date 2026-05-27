@@ -89,6 +89,8 @@ class Game {
         this.boss = null;
         this.screenShake = 0;
         this._lastBossWarnSec = 0;
+
+        this.init();
     }
 
     _buildTalentDefs() {
