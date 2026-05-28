@@ -1,3 +1,28 @@
+const DT = 16 / 1000; // 单帧时长(秒),与 setInterval(16ms) 对应
+
+// 职业 Q/E 技能基础冷却(秒),职业选择 + 技能升级天赋共用
+const CLASS_BASE_CD = {
+    warrior:  { q: 3, e: 5  },
+    mage:     { q: 1, e: 8  },
+    assassin: { q: 4, e: 6  },
+    archer:   { q: 3, e: 8  },
+    paladin:  { q: 4, e: 12 }
+};
+
+// 选择职业时叠加的基础属性偏移,强化职业特色
+//  - warrior 攻高防低血厚
+//  - archer  攻偏高、防低、自动攻击投射物倍率高
+//  - assassin 移速高
+//  - paladin 防高血厚、攻低
+//  - mage    法力回复加强
+const CLASS_BASE_ADJUST = {
+    warrior:  { attack:  10, defense: -5, maxHealth: 20 },
+    mage:     { manaRegen: 2, maxMana: 10 },
+    archer:   { attack:   8, defense: -5, autoAttackDmgMult: 1.3 },
+    assassin: { speed:  1.5 },
+    paladin:  { defense: 10, attack:  -5, maxHealth: 30 }
+};
+
 function roundRect(ctx, x, y, w, h, r) {
     r = Math.min(r, w / 2, h / 2);
     ctx.beginPath();
@@ -24,18 +49,26 @@ class Game {
         this.enemies = [];
         this.items = [];
         this.projectiles = [];
+        this.enemyBullets = []; // 炮手发射的敌方投射物
         this.effects = [];
         this.particles = [];
 
         this.stars = this._initStars(120);
         this.bgTime = 0;
 
+        this.pendingActions = []; // 帧驱动延迟队列,替代 setTimeout(暂停时一起停)
+        this._uiTimer = 0;        // updateUI 降频累计
+        this.buttons = [];        // 菜单命中区,每帧 render 时重置
+        this.skillButtons = [];   // Q/E 技能按钮命中区,每帧 _renderSkillHUD 时重置
+        this.freezeOverlay = null; // 全屏冰封特效数据
+
         this.keys = {};
-        this.gameLoop = null;
+        this._rafId = null;
         this.isRunning = false;
         this.isPaused = false;
         
-        this.life = 3;
+        this.life = 1;
+        this.maxLife = 3; // 生命上限,可由天赋"传承"扩展
         this.level = 1;
         this.exp = 0;
         this.expToNext = 100;
@@ -80,6 +113,12 @@ class Game {
         this.archerPiercing = 0;
         this.paladinSkillDmgMult = 1;
         this.paladinAuraDurationBonus = 0;
+        // 新职业专属 flag
+        this.bloodRageStacks = 0;      // 战士:血怒叠层
+        this.warriorRavenous = false;  // 战士:嗜血战意
+        this.mageMulticast = false;    // 法师:奥术连击
+        this.mageBloodMagic = false;   // 法师:血魔契约
+        this.archerAutoDmgMult = 1;    // 弓手:普攻投射物倍率
         // 魔王状态重置
         this.bossState = 'idle';
         this.bossTimer = this.bossInterval || 60;
@@ -143,8 +182,7 @@ class Game {
               apply: g => {
                   g.player.skillQ.level = Math.min(3, g.player.skillQ.level + 1);
                   const cdm = g._getCDMultiplier(g.player.skillQ.level);
-                  const baseCDs = { warrior: 3, mage: 1, assassin: 4, archer: 3, paladin: 4 };
-                  const base = baseCDs[g.player.class] || 3;
+                  const base = (CLASS_BASE_CD[g.player.class] || { q: 3 }).q;
                   g.player.skillQ.maxCooldown = base * cdm;
               } },
             { id: 'skillEUp',    name: 'E 技能强化', icon: 'E', color: '#ba68c8', rarity: 'epic',
@@ -153,8 +191,7 @@ class Game {
               apply: g => {
                   g.player.skillE.level = Math.min(3, g.player.skillE.level + 1);
                   const cdm = g._getCDMultiplier(g.player.skillE.level);
-                  const baseCDs = { warrior: 5, mage: 8, assassin: 6, archer: 8, paladin: 12 };
-                  const base = baseCDs[g.player.class] || 5;
+                  const base = (CLASS_BASE_CD[g.player.class] || { e: 5 }).e;
                   g.player.skillE.maxCooldown = base * cdm;
               } },
 
@@ -181,8 +218,8 @@ class Game {
               desc: '最大法力 +10,法力恢复 +1/s', stackable: true, maxStacks: 4,
               applicable: g => g.player.class === 'mage',
               apply: g => { g.player.maxMana += 10; g.player.manaRegen += 1; g.player.mana = g.player.maxMana; } },
-            { id: 'mageFrostMastery', name: '寒冰精通', icon: '❄', color: '#80deea', rarity: 'epic',
-              desc: 'E 冰封新星定身时长 +2 秒', stackable: true, maxStacks: 2,
+            { id: 'mageFrostMastery', name: '斥力精通', icon: '↔', color: '#80deea', rarity: 'epic',
+              desc: 'E 斥力波击退距离 +30% 并附加短暂僵直', stackable: true, maxStacks: 2,
               applicable: g => g.player.class === 'mage',
               apply: g => { g.mageStunBonus = (g.mageStunBonus || 0) + 2; } },
 
@@ -276,7 +313,60 @@ class Game {
               apply: g => { g.player.lifeStealPerKill = (g.player.lifeStealPerKill || 0) + 5; } },
             { id: 'bounty',      name: '丰厚奖励',   icon: '◈', color: '#ffca28', rarity: 'epic',
               desc: '击杀获得分数 ×2(可叠加)', stackable: true, maxStacks: 3,
-              apply: g => { g.scoreMult = (g.scoreMult || 1) * 2; } }
+              apply: g => { g.scoreMult = (g.scoreMult || 1) * 2; } },
+            { id: 'heritage',    name: '传承',       icon: '♛', color: '#ff80ab', rarity: 'epic',
+              desc: '生命上限 +1 并立即 +1 命', stackable: true, maxStacks: 4,
+              apply: g => { g.maxLife += 1; g.life = Math.min(g.life + 1, g.maxLife); } },
+
+            // === 强化职业特色:战士(攻高防低,怒气=攻击)===
+            { id: 'warriorBloodRage', name: '血怒', icon: '🩸', color: '#d50000', rarity: 'rare',
+              desc: '战士每 20 怒气提供 +5% 攻击伤害(可叠加)', stackable: true, maxStacks: 3,
+              applicable: g => g.player.class === 'warrior',
+              apply: g => { g.bloodRageStacks = (g.bloodRageStacks || 0) + 1; } },
+            { id: 'warriorRavenous', name: '嗜血战意', icon: '⚔', color: '#b71c1c', rarity: 'epic',
+              desc: '战士怒气 ≥70 时全部伤害 +30%', stackable: false,
+              applicable: g => g.player.class === 'warrior',
+              apply: g => { g.warriorRavenous = true; } },
+
+            // === 强化职业特色:法师(多重施法 / 法力不够血来凑)===
+            { id: 'mageMulticast', name: '奥术连击', icon: '✦', color: '#26c6da', rarity: 'epic',
+              desc: '斥力波释放后 0.4s 再次无消耗触发一次', stackable: false,
+              applicable: g => g.player.class === 'mage',
+              apply: g => { g.mageMulticast = true; } },
+            { id: 'mageBloodMagic', name: '血魔契约', icon: '✟', color: '#ad1457', rarity: 'epic',
+              desc: '法力不足时消耗 2× 差额生命替代', stackable: false,
+              applicable: g => g.player.class === 'mage',
+              apply: g => { g.mageBloodMagic = true; } },
+
+            // === 强化职业特色:弓手(投射物伤害高,防御低)===
+            { id: 'archerStrongBow', name: '强弓', icon: '⟶', color: '#7cb342', rarity: 'rare',
+              desc: '弓手普攻投射物伤害 +25%(可叠加)', stackable: true, maxStacks: 3,
+              applicable: g => g.player.class === 'archer',
+              apply: g => { g.archerAutoDmgMult = (g.archerAutoDmgMult || 1) * 1.25; } },
+            { id: 'archerHunter', name: '猎手本能', icon: '◉', color: '#33691e', rarity: 'epic',
+              desc: '弓手普攻投射物伤害 +60%,防御 -3', stackable: false,
+              applicable: g => g.player.class === 'archer',
+              apply: g => { g.archerAutoDmgMult = (g.archerAutoDmgMult || 1) * 1.60; g.player.defense = Math.max(0, g.player.defense - 3); } },
+
+            // === 强化职业特色:刺客(高移速)===
+            { id: 'assassinFleet', name: '疾影', icon: '➹', color: '#ce93d8', rarity: 'common',
+              desc: '速度 +1(刺客专属,可叠加)', stackable: true, maxStacks: 5,
+              applicable: g => g.player.class === 'assassin',
+              apply: g => { g.player.speed += 1; } },
+            { id: 'assassinShadowstep', name: '影步', icon: '☄', color: '#7b1fa2', rarity: 'epic',
+              desc: '移动速度 ×1.3,刺客技能伤害 +15%', stackable: false,
+              applicable: g => g.player.class === 'assassin',
+              apply: g => { g.player.speed *= 1.3; g.assassinSkillDmgMult = (g.assassinSkillDmgMult || 1) * 1.15; } },
+
+            // === 强化职业特色:圣骑士(高防低攻)===
+            { id: 'paladinHolyShield', name: '圣盾术', icon: '🛡', color: '#1565c0', rarity: 'rare',
+              desc: '防御 +8(圣骑士专属,可叠加)', stackable: true, maxStacks: 3,
+              applicable: g => g.player.class === 'paladin',
+              apply: g => { g.player.defense += 8; } },
+            { id: 'paladinHolyVow', name: '神圣誓约', icon: '✟', color: '#0d47a1', rarity: 'epic',
+              desc: '防御 +25,攻击 -10(圣骑士专属)', stackable: false,
+              applicable: g => g.player.class === 'paladin' && g.player.attack > 10,
+              apply: g => { g.player.defense += 25; g.player.attack = Math.max(5, g.player.attack - 10); } }
         ];
     }
     
@@ -333,52 +423,46 @@ class Game {
             this.restartGame();
         });
         
-        // 添加鼠标点击事件监听
-        this.canvas.addEventListener('click', (e) => {
+        // 统一坐标换算
+        const toCanvas = (clientX, clientY) => {
+            const rect = this.canvas.getBoundingClientRect();
+            return {
+                x: (clientX - rect.left) * (this.canvas.width  / rect.width),
+                y: (clientY - rect.top)  * (this.canvas.height / rect.height)
+            };
+        };
+
+        // 点击/触摸分派:菜单 → 技能按钮 → 移动
+        const handlePointer = (clientX, clientY) => {
+            const { x, y } = toCanvas(clientX, clientY);
+
             if (this.showingPotentialMenu || this.showingClassSelection) {
-                const rect = this.canvas.getBoundingClientRect();
-                // 计算点击坐标，考虑canvas的实际尺寸与显示尺寸的比例
-                const scaleX = this.canvas.width / rect.width;
-                const scaleY = this.canvas.height / rect.height;
-                const mouseX = (e.clientX - rect.left) * scaleX;
-                const mouseY = (e.clientY - rect.top) * scaleY;
-                this.checkButtonClick(mouseX, mouseY);
-            } else {
-                // 点击地图控制角色移动
-                const rect = this.canvas.getBoundingClientRect();
-                // 计算点击坐标，考虑canvas的实际尺寸与显示尺寸的比例
-                const scaleX = this.canvas.width / rect.width;
-                const scaleY = this.canvas.height / rect.height;
-                const clickX = (e.clientX - rect.left) * scaleX;
-                const clickY = (e.clientY - rect.top) * scaleY;
-                this.setPlayerTarget(clickX, clickY);
+                this.checkButtonClick(x, y);
+                return;
             }
+
+            if (!this.isRunning || this.isPaused) return;
+
+            // 检查是否点在技能按钮上
+            for (const btn of this.skillButtons) {
+                if (x >= btn.x && x <= btn.x + btn.w && y >= btn.y && y <= btn.y + btn.h) {
+                    if (btn.skill === 'Q') this.castSkillQ();
+                    else                   this.castSkillE();
+                    return; // 不触发移动
+                }
+            }
+
+            // 否则移动
+            this.setPlayerTarget(x, y);
+        };
+
+        this.canvas.addEventListener('click', (e) => {
+            handlePointer(e.clientX, e.clientY);
         });
-        
-        // 添加触摸事件监听
+
         this.canvas.addEventListener('touchstart', (e) => {
             e.preventDefault();
-            if (this.showingPotentialMenu || this.showingClassSelection) {
-                const rect = this.canvas.getBoundingClientRect();
-                const touch = e.touches[0];
-                // 计算触摸坐标，考虑canvas的实际尺寸与显示尺寸的比例
-                const scaleX = this.canvas.width / rect.width;
-                const scaleY = this.canvas.height / rect.height;
-                const touchX = (touch.clientX - rect.left) * scaleX;
-                const touchY = (touch.clientY - rect.top) * scaleY;
-                this.checkButtonClick(touchX, touchY);
-            } else {
-                const rect = this.canvas.getBoundingClientRect();
-                const touch = e.touches[0];
-                
-                // 计算触摸坐标，考虑canvas的实际尺寸与显示尺寸的比例
-                const scaleX = this.canvas.width / rect.width;
-                const scaleY = this.canvas.height / rect.height;
-                const clickX = (touch.clientX - rect.left) * scaleX;
-                const clickY = (touch.clientY - rect.top) * scaleY;
-                
-                this.setPlayerTarget(clickX, clickY);
-            }
+            handlePointer(e.touches[0].clientX, e.touches[0].clientY);
         });
     }
     
@@ -393,10 +477,31 @@ class Game {
         if (!this.isRunning) {
             this.isRunning = true;
             this.isPaused = false;
-            this.gameLoop = setInterval(() => {
-                this.update();
-                this.render();
-            }, 16);
+            this._lastFrameTime = performance.now();
+            this._frameAccum = 0;
+            const TICK_MS = 16;
+            const loop = (now) => {
+                if (!this.isRunning) return;
+                try {
+                    const elapsed = Math.min(100, now - this._lastFrameTime); // 切后台回来时一次性补帧,封顶 100ms
+                    this._lastFrameTime = now;
+                    this._frameAccum += elapsed;
+                    // 安全阀:累计帧步数封顶 10 帧,避免长时间冻结后死循环补帧
+                    let steps = 0;
+                    while (this._frameAccum >= TICK_MS && steps < 10) {
+                        this.update();
+                        this._frameAccum -= TICK_MS;
+                        steps++;
+                    }
+                    if (this._frameAccum > TICK_MS * 10) this._frameAccum = 0;
+                    this.render();
+                } catch (err) {
+                    // 不让一次异常杀死整个循环;打印堆栈供排查
+                    console.error('[game loop error]', err);
+                }
+                this._rafId = requestAnimationFrame(loop);
+            };
+            this._rafId = requestAnimationFrame(loop);
         }
     }
     
@@ -407,16 +512,19 @@ class Game {
     }
     
     restartGame() {
-        clearInterval(this.gameLoop);
+        this.isRunning = false; // 让当前 rAF 循环自然结束
+        if (this._rafId) { cancelAnimationFrame(this._rafId); this._rafId = null; }
         this.player = new Player(this.width / 2, this.height / 2);
         this.enemies = [];
         this.items = [];
         this.projectiles = [];
         this.effects = [];
+        this.enemyBullets = [];
         this.keys = {};
         this.isRunning = false;
         this.isPaused = false;
-        this.life = 3;
+        this.life = 1;
+        this.maxLife = 3;
         this.level = 1;
         this.exp = 0;
         this.expToNext = 100;
@@ -428,6 +536,11 @@ class Game {
         this.showingPotentialMenu = false;
         this.showingClassSelection = false;
         this.particles = [];
+        this.pendingActions = [];
+        this._uiTimer = 0;
+        this.buttons = [];
+        this.skillButtons = [];
+        this.freezeOverlay = null;
         this.bgTime = 0;
         this.stars = this._initStars(120);
         // 天赋状态重置
@@ -450,6 +563,11 @@ class Game {
         this.archerPiercing = 0;
         this.paladinSkillDmgMult = 1;
         this.paladinAuraDurationBonus = 0;
+        this.bloodRageStacks = 0;
+        this.warriorRavenous = false;
+        this.mageMulticast = false;
+        this.mageBloodMagic = false;
+        this.archerAutoDmgMult = 1;
         // 魔王状态重置
         this.bossState = 'idle';
         this.bossTimer = this.bossInterval || 60;
@@ -466,42 +584,42 @@ class Game {
     
     update() {
         if (!this.isPaused) {
-            this.gameTime += 0.016;
+            this.gameTime += DT;
             // 难度更平缓且封顶，避免后期速度碾压必死
             this.difficulty = Math.min(4, 1 + this.gameTime / 90);
 
             // 计时器随暂停一起停（按帧推进，不再用 setTimeout）
-            if (this.enemyFreezeTimer > 0) this.enemyFreezeTimer -= 0.016;
+            if (this.enemyFreezeTimer > 0) this.enemyFreezeTimer -= DT;
             this.updateInvincible();
 
             // 基础自动攻击：朝最近敌人(或魔王)发射,无职业/前期也有输出
-            this.autoAttackTimer -= 0.016;
+            this.autoAttackTimer -= DT;
             if (this.autoAttackTimer <= 0 && (this.enemies.length > 0 || (this.boss && this.bossState === 'active'))) {
                 this.shoot();
                 this.autoAttackTimer = this.autoAttackInterval;
             }
 
-            if (this.player.skillQ.cooldown > 0) this.player.skillQ.cooldown -= 0.016;
-            if (this.player.skillE.cooldown > 0) this.player.skillE.cooldown -= 0.016;
+            if (this.player.skillQ.cooldown > 0) this.player.skillQ.cooldown -= DT;
+            if (this.player.skillE.cooldown > 0) this.player.skillE.cooldown -= DT;
 
             if (this.player.class === 'mage' && this.player.mana < this.player.maxMana) {
-                this.player.mana = Math.min(this.player.maxMana, this.player.mana + this.player.manaRegen * 0.016);
+                this.player.mana = Math.min(this.player.maxMana, this.player.mana + this.player.manaRegen * DT);
             }
             // 战士怒气自动衰减(战斗中也持续)
             if (this.player.class === 'warrior' && this.player.rage > 0) {
                 const decayRate = 2 * (this.warriorRageDecayMult || 1); // /秒
-                this.player.rage = Math.max(0, this.player.rage - decayRate * 0.016);
+                this.player.rage = Math.max(0, this.player.rage - decayRate * DT);
             }
             // 圣骑士护盾持续回复(上限 = maxHealth * shieldCapRatio)
             if (this.player.class === 'paladin') {
                 const cap = this.player.maxHealth * (this.player.shieldCapRatio || 0.10);
                 if (this.player.shield < cap) {
                     const regen = this.player.maxHealth * 0.02; // /秒(2% maxHP)
-                    this.player.shield = Math.min(cap, this.player.shield + regen * 0.016);
+                    this.player.shield = Math.min(cap, this.player.shield + regen * DT);
                 }
             }
             if (this.player.class === 'archer' && this.player.reloadTimer > 0) {
-                this.player.reloadTimer -= 0.016;
+                this.player.reloadTimer -= DT;
                 if (this.player.reloadTimer <= 0) {
                     this.player.arrows = Math.min(this.player.arrows + 1, this.player.maxArrows);
                     // 没装满就继续下一发
@@ -514,17 +632,17 @@ class Game {
             }
             if (this.player.class === 'paladin') {
                 if (this.player.faith < this.player.maxFaith) {
-                    this.player.faith = Math.min(this.player.maxFaith, this.player.faith + this.player.faithRegen * 0.016);
+                    this.player.faith = Math.min(this.player.maxFaith, this.player.faith + this.player.faithRegen * DT);
                 }
                 if (this.player.holyAuraActive) {
-                    this.player.holyAuraTimer -= 0.016;
+                    this.player.holyAuraTimer -= DT;
                     if (this.player.holyAuraTimer <= 0) {
                         this.player.holyAuraActive = false;
                     } else {
-                        this.player.heal(this.player.maxHealth * 0.1 * 0.016);
+                        this.player.heal(this.player.maxHealth * 0.1 * DT);
                         const pcx = this.player.x + this.player.size / 2;
                         const pcy = this.player.y + this.player.size / 2;
-                        const auraDmgTick = this._computeAttackDamage(this.player.attack) * 0.5 * 0.016 * (this.paladinSkillDmgMult || 1);
+                        const auraDmgTick = this._computeAttackDamage(this.player.attack) * 0.5 * DT * (this.paladinSkillDmgMult || 1);
                         for (let i = this.enemies.length - 1; i >= 0; i--) {
                             const e = this.enemies[i];
                             const dx = e.x + e.size / 2 - pcx;
@@ -552,29 +670,48 @@ class Game {
                 }
             }
 
-            this.bgTime += 0.016;
+            this.bgTime += DT;
             this.updatePlayer();
             this.updateEnemies();
+            this.updateEnemyBullets();
             this.updateItems();
             this.updateProjectiles();
             this.updateEffects();
             this.updateParticles();
             this._updateBoss();
+            this._tickPendingActions();
             this.checkCollisions();
             this.spawnEnemies();
             this.spawnItems();
-            this.updateUI();
+            // updateUI 降频:每 100ms 刷新一次 DOM
+            this._uiTimer += DT;
+            if (this._uiTimer >= 0.1) {
+                this.updateUI();
+                this._uiTimer = 0;
+            }
             this.checkGameOver();
 
             // 屏幕震动衰减
-            if (this.screenShake > 0) this.screenShake = Math.max(0, this.screenShake - 0.016);
+            if (this.screenShake > 0) this.screenShake = Math.max(0, this.screenShake - DT);
+        }
+    }
+
+    _tickPendingActions() {
+        // 按帧推进延迟动作,暂停时自动停止,避免 setTimeout 在菜单/暂停期间继续触发
+        for (let i = this.pendingActions.length - 1; i >= 0; i--) {
+            const a = this.pendingActions[i];
+            a.delay -= DT;
+            if (a.delay <= 0) {
+                this.pendingActions.splice(i, 1);
+                try { a.fn(); } catch (e) { console.error(e); }
+            }
         }
     }
 
     _updateBoss() {
         switch (this.bossState) {
             case 'idle': {
-                this.bossTimer -= 0.016;
+                this.bossTimer -= DT;
                 if (this.bossTimer <= 0) {
                     this.bossState = 'warning';
                     this.bossWarningTimer = this.bossWarningDuration;
@@ -583,7 +720,7 @@ class Game {
                 break;
             }
             case 'warning': {
-                this.bossWarningTimer -= 0.016;
+                this.bossWarningTimer -= DT;
                 this.screenShake = 0.2; // 持续震动
                 // 倒计时每整秒提示
                 const sec = Math.ceil(this.bossWarningTimer);
@@ -599,7 +736,7 @@ class Game {
             case 'active': {
                 if (!this.boss) { this.bossState = 'idle'; this.bossTimer = this.bossInterval; break; }
                 this.boss.update(this.player.x, this.player.y);
-                this.bossActiveTimer += 0.016;
+                this.bossActiveTimer += DT;
 
                 // 受击判定:魔王 vs 玩家
                 if (this.checkCollision(this.player, this.boss)) {
@@ -700,7 +837,7 @@ class Game {
     _repelBoss() {
         if (!this.boss) return;
         // 奖励
-        this.life = Math.min(this.life + 1, 10);
+        this.life = Math.min(this.life + 1, this.maxLife);
         this.player.addPotentialPoints(1);
         this.score += 100 * (this.scoreMult || 1);
         // 击退动画
@@ -722,12 +859,30 @@ class Game {
     
     updateEnemies() {
         for (let i = this.enemies.length - 1; i >= 0; i--) {
+            const e = this.enemies[i];
             if (this.enemyFreezeTimer <= 0) {
-                this.enemies[i].update(this.player.x, this.player.y, this.width, this.height);
+                e.update(this.player.x, this.player.y, this.width, this.height);
             }
-            if (this.enemies[i].currentHealth <= 0) {
+            // 炮手开火:取出 pendingShot 并生成敌方子弹
+            if (e.pendingShot) {
+                const s = e.pendingShot;
+                this.enemyBullets.push(new EnemyBullet(s.x, s.y, s.vx, s.vy, s.damage));
+                this.spawnParticles(s.x, s.y, '#ff9800', 5, 2, 4, 1, 3, 0.07);
+                e.pendingShot = null;
+            }
+            if (e.currentHealth <= 0) {
                 this._onEnemyKilled();
                 this.enemies.splice(i, 1);
+            }
+        }
+    }
+
+    updateEnemyBullets() {
+        for (let i = this.enemyBullets.length - 1; i >= 0; i--) {
+            const b = this.enemyBullets[i];
+            b.update();
+            if (b.x < -20 || b.x > this.width + 20 || b.y < -20 || b.y > this.height + 20) {
+                this.enemyBullets.splice(i, 1);
             }
         }
     }
@@ -817,7 +972,30 @@ class Game {
                 this.items.splice(i, 1);
             }
         }
-        
+
+        // 敌方子弹碰玩家
+        for (let i = this.enemyBullets.length - 1; i >= 0; i--) {
+            const b = this.enemyBullets[i];
+            if (this.checkCollision(this.player, b)) {
+                if (this.player.hurtCooldown <= 0) {
+                    this.player.takeDamage(b.damage);
+                    this.player.hurtCooldown = 0.6 + (this.player.hurtCooldownBonus || 0);
+                    this.player.gainRage(15 + (this.player.rageOnHurtBonus || 0));
+                    this.spawnHitParticles(this.player.x + this.player.size / 2, this.player.y + this.player.size / 2, '#ff9800', 8);
+                    if (this.player.currentHealth <= 0) {
+                        this.life--;
+                        if (this.life > 0) {
+                            this.player.x = this.width / 2;
+                            this.player.y = this.height / 2;
+                            this.player.currentHealth = this.player.maxHealth;
+                            this.player.hurtCooldown = 1.5;
+                        }
+                    }
+                }
+                this.enemyBullets.splice(i, 1);
+            }
+        }
+
         for (let i = this.projectiles.length - 1; i >= 0; i--) {
             const proj = this.projectiles[i];
             // PiercingArrow 走自己的碰撞逻辑
@@ -866,34 +1044,49 @@ class Game {
     spawnEnemies() {
         // 魔王活跃 / 击退中,停刷普通敌人
         if (this.bossState === 'active' || this.bossState === 'retreating') return;
-        if (Math.random() < 0.02 * this.difficulty) {
+        // 刷怪概率随难度上升但封顶,避免后期数量碾压
+        const spawnChance = Math.min(0.045, 0.018 + 0.008 * (this.difficulty - 1));
+        if (Math.random() < spawnChance) {
             // 使用加权随机降低巨型追击者的刷新概率
+            // chaser 50% / patroller 28% / gunner 17% / giant 5%
             let type;
             const rand = Math.random();
-            if (rand < 0.6) {
-                type = 'chaser'; // 60%概率
-            } else if (rand < 0.97) {
-                type = 'patroller'; // 37%概率
-            } else {
-                type = 'giant'; // 3%概率
-            }
+            if (rand < 0.50)      type = 'chaser';
+            else if (rand < 0.78) type = 'patroller';
+            else if (rand < 0.95) type = 'gunner';
+            else                  type = 'giant';
             
             let x, y;
-            
-            if (Math.random() < 0.5) {
+
+            if (type === 'gunner') {
+                // 炮手不会移动,必须生成在屏幕内边缘(距边 30~100px)且远离玩家
+                const margin = 30;
+                const inset  = 100;
+                let attempts = 0;
+                do {
+                    const side = Math.floor(Math.random() * 4);
+                    if (side === 0)      { x = margin + Math.random() * inset;              y = margin + Math.random() * (this.height - margin * 2); }
+                    else if (side === 1) { x = this.width - margin - inset + Math.random() * inset; y = margin + Math.random() * (this.height - margin * 2); }
+                    else if (side === 2) { x = margin + Math.random() * (this.width - margin * 2); y = margin + Math.random() * inset; }
+                    else                { x = margin + Math.random() * (this.width - margin * 2); y = this.height - margin - inset + Math.random() * inset; }
+                    attempts++;
+                    // 与玩家保持至少 200px 距离
+                } while (attempts < 10 && Math.hypot(x - this.player.x, y - this.player.y) < 200);
+            } else if (Math.random() < 0.5) {
                 x = Math.random() < 0.5 ? -50 : this.width + 50;
                 y = Math.random() * this.height;
             } else {
                 x = Math.random() * this.width;
                 y = Math.random() < 0.5 ? -50 : this.height + 50;
             }
-            
+
             this.enemies.push(new Enemy(x, y, type, this.difficulty));
         }
     }
     
     spawnItems() {
-        if (Math.random() < 0.015) {
+        // 降低道具刷新频率以提高难度(原 0.015)
+        if (Math.random() < 0.008) {
             // 加权随机:potion 35 / exp_book 25 / snowflake 15 / bomb 12 / heart 8 / potion_invicible 5
             const itemPool = [
                 { type: 'potion',           weight: 35 },
@@ -947,7 +1140,7 @@ class Game {
                 label = '💥 清场';
                 break;
             case 'heart':
-                this.life = Math.min(this.life + 1, 10);
+                this.life = Math.min(this.life + 1, this.maxLife);
                 label = '+1 命';
                 break;
             case 'potion_invicible':
@@ -966,6 +1159,46 @@ class Game {
     freezeEnemies(duration) {
         // 按帧计时，暂停时一起停，且对定身期间新刷出的敌人同样生效
         this.enemyFreezeTimer = duration / 1000;
+        // 生成全屏冰封特效数据
+        this._initFreezeOverlay(duration / 1000);
+    }
+
+    _initFreezeOverlay(duration) {
+        // 随机预生成冰裂纹路径（坐标归一化到 0~1，渲染时乘以 width/height）
+        const cracks = [];
+        for (let i = 0; i < 18; i++) {
+            // 从四条边随机出发的折线
+            const side = Math.floor(Math.random() * 4);
+            let sx, sy;
+            if (side === 0) { sx = Math.random(); sy = 0; }
+            else if (side === 1) { sx = 1; sy = Math.random(); }
+            else if (side === 2) { sx = Math.random(); sy = 1; }
+            else { sx = 0; sy = Math.random(); }
+            const segs = [];
+            let cx = sx, cy = sy;
+            const angle = Math.atan2(0.5 - cy, 0.5 - cx) + (Math.random() - 0.5) * 0.8;
+            for (let s = 0; s < 5 + Math.floor(Math.random() * 4); s++) {
+                const len = 0.04 + Math.random() * 0.08;
+                const a = angle + (Math.random() - 0.5) * 0.6;
+                const nx = Math.min(1, Math.max(0, cx + Math.cos(a) * len));
+                const ny = Math.min(1, Math.max(0, cy + Math.sin(a) * len));
+                segs.push({ x: nx, y: ny });
+                cx = nx; cy = ny;
+            }
+            cracks.push({ sx, sy, segs, width: 0.5 + Math.random() * 1.5 });
+        }
+        // 四角冰晶簇（每角若干尖刺）
+        const corners = [];
+        const cornerDefs = [[0,0,0.55],[1,0,2.3],[1,1,3.9],[0,1,5.5]];
+        for (const [ox, oy, baseAngle] of cornerDefs) {
+            for (let i = 0; i < 6 + Math.floor(Math.random() * 4); i++) {
+                const a = baseAngle + (Math.random() - 0.5) * 1.2;
+                const len = 0.08 + Math.random() * 0.14;
+                const w = 0.012 + Math.random() * 0.018;
+                corners.push({ ox, oy, a, len, w });
+            }
+        }
+        this.freezeOverlay = { duration, cracks, corners };
     }
 
     addEffect(x, y, radius, color, duration) {
@@ -974,12 +1207,16 @@ class Game {
 
     updateEffects() {
         for (let i = this.effects.length - 1; i >= 0; i--) {
-            this.effects[i].ttl -= 0.016;
+            this.effects[i].ttl -= DT;
             if (this.effects[i].ttl <= 0) this.effects.splice(i, 1);
         }
     }
 
     spawnHitParticles(x, y, color, count) {
+        // 粒子数量上限,避免密集场景导致掉帧
+        const cap = 500;
+        if (this.particles.length >= cap) return;
+        count = Math.min(count, cap - this.particles.length);
         for (let i = 0; i < count; i++) {
             const angle = Math.random() * Math.PI * 2;
             const speed = Math.random() * 3 + 1;
@@ -996,6 +1233,9 @@ class Game {
     }
 
     spawnParticles(x, y, color, count, speedMin, speedMax, sizeMin, sizeMax, decay) {
+        const cap = 500;
+        if (this.particles.length >= cap) return;
+        count = Math.min(count, cap - this.particles.length);
         for (let i = 0; i < count; i++) {
             const angle = Math.random() * Math.PI * 2;
             const speed = speedMin + Math.random() * (speedMax - speedMin);
@@ -1012,6 +1252,9 @@ class Game {
     }
 
     spawnBurstRing(x, y, radius, color, count) {
+        const cap = 500;
+        if (this.particles.length >= cap) return;
+        count = Math.min(count, cap - this.particles.length);
         for (let i = 0; i < count; i++) {
             const angle = (i / count) * Math.PI * 2;
             const speed = 1.5 + Math.random() * 2;
@@ -1088,7 +1331,7 @@ class Game {
 
     updateInvincible() {
         if (this.player.invincibleTimer > 0) {
-            this.player.invincibleTimer -= 0.016;
+            this.player.invincibleTimer -= DT;
             if (this.player.invincibleTimer <= 0) {
                 this.player.invincibleTimer = 0;
                 // 减回无敌时加的增量，无敌期间任何外部加成都被保留
@@ -1117,14 +1360,38 @@ class Game {
 
     _findClosestEnemies(count) {
         // 包含魔王(若存在且活跃),让技能能锁定魔王
+        // count=1 走 O(n) 单次扫描;否则才排序
+        if (count === 1) {
+            const t = this._findClosestTarget();
+            return t ? [t] : [];
+        }
         const pool = this.enemies.slice();
         if (this.boss && this.bossState === 'active') pool.push(this.boss);
+        const px = this.player.x, py = this.player.y;
         pool.sort((a, b) => {
-            const dxa = a.x - this.player.x, dya = a.y - this.player.y;
-            const dxb = b.x - this.player.x, dyb = b.y - this.player.y;
+            const dxa = a.x - px, dya = a.y - py;
+            const dxb = b.x - px, dyb = b.y - py;
             return (dxa * dxa + dya * dya) - (dxb * dxb + dyb * dyb);
         });
         return pool.slice(0, count);
+    }
+
+    _findClosestTarget() {
+        // O(n) 找最近敌人(含活跃魔王),无敌人返回 null
+        let closest = null;
+        let bestD = Infinity;
+        const px = this.player.x, py = this.player.y;
+        for (const e of this.enemies) {
+            const dx = e.x - px, dy = e.y - py;
+            const d = dx * dx + dy * dy;
+            if (d < bestD) { bestD = d; closest = e; }
+        }
+        if (this.boss && this.bossState === 'active') {
+            const dx = this.boss.x - px, dy = this.boss.y - py;
+            const d = dx * dx + dy * dy;
+            if (d < bestD) { bestD = d; closest = this.boss; }
+        }
+        return closest;
     }
 
     _dealDamage(target, dmg) {
@@ -1276,40 +1543,101 @@ class Game {
     }
 
     _mageE(skill) {
-        if (this.player.mana < 3) return;
-        this.player.mana -= 3;
+        if (!this._payMana(3)) return;
+        this._mageRepulseEffect(skill);
+        // 奥术连击:0.4s 后再次无消耗触发一次
+        if (this.mageMulticast) {
+            this.pendingActions.push({ delay: 0.4, fn: () => this._mageRepulseEffect(skill) });
+        }
+        skill.cooldown = skill.maxCooldown;
+    }
+
+    _mageRepulseEffect(skill) {
         const pcx = this.player.x + this.player.size / 2;
         const pcy = this.player.y + this.player.size / 2;
-        const range = skill.level >= 3 ? 200 : 150;
-        const dmg = this._computeAttackDamage(this.player.attack) * 1.2 * this._getSkillMultiplier(skill.level) * (1 + (this.magePenetration || 0));
-        const particleCount = skill.level >= 3 ? 32 : 20;
-        const stunDur = 3 + (this.mageStunBonus || 0);
+        const range      = skill.level >= 3 ? 210 : 160;
+        // 击退力度:3级更强
+        const pushForce  = skill.level >= 3 ? 220 : skill.level === 2 ? 180 : 140;
+        const dmg        = this._computeAttackDamage(this.player.attack) * 1.0
+                           * this._getSkillMultiplier(skill.level)
+                           * (1 + (this.magePenetration || 0));
+        const stunBonus  = this.mageStunBonus || 0; // 天赋"寒冰精通"复用:短暂僵直
+        const particleCount = skill.level >= 3 ? 36 : 24;
+
         for (let i = this.enemies.length - 1; i >= 0; i--) {
             const e = this.enemies[i];
-            const dx = e.x + e.size / 2 - pcx;
-            const dy = e.y + e.size / 2 - pcy;
-            if (Math.sqrt(dx * dx + dy * dy) <= range) {
-                e.stunTimer = stunDur;
+            const ex = e.x + e.size / 2;
+            const ey = e.y + e.size / 2;
+            const dx = ex - pcx;
+            const dy = ey - pcy;
+            const dist = Math.sqrt(dx * dx + dy * dy);
+            if (dist <= range) {
+                // 距离越近推得越远(近处最多 pushForce,边缘衰减到 40%)
+                const ratio = dist > 0 ? dist / range : 0;
+                const actualPush = pushForce * (1 - ratio * 0.6);
+                const nx = dist > 0 ? dx / dist : Math.random() - 0.5;
+                const ny = dist > 0 ? dy / dist : Math.random() - 0.5;
+                e.x += nx * actualPush;
+                e.y += ny * actualPush;
+                // 短暂僵直(天赋加成),让玩家有反应时间
+                if (stunBonus > 0) e.stunTimer = Math.max(e.stunTimer, 0.4 + stunBonus * 0.2);
                 this._dealDamage(e, dmg);
+                // 击退粒子
+                this.spawnParticles(ex, ey, '#80d8ff', 4, 2, 5, 1, 3, 0.06);
             }
         }
-        // 魔王命中(短暂减速,不完全定身)
+        // 魔王:推力减半,短暂减速
         if (this.boss && this.bossState === 'active') {
             const bx = this.boss.x + this.boss.size / 2;
             const by = this.boss.y + this.boss.size / 2;
-            if (Math.sqrt((bx - pcx) ** 2 + (by - pcy) ** 2) <= range + this.boss.size / 2) {
-                this.boss.stunTimer = Math.min(1.5, stunDur * 0.4); // 魔王只吃 40% 定身,封顶 1.5s
+            const dx = bx - pcx, dy = by - pcy;
+            const dist = Math.sqrt(dx * dx + dy * dy);
+            if (dist <= range + this.boss.size / 2) {
+                const nx = dist > 0 ? dx / dist : 0;
+                const ny = dist > 0 ? dy / dist : 0;
+                this.boss.x += nx * pushForce * 0.35;
+                this.boss.y += ny * pushForce * 0.35;
+                if (stunBonus > 0) this.boss.stunTimer = Math.min(1.0, stunBonus * 0.15);
                 this._dealDamage(this.boss, dmg);
             }
         }
-        this.effects.push({ type: 'shockwave', x: pcx, y: pcy, radius: 10, maxRadius: range, color: '#88eeff', ttl: 0.5, maxTtl: 0.5 });
-        this.spawnBurstRing(pcx, pcy, range * 0.5, '#aaeeff', particleCount);
+
+        // 视觉:扩散冲击波 + 放射线粒子
+        this.effects.push({ type: 'shockwave', x: pcx, y: pcy, radius: 14, maxRadius: range, color: '#80d8ff', ttl: 0.45, maxTtl: 0.45 });
+        this.effects.push({ type: 'shockwave', x: pcx, y: pcy, radius: 6,  maxRadius: range * 0.6, color: '#ffffff', ttl: 0.3, maxTtl: 0.3 });
+        this.spawnBurstRing(pcx, pcy, range * 0.4, '#b3e5fc', particleCount);
+        // 放射状光线
         for (let i = 0; i < particleCount; i++) {
             const angle = (i / particleCount) * Math.PI * 2;
-            const r = range * (0.4 + Math.random() * 0.5);
-            this.effects.push({ type: 'iceShard', x: pcx, y: pcy, angle, length: 18 + Math.random() * 12, color: '#c8f8ff', ttl: 0.45, maxTtl: 0.45 });
+            this.effects.push({
+                type: 'iceShard',
+                x: pcx, y: pcy,
+                angle,
+                length: 20 + Math.random() * 14,
+                color: '#e1f5fe',
+                ttl: 0.35, maxTtl: 0.35
+            });
         }
-        skill.cooldown = skill.maxCooldown;
+        this._showFloatingText('斥力波！', pcx, pcy - 28, '#80d8ff');
+        this.screenShake = 0.18;
+    }
+
+    _payMana(cost) {
+        // 法师法力支付辅助:成功返回 true
+        // 若蓝不够且开启"血魔契约",改用 2× 差额生命补足
+        if (this.player.mana >= cost) { this.player.mana -= cost; return true; }
+        if (this.mageBloodMagic) {
+            const deficit = cost - this.player.mana;
+            const hpCost = deficit * 2;
+            if (this.player.currentHealth > hpCost + 1) {
+                this.player.mana = 0;
+                this.player.currentHealth -= hpCost;
+                this._showFloatingText(`血魔 -${Math.ceil(hpCost)}`, this.player.x + this.player.size / 2, this.player.y - 20, '#ff1744');
+                this.spawnHitParticles(this.player.x + this.player.size / 2, this.player.y + this.player.size / 2, '#ff1744', 6);
+                return true;
+            }
+        }
+        return false;
     }
 
     _assassinQ(skill) {
@@ -1344,20 +1672,21 @@ class Game {
         const targets = this._findClosestEnemies(baseTargets);
         if (targets.length === 0) return;
         const chargeMult = this._consumeAssassinCharge();
-        let delay = 0;
         for (let idx = 0; idx < targets.length; idx++) {
             const t = targets[idx];
-            setTimeout(() => {
-                if (t.currentHealth <= 0) return;
-                const dmg = this._computeAttackDamage(this.player.attack) * 1.0 * this._getSkillMultiplier(skill.level) * (this.assassinSkillDmgMult || 1) * chargeMult;
-                this._dealDamage(t, dmg);
-                const tx = t.x + t.size / 2;
-                const ty = t.y + t.size / 2;
-                this.spawnSlashEffect(tx - 25, ty, tx + 25, ty, '#ffffff');
-                this.spawnSlashEffect(tx, ty - 25, tx, ty + 25, '#ffffff');
-                this.spawnParticles(tx, ty, '#ffffff', 6, 2, 4, 1, 3, 0.06);
-            }, delay);
-            delay += 100;
+            this.pendingActions.push({
+                delay: idx * 0.1,
+                fn: () => {
+                    if (t.currentHealth <= 0) return;
+                    const dmg = this._computeAttackDamage(this.player.attack) * 1.0 * this._getSkillMultiplier(skill.level) * (this.assassinSkillDmgMult || 1) * chargeMult;
+                    this._dealDamage(t, dmg);
+                    const tx = t.x + t.size / 2;
+                    const ty = t.y + t.size / 2;
+                    this.spawnSlashEffect(tx - 25, ty, tx + 25, ty, '#ffffff');
+                    this.spawnSlashEffect(tx, ty - 25, tx, ty + 25, '#ffffff');
+                    this.spawnParticles(tx, ty, '#ffffff', 6, 2, 4, 1, 3, 0.06);
+                }
+            });
         }
         skill.cooldown = skill.maxCooldown;
     }
@@ -1393,21 +1722,27 @@ class Game {
         const count = skill.level >= 3 ? 14 : 10;
         const dmg = this._computeAttackDamage(this.player.attack) * 0.8 * this._getSkillMultiplier(skill.level) * (this.archerSkillDmgMult || 1);
         for (let i = 0; i < count; i++) {
-            setTimeout(() => {
-                const tx = pcx + (Math.random() - 0.5) * 200;
-                const ty = pcy + (Math.random() - 0.5) * 200;
-                this.effects.push({ type: 'arrow', x: tx, y: ty - 120, angle: Math.PI / 2, length: 24, color: '#aaff44', ttl: 0.25, maxTtl: 0.25 });
-                setTimeout(() => {
-                    this.spawnHitParticles(tx, ty, '#aaff44', 6);
-                    this.effects.push({ type: 'shockwave', x: tx, y: ty, radius: 5, maxRadius: 30, color: '#aaff44', ttl: 0.2, maxTtl: 0.2 });
-                    for (let j = this.enemies.length - 1; j >= 0; j--) {
-                        const e = this.enemies[j];
-                        const dx = e.x + e.size / 2 - tx;
-                        const dy = e.y + e.size / 2 - ty;
-                        if (Math.sqrt(dx * dx + dy * dy) <= 25) this._dealDamage(e, dmg);
-                    }
-                }, 200);
-            }, i * 100);
+            this.pendingActions.push({
+                delay: i * 0.1,
+                fn: () => {
+                    const tx = pcx + (Math.random() - 0.5) * 200;
+                    const ty = pcy + (Math.random() - 0.5) * 200;
+                    this.effects.push({ type: 'arrow', x: tx, y: ty - 120, angle: Math.PI / 2, length: 24, color: '#aaff44', ttl: 0.25, maxTtl: 0.25 });
+                    this.pendingActions.push({
+                        delay: 0.2,
+                        fn: () => {
+                            this.spawnHitParticles(tx, ty, '#aaff44', 6);
+                            this.effects.push({ type: 'shockwave', x: tx, y: ty, radius: 5, maxRadius: 30, color: '#aaff44', ttl: 0.2, maxTtl: 0.2 });
+                            for (let j = this.enemies.length - 1; j >= 0; j--) {
+                                const e = this.enemies[j];
+                                const dx = e.x + e.size / 2 - tx;
+                                const dy = e.y + e.size / 2 - ty;
+                                if (Math.sqrt(dx * dx + dy * dy) <= 25) this._dealDamage(e, dmg);
+                            }
+                        }
+                    });
+                }
+            });
         }
         skill.cooldown = skill.maxCooldown;
     }
@@ -1451,19 +1786,7 @@ class Game {
             return;
         }
         // 其它职业:正常发射投射物(候选包含魔王)
-        let closest = null;
-        let closestDist = Infinity;
-        const targets = this.enemies.slice();
-        if (this.boss && this.bossState === 'active') targets.push(this.boss);
-        for (let enemy of targets) {
-            const dx = enemy.x - this.player.x;
-            const dy = enemy.y - this.player.y;
-            const d = dx * dx + dy * dy;
-            if (d < closestDist) {
-                closestDist = d;
-                closest = enemy;
-            }
-        }
+        const closest = this._findClosestTarget();
         if (!closest) return;
 
         const cx = this.player.x + this.player.size / 2;
@@ -1476,17 +1799,18 @@ class Game {
         // 弓手:疾矢(投射物速度倍率),多重射击(扇形多发),箭无虚发(穿透)
         const baseSpeed = 7;
         const speed = baseSpeed * (cls === 'archer' ? (this.archerProjSpeedMult || 1) : 1);
-        const dmg = this._computeAttackDamage(this.player.attack) * (this.player.autoAttackDmgMult || 1);
+        // 弓手专属:自动攻击投射物伤害倍率(强弓/猎手本能/狩猎专精天赋)
+        const archerAutoMult = cls === 'archer' ? (this.archerAutoDmgMult || 1) : 1;
+        const dmg = this._computeAttackDamage(this.player.attack) * (this.player.autoAttackDmgMult || 1) * archerAutoMult;
 
-        // 法师 Q 开关:激活时附加法术伤害并消耗法力
+        // 法师 Q 开关:激活时附加法术伤害并消耗法力(支持血魔契约)
         let mageBonusDmg = 0;
         if (cls === 'mage' && this.player.qToggleActive) {
             const cost = Math.max(1, Math.ceil(this.player.maxMana * 0.10 * (this.mageQCostMult || 1)));
-            if (this.player.mana >= cost) {
-                this.player.mana -= cost;
+            if (this._payMana(cost)) {
                 mageBonusDmg = this.player.maxMana * 1.5;
             } else {
-                // 蓝不够 → 自动关闭
+                // 蓝不够且血魔契约也不满足 → 自动关闭
                 this.player.qToggleActive = false;
             }
         }
@@ -1551,12 +1875,26 @@ class Game {
         });
     }
 
-    // 暴怒天赋:每损失 10% 生命,攻击力 +5%(基于传入基础攻击)
+    // 攻击伤害最终结算:叠加暴怒(损血)/战士血怒(怒气)/嗜血战意(满怒)等加成
     _computeAttackDamage(base) {
-        if (!this.player.wrathBonus) return base;
-        const lost = 1 - (this.player.currentHealth / this.player.maxHealth);
-        const stacks = Math.floor(lost * 10);
-        return base * (1 + stacks * 0.05);
+        let dmg = base;
+        // 暴怒天赋:每损失 10% 生命,攻击力 +5%
+        if (this.player.wrathBonus) {
+            const lost = 1 - (this.player.currentHealth / this.player.maxHealth);
+            const stacks = Math.floor(lost * 10);
+            dmg *= (1 + stacks * 0.05);
+        }
+        // 战士:血怒(每 20 怒气 +5% 攻击,× 已叠层数)
+        if (this.player.class === 'warrior') {
+            const bloodStacks = this.bloodRageStacks || 0;
+            if (bloodStacks > 0) {
+                const rageBands = Math.floor(this.player.rage / 20);
+                dmg *= (1 + rageBands * 0.05 * bloodStacks);
+            }
+            // 嗜血战意:怒气 ≥70 时所有伤害 +30%
+            if (this.warriorRavenous && this.player.rage >= 70) dmg *= 1.3;
+        }
+        return dmg;
     }
 
     // 统一击杀结算入口:替代旧的 score+=10; exp+=5; checkLevelUp() 三连
@@ -1581,7 +1919,7 @@ class Game {
             this.player.addPotentialPoints(1);
             
             if (this.level % 3 === 0) {
-                this.life++;
+                this.life = Math.min(this.life + 1, this.maxLife);
             }
             
             // 升级后自动暂停游戏
@@ -1604,80 +1942,238 @@ class Game {
     }
     
     renderClassSelection() {
-        if (this.showingClassSelection) {
-            this.buttons = [];
-            const ctx = this.ctx;
+        if (!this.showingClassSelection) return;
+        this.buttons = [];
+        const ctx = this.ctx;
+        const W = this.width, H = this.height;
+        const portrait = W < H || W < 520;
 
-            const bgGrad = ctx.createRadialGradient(this.width / 2, this.height / 2, 0, this.width / 2, this.height / 2, this.width * 0.7);
-            bgGrad.addColorStop(0, 'rgba(10, 15, 35, 0.95)');
-            bgGrad.addColorStop(1, 'rgba(0, 0, 0, 0.97)');
-            ctx.fillStyle = bgGrad;
-            ctx.fillRect(0, 0, this.width, this.height);
+        // 背景
+        const bgGrad = ctx.createRadialGradient(W/2, H/2, 0, W/2, H/2, W * 0.8);
+        bgGrad.addColorStop(0, 'rgba(8,12,30,0.97)');
+        bgGrad.addColorStop(1, 'rgba(0,0,0,0.99)');
+        ctx.fillStyle = bgGrad;
+        ctx.fillRect(0, 0, W, H);
 
-            const titleFontSize = Math.min(28, this.width * 0.065);
-            const subtitleFontSize = Math.min(16, this.width * 0.04);
-            const descFontSize = Math.min(12, this.width * 0.03);
+        // 标题
+        const titleFS = Math.min(24, W * 0.055);
+        ctx.save();
+        ctx.shadowBlur = 22; ctx.shadowColor = '#00c8ff';
+        ctx.fillStyle = '#00e5ff';
+        ctx.font = `bold ${titleFS}px Arial`;
+        ctx.textAlign = 'center';
+        ctx.textBaseline = 'top';
+        ctx.fillText('选择职业', W / 2, H * 0.03);
+        ctx.shadowBlur = 0;
+        ctx.fillStyle = 'rgba(180,220,255,0.55)';
+        ctx.font = `${Math.min(11, W * 0.025)}px Arial`;
+        ctx.fillText('点击卡片选择  ·  每个职业玩法截然不同', W / 2, H * 0.03 + titleFS + 4);
+        ctx.restore();
 
-            ctx.save();
-            ctx.shadowBlur = 20;
-            ctx.shadowColor = '#00c8ff';
-            ctx.fillStyle = '#00e5ff';
-            ctx.font = `bold ${titleFontSize}px Arial`;
-            ctx.textAlign = 'center';
-            ctx.fillText('恭喜达到等级3！请选择职业', this.width / 2, this.height * 0.12);
-            ctx.shadowBlur = 0;
-            ctx.restore();
+        // 职业数据
+        const classDefs = [
+            {
+                choice: 1, name: '战士', icon: '⚔', color: '#ff6b3a',
+                tag: '近战  高攻  怒气',
+                tagColor: '#ff8a65',
+                flavor: '攻高防低，怒气越满伤害越高',
+                stats: ['攻击 +10  防御 -5  生命 +20', '近战范围自动攻击'],
+                q: { name: '旋风斩', cd: '3s', desc: '消耗30怒气，范围斩击周围敌人' },
+                e: { name: '盾击',   cd: '5s', desc: '消耗50怒气，击飞并重创单体目标' }
+            },
+            {
+                choice: 2, name: '法师', icon: '✦', color: '#4ecdc4',
+                tag: '远程  法力  爆发',
+                tagColor: '#80deea',
+                flavor: '法力不足时可消耗生命释放技能',
+                stats: ['法力 +10  回复 +2/s', '远程自动攻击，Q开关附魔'],
+                q: { name: '魔力涌注', cd: '切换', desc: '开启后每发普攻附加法术伤害，消耗法力' },
+                e: { name: '斥力波',   cd: '8s',  desc: '消耗3法力，将周围敌人向四周强力推开并造成伤害' }
+            },
+            {
+                choice: 3, name: '刺客', icon: '☄', color: '#aa66ff',
+                tag: '移速  蓄力  爆发',
+                tagColor: '#ce93d8',
+                flavor: '移动积累蓄力，蓄力越高技能伤害越强',
+                stats: ['移动速度 +1.5', '远程自动攻击'],
+                q: { name: '闪现斩', cd: '4s', desc: '瞬移至目标身旁并造成高额伤害' },
+                e: { name: '连刺',   cd: '6s', desc: '连续攻击3个最近敌人，依次结算' }
+            },
+            {
+                choice: 4, name: '弓手', icon: '◎', color: '#aaff44',
+                tag: '远程  高投射  箭矢',
+                tagColor: '#c6ef6b',
+                flavor: '投射物伤害高，防御低，箭矢用尽需装填',
+                stats: ['攻击 +8  防御 -5', '普攻伤害×1.3，多天赋支持多重射击'],
+                q: { name: '穿透箭', cd: '3s', desc: '消耗1箭，发射穿透敌阵的强力箭矢' },
+                e: { name: '箭雨',   cd: '8s', desc: '消耗3箭，在大范围内降下密集箭雨' }
+            },
+            {
+                choice: 5, name: '圣骑士', icon: '✟', color: '#ffd700',
+                tag: '高防  护盾  信念',
+                tagColor: '#ffe082',
+                flavor: '攻击偏低，防御极高，拥有持续生成的护盾',
+                stats: ['防御 +10  攻击 -5  生命 +30', '护盾持续再生，无远程普攻'],
+                q: { name: '圣光打击', cd: '4s',  desc: '消耗20信念，重击目标并短暂晕眩' },
+                e: { name: '神圣光环', cd: '12s', desc: '消耗50信念，持续治愈自身并灼烧周围敌人' }
+            }
+        ];
 
-            const bw = Math.min(160, this.width * 0.36);
-            const bh = Math.max(64, Math.min(80, this.height * 0.13));
-            const sp = Math.min(14, this.width * 0.03);
-            const row1Y = this.height * 0.22;
-            const row2Y = row1Y + bh + sp;
-            const row3Y = row2Y + bh + sp;
-            const col1X = this.width / 2 - bw - sp / 2;
-            const col2X = this.width / 2 + sp / 2;
-
-            const classes = [
-                { name: '战士', color: '#ff6b3a', q: '旋风斩', e: '盾击', choice: 1, row: 0, col: 0 },
-                { name: '法师', color: '#4ecdc4', q: '魔法弹', e: '冰封新星', choice: 2, row: 0, col: 1 },
-                { name: '刺客', color: '#aa66ff', q: '闪现斩', e: '连刺', choice: 3, row: 1, col: 0 },
-                { name: '弓手', color: '#aaff44', q: '穿透箭', e: '箭雨', choice: 4, row: 1, col: 1 },
-                { name: '圣骑士', color: '#ffd700', q: '圣光打击', e: '神圣光环', choice: 5, row: 2, col: 0 }
-            ];
-
-            for (const cls of classes) {
-                let bx, by;
-                if (cls.row === 2) {
-                    bx = this.width / 2 - bw / 2;
-                    by = row3Y;
-                } else {
-                    bx = cls.col === 0 ? col1X : col2X;
-                    by = cls.row === 0 ? row1Y : row2Y;
-                }
-                this.drawButton(bx, by, bw, bh, cls.color, cls.name, cls.choice);
-                ctx.save();
-                ctx.fillStyle = 'rgba(200,232,255,0.75)';
-                ctx.font = `${descFontSize}px Arial`;
-                ctx.textAlign = 'center';
-                ctx.fillText(`Q:${cls.q}  E:${cls.e}`, bx + bw / 2, by + bh + 13);
-                ctx.restore();
+        // 卡片布局
+        const n = classDefs.length;
+        let cardW, cardH, cols, rows, startX, startY, gapX, gapY;
+        if (portrait) {
+            // 竖屏:2列3行(最后一行居中)
+            cols = 2; rows = 3;
+            gapX = Math.min(10, W * 0.02); gapY = Math.min(8, H * 0.015);
+            cardW = (W - gapX * 3) / 2;
+            cardH = Math.min(155, (H * 0.84 - gapY * (rows + 1)) / rows);
+            startX = gapX;
+            startY = H * 0.12;
+        } else {
+            // 横屏:5列1行 或 按宽度降级到2行
+            const maxCardW = Math.min(138, (W - 12 * 6) / 5);
+            if (maxCardW >= 100) {
+                cols = 5; rows = 1;
+                cardW = maxCardW;
+                cardH = Math.min(240, H * 0.72);
+                gapX = (W - cardW * 5) / 6;
+                gapY = 0;
+                startX = gapX;
+                startY = H * 0.14;
+            } else {
+                cols = 3; rows = 2;
+                gapX = Math.min(10, W * 0.02); gapY = Math.min(10, H * 0.02);
+                cardW = (W - gapX * 4) / 3;
+                cardH = Math.min(160, (H * 0.8 - gapY * 3) / 2);
+                startX = gapX;
+                startY = H * 0.13;
             }
         }
+
+        const nameFS   = Math.min(15, cardW * 0.13);
+        const tagFS    = Math.min(10, cardW * 0.085);
+        const statFS   = Math.min(10, cardW * 0.083);
+        const skillFS  = Math.min(10, cardW * 0.085);
+        const descFS   = Math.min(9,  cardW * 0.075);
+        const rarityColor = { common: '#90a4ae', rare: '#42a5f5', epic: '#ba68c8' };
+
+        classDefs.forEach((cls, i) => {
+            let col = i % cols;
+            let row = Math.floor(i / cols);
+            // 最后一行若只剩一个,居中
+            const lastRowCount = n % cols || cols;
+            if (row === rows - 1 && lastRowCount < cols) {
+                col = i - row * cols;
+                const totalW = lastRowCount * cardW + (lastRowCount - 1) * gapX;
+                var bx = (W - totalW) / 2 + col * (cardW + gapX);
+            } else {
+                var bx = startX + col * (cardW + gapX);
+            }
+            const by = startY + row * (cardH + gapY);
+
+            ctx.save();
+            // 卡片背景
+            const cg = ctx.createLinearGradient(bx, by, bx, by + cardH);
+            cg.addColorStop(0, 'rgba(18,26,52,0.97)');
+            cg.addColorStop(1, 'rgba(8,12,28,0.97)');
+            ctx.fillStyle = cg;
+            ctx.shadowBlur = 18; ctx.shadowColor = cls.color;
+            roundRect(ctx, bx, by, cardW, cardH, 10);
+            ctx.fill();
+            ctx.shadowBlur = 0;
+            ctx.strokeStyle = `${cls.color}cc`;
+            ctx.lineWidth = 2;
+            roundRect(ctx, bx, by, cardW, cardH, 10);
+            ctx.stroke();
+
+            let oy = by + 10;
+
+            // 图标 + 名称
+            ctx.shadowBlur = 12; ctx.shadowColor = cls.color;
+            ctx.fillStyle = cls.color;
+            ctx.font = `bold ${Math.min(22, cardW * 0.18)}px Arial`;
+            ctx.textAlign = 'center'; ctx.textBaseline = 'top';
+            ctx.fillText(cls.icon, bx + cardW / 2, oy);
+            oy += Math.min(22, cardW * 0.18) + 4;
+
+            ctx.shadowBlur = 8;
+            ctx.font = `bold ${nameFS}px Arial`;
+            ctx.fillText(cls.name, bx + cardW / 2, oy);
+            oy += nameFS + 3;
+            ctx.shadowBlur = 0;
+
+            // 标签
+            ctx.fillStyle = cls.tagColor;
+            ctx.font = `${tagFS}px Arial`;
+            ctx.fillText(cls.tag, bx + cardW / 2, oy);
+            oy += tagFS + 4;
+
+            // 特色描述
+            ctx.fillStyle = 'rgba(200,232,255,0.8)';
+            ctx.font = `${statFS}px Arial`;
+            this._wrapTextCenter(ctx, cls.flavor, bx + cardW / 2, oy, cardW - 10, statFS + 2);
+            oy += (statFS + 2) * Math.ceil(ctx.measureText(cls.flavor).width / (cardW - 10)) + 3;
+
+            // 属性加成
+            ctx.fillStyle = 'rgba(160,200,160,0.75)';
+            ctx.font = `${statFS * 0.9}px Arial`;
+            for (const st of cls.stats) {
+                ctx.fillText(st, bx + cardW / 2, oy);
+                oy += statFS + 1;
+            }
+            oy += 4;
+
+            // 分隔线
+            ctx.strokeStyle = `${cls.color}44`;
+            ctx.lineWidth = 1;
+            ctx.beginPath();
+            ctx.moveTo(bx + 8, oy); ctx.lineTo(bx + cardW - 8, oy);
+            ctx.stroke();
+            oy += 5;
+
+            // Q/E 技能
+            for (const [key, sk] of [['Q', cls.q], ['E', cls.e]]) {
+                ctx.fillStyle = key === 'Q' ? cls.color : 'rgba(200,200,255,0.9)';
+                ctx.font = `bold ${skillFS}px Arial`;
+                ctx.textAlign = 'left'; ctx.textBaseline = 'top';
+                ctx.fillText(`[${key}] ${sk.name}`, bx + 8, oy);
+                ctx.fillStyle = 'rgba(180,180,180,0.6)';
+                ctx.font = `${skillFS * 0.85}px Arial`;
+                ctx.fillText(`CD:${sk.cd}`, bx + cardW - 8 - ctx.measureText(`CD:${sk.cd}`).width, oy);
+                oy += skillFS + 2;
+                ctx.fillStyle = 'rgba(180,210,240,0.7)';
+                ctx.font = `${descFS}px Arial`;
+                this._wrapText(ctx, sk.desc, bx + 8, oy, cardW - 16, descFS + 2);
+                const descLines = Math.ceil(ctx.measureText(sk.desc).width / (cardW - 16)) || 1;
+                oy += (descFS + 2) * descLines + 4;
+            }
+
+            ctx.restore();
+
+            // 注册命中区
+            this.buttons.push({ x: bx, y: by, width: cardW, height: cardH, choice: cls.choice });
+        });
     }
     
     handleClassChoice(choice) {
-        const classDefs = {
-            1: { name: 'warrior',  qCD: 3,  eCD: 5  },
-            2: { name: 'mage',     qCD: 1,  eCD: 8  },
-            3: { name: 'assassin', qCD: 4,  eCD: 6  },
-            4: { name: 'archer',   qCD: 3,  eCD: 8  },
-            5: { name: 'paladin',  qCD: 4,  eCD: 12 }
-        };
-        const def = classDefs[choice];
-        if (!def) return;
-        this.player.class = def.name;
-        this.player.skillQ = { cooldown: 0, maxCooldown: def.qCD, level: 1 };
-        this.player.skillE = { cooldown: 0, maxCooldown: def.eCD, level: 1 };
+        const nameByChoice = { 1: 'warrior', 2: 'mage', 3: 'assassin', 4: 'archer', 5: 'paladin' };
+        const name = nameByChoice[choice];
+        if (!name) return;
+        const cd = CLASS_BASE_CD[name];
+        this.player.class = name;
+        this.player.skillQ = { cooldown: 0, maxCooldown: cd.q, level: 1 };
+        this.player.skillE = { cooldown: 0, maxCooldown: cd.e, level: 1 };
+
+        // 应用职业基础属性偏移
+        const adj = CLASS_BASE_ADJUST[name] || {};
+        if (adj.attack)    this.player.attack += adj.attack;
+        if (adj.defense)   this.player.defense = Math.max(0, this.player.defense + adj.defense);
+        if (adj.maxHealth) { this.player.maxHealth += adj.maxHealth; this.player.currentHealth = this.player.maxHealth; }
+        if (adj.speed)     this.player.speed += adj.speed;
+        if (adj.manaRegen) this.player.manaRegen += adj.manaRegen;
+        if (adj.maxMana)   { this.player.maxMana += adj.maxMana; this.player.mana = this.player.maxMana; }
+        if (adj.autoAttackDmgMult) this.player.autoAttackDmgMult = (this.player.autoAttackDmgMult || 1) * adj.autoAttackDmgMult;
 
         this.showingClassSelection = false;
         if (this.player.potentialPoints > 0) {
@@ -2017,7 +2513,7 @@ class Game {
         ctx.fillText(text, x + width / 2, y + height / 2);
         ctx.restore();
 
-        this.buttons = this.buttons || [];
+        // 命中区(this.buttons 在每帧 render 开头由调用方清空)
         this.buttons.push({ x, y, width, height, choice });
     }
     
@@ -2051,8 +2547,8 @@ class Game {
     }
     
     endGame() {
-        clearInterval(this.gameLoop);
         this.isRunning = false;
+        if (this._rafId) { cancelAnimationFrame(this._rafId); this._rafId = null; }
         document.getElementById('finalTime').textContent = Math.floor(this.gameTime);
         document.getElementById('finalScore').textContent = this.score;
         document.getElementById('gameOver').style.display = 'flex';
@@ -2139,13 +2635,13 @@ class Game {
     }
 
     renderParticles() {
+        // 去 shadowBlur:粒子数量大时 shadow 是主要瓶颈,关闭后大幅提速
         const ctx = this.ctx;
         ctx.save();
+        ctx.shadowBlur = 0;
         for (const p of this.particles) {
             ctx.globalAlpha = p.life;
             ctx.fillStyle = p.color;
-            ctx.shadowBlur = 6;
-            ctx.shadowColor = p.color;
             ctx.beginPath();
             ctx.arc(p.x, p.y, p.size * p.life, 0, Math.PI * 2);
             ctx.fill();
@@ -2153,11 +2649,123 @@ class Game {
         ctx.restore();
     }
 
+    _renderFreezeOverlay() {
+        if (!this.freezeOverlay || this.enemyFreezeTimer <= 0) {
+            this.freezeOverlay = null;
+            return;
+        }
+        const { duration, cracks, corners } = this.freezeOverlay;
+        const ratio = this.enemyFreezeTimer / duration; // 1→0 随时间消退
+        // 入场：前 0.3s 快速冻结铺开；消退：最后 1s 渐淡
+        const fadeIn  = Math.min(1, (duration - this.enemyFreezeTimer) / 0.3);
+        const fadeOut = Math.min(1, this.enemyFreezeTimer / 1.0);
+        const alpha   = Math.min(fadeIn, fadeOut);
+        if (alpha <= 0) return;
+
+        const ctx = this.ctx;
+        const W = this.width, H = this.height;
+
+        ctx.save();
+
+        // ── 全屏蓝色半透明蒙版 ──
+        ctx.globalAlpha = alpha * 0.22;
+        const grad = ctx.createRadialGradient(W/2, H/2, 0, W/2, H/2, W * 0.75);
+        grad.addColorStop(0, 'rgba(140,220,255,0)');
+        grad.addColorStop(0.6, 'rgba(100,190,255,0.4)');
+        grad.addColorStop(1, 'rgba(40,120,220,0.9)');
+        ctx.fillStyle = grad;
+        ctx.fillRect(0, 0, W, H);
+
+        // ── 四角冰晶簇 ──
+        ctx.globalAlpha = alpha * 0.9;
+        for (const c of corners) {
+            const ox = c.ox * W, oy = c.oy * H;
+            const len = c.len * Math.min(W, H) * fadeIn;
+            const halfW = c.w * Math.min(W, H);
+            const ex = ox + Math.cos(c.a) * len;
+            const ey = oy + Math.sin(c.a) * len;
+            const px = Math.cos(c.a + Math.PI/2) * halfW;
+            const py = Math.sin(c.a + Math.PI/2) * halfW;
+            const iceGrad = ctx.createLinearGradient(ox, oy, ex, ey);
+            iceGrad.addColorStop(0, 'rgba(200,240,255,0.95)');
+            iceGrad.addColorStop(0.5, 'rgba(120,200,255,0.8)');
+            iceGrad.addColorStop(1, 'rgba(80,160,220,0.3)');
+            ctx.fillStyle = iceGrad;
+            ctx.shadowBlur = 8;
+            ctx.shadowColor = '#88ccff';
+            ctx.beginPath();
+            ctx.moveTo(ox + px, oy + py);
+            ctx.lineTo(ex, ey);
+            ctx.lineTo(ox - px, oy - py);
+            ctx.closePath();
+            ctx.fill();
+        }
+
+        // ── 冰裂纹 ──
+        ctx.shadowBlur = 4;
+        ctx.shadowColor = '#aaddff';
+        ctx.lineCap = 'round';
+        for (const crack of cracks) {
+            ctx.globalAlpha = alpha * 0.75;
+            ctx.strokeStyle = 'rgba(180,230,255,0.85)';
+            ctx.lineWidth = crack.width;
+            ctx.beginPath();
+            ctx.moveTo(crack.sx * W, crack.sy * H);
+            for (const seg of crack.segs) {
+                ctx.lineTo(seg.x * W, seg.y * H);
+            }
+            ctx.stroke();
+            // 内芯高光
+            ctx.globalAlpha = alpha * 0.4;
+            ctx.strokeStyle = 'rgba(240,250,255,0.9)';
+            ctx.lineWidth = crack.width * 0.4;
+            ctx.beginPath();
+            ctx.moveTo(crack.sx * W, crack.sy * H);
+            for (const seg of crack.segs) {
+                ctx.lineTo(seg.x * W, seg.y * H);
+            }
+            ctx.stroke();
+        }
+
+        // ── 四边冰霜边框 ──
+        ctx.shadowBlur = 0;
+        const edgeH = H * 0.18 * fadeIn;
+        const edgeW = W * 0.18 * fadeIn;
+        const makeEdgeGrad = (x0, y0, x1, y1) => {
+            const g = ctx.createLinearGradient(x0, y0, x1, y1);
+            g.addColorStop(0, `rgba(160,220,255,${alpha * 0.6})`);
+            g.addColorStop(1, 'rgba(160,220,255,0)');
+            return g;
+        };
+        ctx.fillStyle = makeEdgeGrad(0, 0, 0, edgeH);
+        ctx.fillRect(0, 0, W, edgeH);
+        ctx.fillStyle = makeEdgeGrad(0, H, 0, H - edgeH);
+        ctx.fillRect(0, H - edgeH, W, edgeH);
+        ctx.fillStyle = makeEdgeGrad(0, 0, edgeW, 0);
+        ctx.fillRect(0, 0, edgeW, H);
+        ctx.fillStyle = makeEdgeGrad(W, 0, W - edgeW, 0);
+        ctx.fillRect(W - edgeW, 0, edgeW, H);
+
+        // ── 倒计时文字 ──
+        if (this.enemyFreezeTimer > 0.5) {
+            ctx.globalAlpha = alpha * 0.9;
+            ctx.shadowBlur = 14;
+            ctx.shadowColor = '#aaddff';
+            ctx.fillStyle = '#ddf4ff';
+            ctx.font = `bold ${Math.min(20, W * 0.04)}px Arial`;
+            ctx.textAlign = 'center';
+            ctx.textBaseline = 'top';
+            ctx.fillText(`❄ 冻结 ${this.enemyFreezeTimer.toFixed(1)}s ❄`, W / 2, 10);
+        }
+
+        ctx.restore();
+    }
+
     render() {
         const ctx = this.ctx;
         ctx.save();
-        // 屏幕震动:对整个画面施加随机平移
-        if (this.screenShake > 0) {
+        // 屏幕震动:对整个画面施加随机平移(暂停时不抖,避免 warning 期间暂停定格抖动)
+        if (this.screenShake > 0 && !this.isPaused) {
             const intensity = Math.min(12, this.screenShake * 30);
             ctx.translate((Math.random() - 0.5) * intensity, (Math.random() - 0.5) * intensity);
         }
@@ -2166,8 +2774,9 @@ class Game {
 
         this.player.render(this.ctx);
 
+        const frozen = this.enemyFreezeTimer > 0;
         for (let enemy of this.enemies) {
-            enemy.render(this.ctx);
+            enemy.render(this.ctx, frozen);
         }
 
         // 渲染魔王(在敌人之上,投射物之下)
@@ -2181,11 +2790,18 @@ class Game {
             projectile.render(this.ctx);
         }
 
+        for (let b of this.enemyBullets) {
+            b.render(this.ctx);
+        }
+
         this._renderEffects();
 
         this.renderParticles();
 
         ctx.restore(); // 结束震动 transform
+
+        // 全屏冰封叠加层(不受震动影响,叠在游戏世界之上 HUD 之下)
+        this._renderFreezeOverlay();
 
         // 以下 UI 不受震动影响
         this._renderSkillHUD();
@@ -2329,7 +2945,7 @@ class Game {
                     ctx.stroke();
                 }
                 ctx.restore();
-                if (fx.rotSpeed) fx.rotation = (fx.rotation || 0) + fx.rotSpeed * 0.016;
+                if (fx.rotSpeed) fx.rotation = (fx.rotation || 0) + fx.rotSpeed * DT;
             } else if (fx.type === 'shockwave') {
                 const prog = 1 - alpha;
                 const r = fx.radius + (fx.maxRadius - fx.radius) * prog;
@@ -2440,8 +3056,14 @@ class Game {
         const baseX = this.width - (slotW * 2 + margin * 3);
         const baseY = this.height - slotH - margin * 2 - 16;
 
+        // 每帧重置技能命中区
+        this.skillButtons = [
+            { x: baseX,              y: baseY, w: slotW, h: slotH, skill: 'Q' },
+            { x: baseX + slotW + margin, y: baseY, w: slotW, h: slotH, skill: 'E' }
+        ];
+
         const qNames = { warrior: '旋', mage: '弹', assassin: '闪', archer: '穿', paladin: '圣' };
-        const eNames = { warrior: '盾', mage: '冰', assassin: '刺', archer: '雨', paladin: '环' };
+        const eNames = { warrior: '盾', mage: '斥', assassin: '刺', archer: '雨', paladin: '环' };
         const qColors = { warrior: '#ff6030', mage: '#4ecdc4', assassin: '#aa66ff', archer: '#aaff44', paladin: '#ffd700' };
         const eColors = { warrior: '#4488ff', mage: '#88eeff', assassin: '#ffffff', archer: '#88ff44', paladin: '#fff8dc' };
 
@@ -2531,7 +3153,7 @@ class Game {
             this._renderResourceBar(baseX - 22, baseY, 14, slotH + 20, this.player.assassinCharge, this.player.maxAssassinCharge, '#ce93d8', '#4a148c', '蓄');
         }
 
-        // 法师 Q 开关激活时,在 Q 槽周围加发光指示
+        // 法师 Q 开关激活时,在 Q 槽周围加发光指示 + 显示每次普攻消耗
         if (cls === 'mage' && this.player.qToggleActive) {
             const qSlotX = slots[0].x;
             ctx.save();
@@ -2541,6 +3163,27 @@ class Game {
             ctx.shadowColor = '#4dd0e1';
             roundRect(ctx, qSlotX - 3, baseY - 3, slotW + 6, slotH + 6, slotR + 2);
             ctx.stroke();
+            ctx.shadowBlur = 0;
+            const cost = Math.max(1, Math.ceil(this.player.maxMana * 0.10 * (this.mageQCostMult || 1)));
+            ctx.fillStyle = '#4dd0e1';
+            ctx.font = 'bold 10px Arial';
+            ctx.textAlign = 'center';
+            ctx.textBaseline = 'bottom';
+            ctx.fillText(`-${cost}/发`, qSlotX + slotW / 2, baseY - 6);
+            ctx.restore();
+        }
+
+        // 触屏/鼠标提示:选职业后前 12s 显示"可点击"小字
+        if (this.player.class && this.gameTime < 12) {
+            const alpha = Math.min(1, (12 - this.gameTime) / 3); // 最后 3s 渐隐
+            ctx.save();
+            ctx.globalAlpha = alpha * 0.7;
+            ctx.fillStyle = '#ffffff';
+            ctx.font = `${Math.max(9, Math.min(11, this.width * 0.022))}px Arial`;
+            ctx.textAlign = 'center';
+            ctx.textBaseline = 'top';
+            ctx.fillText('可点击', baseX + slotW / 2, baseY + slotH + 22);
+            ctx.fillText('可点击', baseX + slotW + margin + slotW / 2, baseY + slotH + 22);
             ctx.restore();
         }
 
@@ -2653,8 +3296,6 @@ class Player {
         this.potentialPoints = 0;
         
         this.class = null;
-        this.skillCooldown = 0;
-        this.maxSkillCooldown = 3000;
 
         this.skillQ = { cooldown: 0, maxCooldown: 3, level: 1 };
         this.skillE = { cooldown: 0, maxCooldown: 5, level: 1 };
@@ -2757,7 +3398,7 @@ class Player {
         
         // 受击无敌帧倒计时
         if (this.hurtCooldown > 0) {
-            this.hurtCooldown -= 0.016;
+            this.hurtCooldown -= DT;
             if (this.hurtCooldown < 0) this.hurtCooldown = 0;
         }
 
@@ -2773,20 +3414,12 @@ class Player {
         this.lastChargeX = this.x;
         this.lastChargeY = this.y;
 
-        // 更新职业相关逻辑
-        this.updateClass();
     }
-    
-    updateClass() {
-        if (this.skillCooldown > 0) {
-            this.skillCooldown -= 16;
-        }
-    }
-    
+
     takeDamage(damage) {
         const flatReduction = this.flatDamageReduction || 0;
         let actualDamage = Math.max(1, damage - this.defense - flatReduction);
-        // 圣骑士护盾优先抵挡
+        // 圣骑士护盾优先全额抵挡(不再因 Math.max(1) 强制漏 1 点)
         if (this.shield > 0) {
             const absorbed = Math.min(this.shield, actualDamage);
             this.shield -= absorbed;
@@ -2918,7 +3551,13 @@ class Enemy {
         this.chaseRange = 150; // 追击范围
         
         this.restTimer = 0;
-        this.restDuration = 2000;
+        this.restDuration = 2; // 秒(用 DT 推进,暂停时自动停)
+
+        // 炮手专属
+        this.shootTimer = 1 + Math.random() * 1.5; // 错开初始开火,避免齐射
+        this.shootInterval = 2.5;
+        this.pendingShot = null;
+        this.aimAngle = 0;
         this.moveDistance = 0;
         this.maxMoveDistance = 200;
         this.isResting = false;
@@ -2957,6 +3596,16 @@ class Enemy {
                 this.defense = 15 * this.difficulty;
                 this.color = '#9c27b0';
                 break;
+            case 'gunner': // 远程炮手:不移动,定期朝玩家发射投射物
+                this.size = 32;
+                this.speed = 0;
+                this.maxHealth = 55 * this.difficulty;
+                this.currentHealth = 55 * this.difficulty;
+                this.attack = 15 * this.difficulty;
+                this.defense = 2 * this.difficulty;
+                this.color = '#ff6f00';
+                this.shootInterval = Math.max(1.0, 2.5 - (this.difficulty - 1) * 0.3); // 难度越高射速越快
+                break;
             default: // 默认追击者
                 this.type = 'chaser';
                 this.size = 30;
@@ -2971,7 +3620,7 @@ class Enemy {
     
     update(playerX, playerY, width, height) {
         if (this.stunTimer > 0) {
-            this.stunTimer -= 0.016;
+            this.stunTimer -= DT;
             return;
         }
         switch (this.type) {
@@ -2984,9 +3633,32 @@ class Enemy {
             case 'giant':
                 this.updateGiant(playerX, playerY);
                 break;
+            case 'gunner':
+                this.updateGunner(playerX, playerY);
+                break;
         }
     }
-    
+
+    updateGunner(playerX, playerY) {
+        // 计算瞄准角
+        const dx = playerX - this.x;
+        const dy = playerY - this.y;
+        this.aimAngle = Math.atan2(dy, dx);
+
+        this.shootTimer -= DT;
+        if (this.shootTimer <= 0) {
+            this.shootTimer = this.shootInterval;
+            const speed = 4.5 + this.difficulty * 0.5;
+            this.pendingShot = {
+                x: this.x + this.size / 2,
+                y: this.y + this.size / 2,
+                vx: Math.cos(this.aimAngle) * speed,
+                vy: Math.sin(this.aimAngle) * speed,
+                damage: this.attack
+            };
+        }
+    }
+
     updateChaser(playerX, playerY) {
         // 追击者：持续追击玩家
         const dx = playerX - this.x;
@@ -3049,8 +3721,8 @@ class Enemy {
     updateGiant(playerX, playerY) {
         // 巨型追击者：移动一定距离后休息
         if (this.isResting) {
-            // 休息中
-            this.restTimer += 16; // 假设每帧16毫秒
+            // 休息中(秒)
+            this.restTimer += DT;
             if (this.restTimer >= this.restDuration) {
                 this.isResting = false;
                 this.restTimer = 0;
@@ -3088,7 +3760,13 @@ class Enemy {
         return actualDamage;
     }
     
-    render(ctx) {
+    render(ctx, frozen = false) {
+        // 炮手有专属渲染
+        if (this.type === 'gunner') {
+            this._renderGunner(ctx, frozen);
+            return;
+        }
+
         ctx.save();
         const glowColors = { chaser: '#ff1744', patroller: '#2979ff', giant: '#d500f9' };
         const lightColors = { chaser: '#ff6b6b', patroller: '#64b5f6', giant: '#e040fb' };
@@ -3134,7 +3812,7 @@ class Enemy {
         ctx.font = `bold ${Math.floor(this.size * 0.38)}px Arial`;
         ctx.textAlign = 'center';
         ctx.textBaseline = 'middle';
-        const labels = { chaser: '追', patroller: '巡', giant: '巨' };
+        const labels = { chaser: '追', patroller: '巡', giant: '巨', gunner: '炮' };
         ctx.fillText(labels[this.type] || '?', this.x + this.size / 2, this.y + this.size / 2);
         ctx.restore();
 
@@ -3154,6 +3832,170 @@ class Enemy {
                 ctx.textBaseline = 'middle';
                 ctx.fillText('★', sx, sy);
             }
+            ctx.restore();
+        }
+
+        // 冻结时:在敌人身上叠加冰封效果(蓝色半透明 + 冰晶高光)
+        if (frozen) {
+            ctx.save();
+            ctx.globalAlpha = 0.55;
+            // 蓝色冰块叠加
+            const iceGrad = ctx.createLinearGradient(this.x, this.y, this.x + this.size, this.y + this.size);
+            iceGrad.addColorStop(0, 'rgba(160,220,255,0.9)');
+            iceGrad.addColorStop(1, 'rgba(60,140,220,0.7)');
+            ctx.fillStyle = iceGrad;
+            ctx.shadowBlur = 14;
+            ctx.shadowColor = '#88ddff';
+            roundRect(ctx, this.x, this.y, this.size, this.size, this.type === 'giant' ? 10 : 6);
+            ctx.fill();
+            // 冰晶高光纹路
+            ctx.globalAlpha = 0.7;
+            ctx.strokeStyle = 'rgba(200,240,255,0.8)';
+            ctx.lineWidth = 1.2;
+            ctx.shadowBlur = 0;
+            const cx2 = this.x + this.size / 2, cy2 = this.y + this.size / 2;
+            // 米字纹
+            for (let i = 0; i < 4; i++) {
+                const a = (i / 4) * Math.PI;
+                const r = this.size * 0.42;
+                ctx.beginPath();
+                ctx.moveTo(cx2 + Math.cos(a) * r, cy2 + Math.sin(a) * r);
+                ctx.lineTo(cx2 - Math.cos(a) * r, cy2 - Math.sin(a) * r);
+                ctx.stroke();
+            }
+            // 中心小六角
+            ctx.beginPath();
+            for (let i = 0; i < 6; i++) {
+                const a = (i / 6) * Math.PI * 2;
+                const r = this.size * 0.12;
+                i === 0 ? ctx.moveTo(cx2 + Math.cos(a)*r, cy2 + Math.sin(a)*r)
+                        : ctx.lineTo(cx2 + Math.cos(a)*r, cy2 + Math.sin(a)*r);
+            }
+            ctx.closePath();
+            ctx.stroke();
+            // ❄ 图标
+            ctx.globalAlpha = 0.9;
+            ctx.fillStyle = '#ddf4ff';
+            ctx.font = `bold ${Math.floor(this.size * 0.35)}px Arial`;
+            ctx.textAlign = 'center';
+            ctx.textBaseline = 'middle';
+            ctx.fillText('❄', cx2, cy2);
+            ctx.restore();
+        }
+    }
+
+    _renderGunner(ctx, frozen) {
+        const cx = this.x + this.size / 2;
+        const cy = this.y + this.size / 2;
+
+        ctx.save();
+        // 底座:深橙方块
+        ctx.shadowBlur = 14;
+        ctx.shadowColor = '#ff6f00';
+        const grad = ctx.createLinearGradient(this.x, this.y, this.x + this.size, this.y + this.size);
+        grad.addColorStop(0, '#ffab40');
+        grad.addColorStop(1, '#e65100');
+        ctx.fillStyle = grad;
+        roundRect(ctx, this.x, this.y, this.size, this.size, 7);
+        ctx.fill();
+        ctx.shadowBlur = 0;
+        ctx.strokeStyle = 'rgba(255,111,0,0.8)';
+        ctx.lineWidth = 1.5;
+        roundRect(ctx, this.x, this.y, this.size, this.size, 7);
+        ctx.stroke();
+
+        // 炮管:从中心向瞄准角延伸的矩形
+        const barrelLen = this.size * 0.65;
+        const barrelW   = this.size * 0.28;
+        ctx.save();
+        ctx.translate(cx, cy);
+        ctx.rotate(this.aimAngle);
+        ctx.shadowBlur = 8;
+        ctx.shadowColor = '#ff9800';
+        const bGrad = ctx.createLinearGradient(0, -barrelW / 2, barrelLen, barrelW / 2);
+        bGrad.addColorStop(0, '#ffd54f');
+        bGrad.addColorStop(1, '#bf360c');
+        ctx.fillStyle = bGrad;
+        roundRect(ctx, 0, -barrelW / 2, barrelLen, barrelW, 3);
+        ctx.fill();
+        ctx.shadowBlur = 0;
+        ctx.strokeStyle = 'rgba(255,200,50,0.7)';
+        ctx.lineWidth = 1;
+        roundRect(ctx, 0, -barrelW / 2, barrelLen, barrelW, 3);
+        ctx.stroke();
+        ctx.restore();
+
+        // 炮管口火花(开火前 0.3s 闪烁)
+        if (this.shootTimer < 0.3) {
+            const flash = (0.3 - this.shootTimer) / 0.3;
+            ctx.save();
+            ctx.globalAlpha = flash * 0.8;
+            ctx.shadowBlur = 16;
+            ctx.shadowColor = '#ffeb3b';
+            ctx.fillStyle = '#ffee58';
+            const ex = cx + Math.cos(this.aimAngle) * barrelLen;
+            const ey = cy + Math.sin(this.aimAngle) * barrelLen;
+            ctx.beginPath();
+            ctx.arc(ex, ey, barrelW * 0.7, 0, Math.PI * 2);
+            ctx.fill();
+            ctx.restore();
+        }
+
+        // 中心图标
+        ctx.save();
+        ctx.fillStyle = 'rgba(255,255,255,0.9)';
+        ctx.font = `bold ${Math.floor(this.size * 0.3)}px Arial`;
+        ctx.textAlign = 'center';
+        ctx.textBaseline = 'middle';
+        ctx.fillText('炮', cx, cy);
+        ctx.restore();
+
+        ctx.restore();
+
+        // 血条
+        const healthBarHeight = 4;
+        const healthPercentage = this.currentHealth / this.maxHealth;
+        ctx.save();
+        ctx.fillStyle = 'rgba(0,0,0,0.5)';
+        roundRect(ctx, this.x, this.y - 10, this.size, healthBarHeight, 2);
+        ctx.fill();
+        ctx.fillStyle = '#ff6f00';
+        ctx.shadowBlur = 4;
+        ctx.shadowColor = '#ff6f00';
+        roundRect(ctx, this.x, this.y - 10, this.size * healthPercentage, healthBarHeight, 2);
+        ctx.fill();
+        ctx.restore();
+
+        // 装弹进度条(显示下次开火倒计时)
+        const reloadPct = Math.max(0, 1 - this.shootTimer / this.shootInterval);
+        ctx.save();
+        ctx.fillStyle = 'rgba(0,0,0,0.4)';
+        roundRect(ctx, this.x, this.y - 5, this.size, 3, 1);
+        ctx.fill();
+        ctx.fillStyle = reloadPct > 0.8 ? '#ffeb3b' : '#ff9800';
+        roundRect(ctx, this.x, this.y - 5, this.size * reloadPct, 3, 1);
+        ctx.fill();
+        ctx.restore();
+
+        // 冻结叠加
+        if (frozen) {
+            ctx.save();
+            ctx.globalAlpha = 0.55;
+            const iceGrad = ctx.createLinearGradient(this.x, this.y, this.x + this.size, this.y + this.size);
+            iceGrad.addColorStop(0, 'rgba(160,220,255,0.9)');
+            iceGrad.addColorStop(1, 'rgba(60,140,220,0.7)');
+            ctx.fillStyle = iceGrad;
+            ctx.shadowBlur = 14;
+            ctx.shadowColor = '#88ddff';
+            roundRect(ctx, this.x, this.y, this.size, this.size, 7);
+            ctx.fill();
+            ctx.globalAlpha = 0.9;
+            ctx.fillStyle = '#ddf4ff';
+            ctx.shadowBlur = 0;
+            ctx.font = `bold ${Math.floor(this.size * 0.35)}px Arial`;
+            ctx.textAlign = 'center';
+            ctx.textBaseline = 'middle';
+            ctx.fillText('❄', cx, cy);
             ctx.restore();
         }
     }
@@ -3199,9 +4041,9 @@ class Item {
     }
 
     update() {
-        this.duration -= 0.016;
+        this.duration -= DT;
         if (this.landTimer > 0) {
-            this.landTimer -= 0.016;
+            this.landTimer -= DT;
             // 缓动:easeOutQuad
             const t = 1 - Math.max(0, this.landTimer / this.maxLandTimer);
             const eased = 1 - (1 - t) * (1 - t);
@@ -3346,11 +4188,11 @@ class BlockBoss {
         if (this.retreating) {
             this.x += this.retreatVx;
             this.y += this.retreatVy;
-            this.retreatTimer -= 0.016;
+            this.retreatTimer -= DT;
             return;
         }
         if (this.stunTimer > 0) {
-            this.stunTimer -= 0.016;
+            this.stunTimer -= DT;
             return;
         }
         const dx = playerX - this.x;
@@ -3470,71 +4312,6 @@ class Projectile {
     }
 }
 
-class MagicProjectile {
-    constructor(x, y, dx, dy, target) {
-        this.x = x;
-        this.y = y;
-        this.size = 10;
-        this.dx = dx;
-        this.dy = dy;
-        this.color = '#4ecdc4';
-        this.target = target;
-        this.damage = 25;
-        this.trail = [];
-    }
-    
-    update() {
-        this.trail.push({ x: this.x + this.size / 2, y: this.y + this.size / 2 });
-        if (this.trail.length > 10) this.trail.shift();
-        this.x += this.dx;
-        this.y += this.dy;
-        
-        // 如果目标还存在，调整方向
-        if (this.target && this.target.currentHealth > 0) {
-            const dx = this.target.x + this.target.size / 2 - (this.x + this.size / 2);
-            const dy = this.target.y + this.target.size / 2 - (this.y + this.size / 2);
-            const distance = Math.sqrt(dx * dx + dy * dy);
-            
-            if (distance > 0) {
-                const speed = 8;
-                this.dx = (dx / distance) * speed;
-                this.dy = (dy / distance) * speed;
-            }
-        }
-    }
-    
-    render(ctx) {
-        const cx = this.x + this.size / 2;
-        const cy = this.y + this.size / 2;
-        ctx.save();
-        for (let i = 0; i < this.trail.length; i++) {
-            const a = (i / this.trail.length) * 0.45;
-            const r = (i / this.trail.length) * this.size * 0.6;
-            ctx.globalAlpha = a;
-            ctx.fillStyle = '#80cbc4';
-            ctx.beginPath();
-            ctx.arc(this.trail[i].x, this.trail[i].y, r, 0, Math.PI * 2);
-            ctx.fill();
-        }
-        ctx.globalAlpha = 1;
-        ctx.shadowBlur = 18;
-        ctx.shadowColor = '#4ecdc4';
-        ctx.fillStyle = '#4ecdc4';
-        ctx.beginPath();
-        ctx.arc(cx, cy, this.size / 2, 0, Math.PI * 2);
-        ctx.fill();
-
-        const gradient = ctx.createRadialGradient(cx, cy, 0, cx, cy, this.size);
-        gradient.addColorStop(0, 'rgba(178, 255, 250, 0.9)');
-        gradient.addColorStop(1, 'rgba(78, 205, 196, 0)');
-        ctx.fillStyle = gradient;
-        ctx.beginPath();
-        ctx.arc(cx, cy, this.size, 0, Math.PI * 2);
-        ctx.fill();
-        ctx.restore();
-    }
-}
-
 class PiercingArrow {
     constructor(x, y, dx, dy, damage, game) {
         this.x = x;
@@ -3613,6 +4390,63 @@ class PiercingArrow {
         ctx.lineTo(-8, -3);
         ctx.lineTo(-8, 3);
         ctx.closePath();
+        ctx.fill();
+        ctx.restore();
+        ctx.restore();
+    }
+}
+
+class EnemyBullet {
+    constructor(x, y, vx, vy, damage) {
+        this.x = x - 6;
+        this.y = y - 6;
+        this.size = 12;
+        this.vx = vx;
+        this.vy = vy;
+        this.damage = damage;
+        this.trail = [];
+        this.angle = Math.atan2(vy, vx);
+    }
+
+    update() {
+        this.trail.push({ x: this.x + this.size / 2, y: this.y + this.size / 2 });
+        if (this.trail.length > 8) this.trail.shift();
+        this.x += this.vx;
+        this.y += this.vy;
+    }
+
+    render(ctx) {
+        const cx = this.x + this.size / 2;
+        const cy = this.y + this.size / 2;
+        ctx.save();
+        // 弹道尾迹
+        for (let i = 0; i < this.trail.length; i++) {
+            const t = i / this.trail.length;
+            ctx.globalAlpha = t * 0.45;
+            ctx.fillStyle = '#ffcc80';
+            ctx.beginPath();
+            ctx.arc(this.trail[i].x, this.trail[i].y, this.size * 0.3 * t, 0, Math.PI * 2);
+            ctx.fill();
+        }
+        ctx.globalAlpha = 1;
+        // 炮弹主体:椭圆形朝飞行方向
+        ctx.shadowBlur = 12;
+        ctx.shadowColor = '#ff6f00';
+        ctx.save();
+        ctx.translate(cx, cy);
+        ctx.rotate(this.angle);
+        const bGrad = ctx.createRadialGradient(0, 0, 0, 0, 0, this.size * 0.6);
+        bGrad.addColorStop(0, '#ffee58');
+        bGrad.addColorStop(0.5, '#ff9800');
+        bGrad.addColorStop(1, '#bf360c');
+        ctx.fillStyle = bGrad;
+        ctx.beginPath();
+        ctx.ellipse(0, 0, this.size * 0.6, this.size * 0.38, 0, 0, Math.PI * 2);
+        ctx.fill();
+        // 高光
+        ctx.fillStyle = 'rgba(255,255,200,0.5)';
+        ctx.beginPath();
+        ctx.ellipse(-this.size * 0.15, -this.size * 0.1, this.size * 0.22, this.size * 0.12, -0.3, 0, Math.PI * 2);
         ctx.fill();
         ctx.restore();
         ctx.restore();
