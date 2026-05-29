@@ -2,79 +2,73 @@
 <html lang="zh-CN">
 <head>
     <meta charset="UTF-8">
-    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0, user-scalable=no">
     <title>方块快跑</title>
     <link rel="stylesheet" href="style.css">
 </head>
 <body>
-    <div class="game-container">
-        <h1>方块快跑</h1>
-        <canvas id="gameCanvas" width="800" height="600"></canvas>
-        <div class="game-info">
-            <div class="info-item">
-                <span>生命:</span>
-                <span id="life">3</span>
+    <!-- 联机大厅 overlay -->
+    <div id="mpOverlay" class="mp-overlay">
+        <div class="mp-card">
+            <h2 class="mp-title">方块快跑</h2>
+            <div class="mp-subtitle">生存即胜利</div>
+            <div class="mp-buttons">
+                <button id="mpCreate" class="mp-btn mp-btn-primary">创建房间</button>
+                <div class="mp-join-row">
+                    <input id="mpCode" class="mp-input" placeholder="输入房间码" maxlength="4" autocomplete="off">
+                    <button id="mpJoin" class="mp-btn mp-btn-secondary">加入</button>
+                </div>
+                <button id="mpSingle" class="mp-btn mp-btn-ghost">单人游戏</button>
             </div>
-            <div class="info-item">
-                <span>等级:</span>
-                <span id="level">1</span>
+            <div id="mpStatus" class="mp-status"></div>
+            <div id="mpLobby" class="mp-lobby" style="display:none">
+                <div class="mp-room-code">房间码: <span id="mpRoomCode">----</span></div>
+                <div id="mpPlayerList" class="mp-player-list"></div>
+                <button id="mpStart" class="mp-btn mp-btn-primary mp-start-btn" style="display:none">开始游戏</button>
+                <div id="mpWaitMsg" class="mp-wait-msg" style="display:none">等待房主开始游戏...</div>
             </div>
-            <div class="info-item">
-                <span>经验:</span>
-                <span id="exp">0</span>/<span id="expToNext">100</span>
-            </div>
-            <div class="info-item">
-                <span>潜能点:</span>
-                <span id="potentialPoints">0</span>
-            </div>
-            <div class="info-item">
-                <span>攻击力:</span>
-                <span id="attack">20</span>
-            </div>
-            <div class="info-item">
-                <span>防御力:</span>
-                <span id="defense">10</span>
-            </div>
-            <div class="info-item">
-                <span>最大生命值:</span>
-                <span id="maxHealth">100</span>
-            </div>
-            <div class="info-item">
-                <span>速度:</span>
-                <span id="speed">5</span>
-            </div>
-            <div class="info-item">
-                <span>职业:</span>
-                <span id="class">无</span>
-            </div>
-            <div class="info-item">
-                <span>技能:</span>
-                <span id="skillCooldown">无职业</span>
-            </div>
-            <div class="info-item">
-                <span>法力/信仰:</span>
-                <span id="mana">-</span>/<span id="maxMana">-</span>
-            </div>
-            <div class="info-item">
-                <span>时间:</span>
-                <span id="time">0</span>s
-            </div>
-            <div class="info-item">
-                <span>分数:</span>
-                <span id="score">0</span>
-            </div>
-        </div>
-        <div class="game-controls">
-            <button id="startBtn">开始游戏</button>
-            <button id="pauseBtn">暂停</button>
-        </div>
-        <div id="gameOver" class="game-over">
-            <h2>游戏结束</h2>
-            <p>生存时间: <span id="finalTime">0</span>秒</p>
-            <p>最终分数: <span id="finalScore">0</span></p>
-            <button id="restartBtn">重新开始</button>
         </div>
     </div>
+
+    <!-- 主游戏界面（全屏） -->
+    <canvas id="gameCanvas"></canvas>
+
+    <!-- DOM 信息面板（游戏中隐藏，仅用于 JS updateUI） -->
+    <div id="gameUI" style="display:none">
+        <span id="life">3</span>
+        <span id="level">1</span>
+        <span id="exp">0</span>
+        <span id="expToNext">100</span>
+        <span id="potentialPoints">0</span>
+        <span id="attack">20</span>
+        <span id="defense">10</span>
+        <span id="maxHealth">100</span>
+        <span id="speed">5</span>
+        <span id="class">无</span>
+        <span id="skillCooldown">无职业</span>
+        <span id="mana">-</span>
+        <span id="maxMana">-</span>
+        <span id="time">0</span>
+        <span id="score">0</span>
+    </div>
+
+    <!-- 开始/暂停按钮（游戏中不显示，通过 canvas 操作） -->
+    <div id="gameControls" style="display:none">
+        <button id="startBtn">开始游戏</button>
+        <button id="pauseBtn">暂停</button>
+    </div>
+
+    <!-- 游戏结束弹窗 -->
+    <div id="gameOver" class="game-over">
+        <h2>游戏结束</h2>
+        <p>生存时间: <span id="finalTime">0</span>秒</p>
+        <p>最终分数: <span id="finalScore">0</span></p>
+        <div class="game-over-btns">
+            <button id="restartBtn">重新开始</button>
+            <button id="backToLobbyBtn">返回大厅</button>
+        </div>
+    </div>
+
     <script src="game.js"></script>
 </body>
 </html>

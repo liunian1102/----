@@ -42,8 +42,10 @@ class Game {
     constructor() {
         this.canvas = document.getElementById('gameCanvas');
         this.ctx = this.canvas.getContext('2d');
-        this.width = this.canvas.width;
-        this.height = this.canvas.height;
+        this.gameScale = 1;
+        this.gameOffsetX = 0;
+        this.gameOffsetY = 0;
+        this.resizeCanvas();
         
         this.player = new Player(this.width / 2, this.height / 2);
         this.enemies = [];
@@ -128,6 +130,18 @@ class Game {
         this.boss = null;
         this.screenShake = 0;
         this._lastBossWarnSec = 0;
+
+        // ── 联机多人 ──
+        this.mpMode = null;           // null | 'host' | 'guest'
+        this.mpWs = null;
+        this.mpRoomCode = null;
+        this.mpPlayerId = null;       // 本机玩家 ID（host=0，guest=1/2/3）
+        this.mpPlayers = [];          // 其他玩家的渲染数据 [{id, x, y, size, currentHealth, maxHealth, class, hurtCooldown, invincibleTimer}]
+        this.mpGuestPlayers = new Map(); // host 端：playerId → Player 对象
+        this.mpGuestInputs = new Map();  // host 端：playerId → {keys, targetX, targetY, moving, castQ, castE}
+        this.mpFrameCount = 0;
+        this.mpStateBuffer = null;    // guest 端：最新收到的状态快照
+        this.mpServerUrl = 'ws://localhost:8080'; // 默认，可被大厅覆盖
 
         this.init();
     }
@@ -385,6 +399,17 @@ class Game {
         return stars;
     }
 
+    resizeCanvas() {
+        this.canvas.width = window.innerWidth;
+        this.canvas.height = window.innerHeight;
+        const s = Math.min(this.canvas.width / 800, this.canvas.height / 600);
+        this.gameScale = s;
+        this.gameOffsetX = (this.canvas.width - 800 * s) / 2;
+        this.gameOffsetY = (this.canvas.height - 600 * s) / 2;
+        this.width = 800;
+        this.height = 600;
+    }
+
     init() {
         this.bindEvents();
         this.updateUI();
@@ -398,11 +423,24 @@ class Game {
             }
             this.keys[e.key] = true;
 
+            if (e.key === 'p' || e.key === 'P' || e.key === 'Escape') {
+                if (this.isRunning) this.togglePause();
+            }
             if (!this.isPaused && this.isRunning) {
                 if (e.key === 'q' || e.key === 'Q') {
-                    this.castSkillQ();
+                    if (this.mpMode === 'guest') {
+                        if (this.mpWs && this.mpWs.readyState === WebSocket.OPEN)
+                            this.mpWs.send(JSON.stringify({ type: 'castSkill', skill: 'Q' }));
+                    } else {
+                        this.castSkillQ();
+                    }
                 } else if (e.key === 'e' || e.key === 'E') {
-                    this.castSkillE();
+                    if (this.mpMode === 'guest') {
+                        if (this.mpWs && this.mpWs.readyState === WebSocket.OPEN)
+                            this.mpWs.send(JSON.stringify({ type: 'castSkill', skill: 'E' }));
+                    } else {
+                        this.castSkillE();
+                    }
                 }
             }
         });
@@ -423,12 +461,14 @@ class Game {
             this.restartGame();
         });
         
-        // 统一坐标换算
+        // 统一坐标换算（含全屏缩放偏移）
         const toCanvas = (clientX, clientY) => {
             const rect = this.canvas.getBoundingClientRect();
+            const cssX = (clientX - rect.left) * (this.canvas.width / rect.width);
+            const cssY = (clientY - rect.top)  * (this.canvas.height / rect.height);
             return {
-                x: (clientX - rect.left) * (this.canvas.width  / rect.width),
-                y: (clientY - rect.top)  * (this.canvas.height / rect.height)
+                x: (cssX - this.gameOffsetX) / this.gameScale,
+                y: (cssY - this.gameOffsetY) / this.gameScale
             };
         };
 
@@ -463,6 +503,16 @@ class Game {
         this.canvas.addEventListener('touchstart', (e) => {
             e.preventDefault();
             handlePointer(e.touches[0].clientX, e.touches[0].clientY);
+        }, { passive: false });
+
+        this.canvas.addEventListener('touchmove', (e) => {
+            e.preventDefault();
+        }, { passive: false });
+
+        // 窗口尺寸变化时重新计算缩放
+        window.addEventListener('resize', () => {
+            clearTimeout(this._resizeTimer);
+            this._resizeTimer = setTimeout(() => this.resizeCanvas(), 100);
         });
     }
     
@@ -577,12 +627,541 @@ class Game {
         this.boss = null;
         this.screenShake = 0;
         this._lastBossWarnSec = 0;
+        // 联机状态重置
+        this.mpPlayers = [];
+        this.mpGuestPlayers = new Map();
+        this.mpGuestInputs = new Map();
+        this.mpFrameCount = 0;
+        this.mpStateBuffer = null;
+        this._mpGuestLastLevel = 1;
         document.getElementById('gameOver').style.display = 'none';
         this.updateUI();
         this.render();
     }
-    
+
+    // ══════════════════════════════════════════════════════════════════
+    //  联机多人 - 网络连接与房间管理
+    // ══════════════════════════════════════════════════════════════════
+
+    connectToServer(serverUrl) {
+        return new Promise((resolve, reject) => {
+            if (this.mpWs && this.mpWs.readyState === WebSocket.OPEN) { resolve(); return; }
+            const ws = new WebSocket(serverUrl);
+            ws.onopen = () => { this.mpWs = ws; this.mpServerUrl = serverUrl; resolve(); };
+            ws.onerror = () => reject(new Error('无法连接服务器'));
+            ws.onclose = () => {
+                if (this.isRunning) {
+                    this.isRunning = false;
+                    if (this._rafId) { cancelAnimationFrame(this._rafId); this._rafId = null; }
+                    this._mpShowStatus('与服务器断开连接', true);
+                }
+                this.mpWs = null;
+                this.mpMode = null;
+            };
+            ws.onmessage = (evt) => this._handleServerMessage(JSON.parse(evt.data));
+        });
+    }
+
+    _handleServerMessage(msg) {
+        switch (msg.type) {
+            case 'created':
+                this.mpPlayerId = msg.playerId; // 0
+                this.mpRoomCode = msg.code;
+                this._mpShowLobby(msg.code, true);
+                break;
+            case 'joined':
+                this.mpPlayerId = msg.playerId;
+                this.mpRoomCode = msg.code;
+                this._mpShowLobby(msg.code, false);
+                break;
+            case 'room_info':
+                this._mpUpdatePlayerList(msg.players);
+                break;
+            case 'player_joined':
+                this._mpShowStatus(`玩家 ${msg.playerId} 加入房间`);
+                break;
+            case 'player_left':
+                this.mpGuestPlayers.delete(msg.playerId);
+                this.mpGuestInputs.delete(msg.playerId);
+                this.mpPlayers = this.mpPlayers.filter(p => p.id !== msg.playerId);
+                this._mpShowStatus(`玩家 ${msg.playerId} 离开`);
+                break;
+            case 'game_start':
+                this._startMpGameLocal();
+                break;
+            case 'state':
+                if (this.mpMode === 'guest') this.mpStateBuffer = msg.data;
+                break;
+            case 'input':
+                if (this.mpMode === 'host') {
+                    this.mpGuestInputs.set(msg.playerId, {
+                        keys: msg.keys, targetX: msg.targetX,
+                        targetY: msg.targetY, moving: msg.moving
+                    });
+                    if (!this.mpGuestPlayers.has(msg.playerId)) {
+                        const gp = new Player(this.width / 2 + msg.playerId * 40, this.height / 2);
+                        gp.color = this._mpPlayerColor(msg.playerId);
+                        this.mpGuestPlayers.set(msg.playerId, gp);
+                    }
+                }
+                break;
+            case 'castSkill':
+                if (this.mpMode === 'host') {
+                    const gp = this.mpGuestPlayers.get(msg.playerId);
+                    if (gp) {
+                        // 用保存的 player 引用临时执行技能（简化：直接由 host game 处理）
+                        // 此处预留，完整实现见 _applyGuestInputs
+                    }
+                }
+                break;
+            case 'classChoose':
+                if (this.mpMode === 'host') {
+                    const gp = this.mpGuestPlayers.get(msg.playerId);
+                    if (gp) this._applyClassToPlayer(gp, msg.choice);
+                }
+                break;
+            case 'game_over':
+                document.getElementById('finalTime').textContent = msg.stats.time;
+                document.getElementById('finalScore').textContent = msg.stats.score;
+                document.getElementById('gameOver').style.display = 'flex';
+                this.isRunning = false;
+                if (this._rafId) { cancelAnimationFrame(this._rafId); this._rafId = null; }
+                break;
+            case 'host_left':
+                this._mpShowStatus('房主离开，游戏结束', true);
+                this.isRunning = false;
+                if (this._rafId) { cancelAnimationFrame(this._rafId); this._rafId = null; }
+                document.getElementById('mpOverlay').style.display = 'flex';
+                break;
+            case 'error':
+                this._mpShowStatus(msg.msg, true);
+                break;
+        }
+    }
+
+    _startMpGameLocal() {
+        document.getElementById('mpOverlay').style.display = 'none';
+        if (this.mpPlayerId === 0) {
+            this.mpMode = 'host';
+        } else {
+            this.mpMode = 'guest';
+        }
+        if (!this.isRunning) this.startGame();
+    }
+
+    // ── 联机大厅 UI 辅助 ──
+    _mpPlayerColor(id) {
+        return ['#4CAF50', '#2196F3', '#ff9800', '#e91e63'][id] || '#ffffff';
+    }
+
+    _mpShowStatus(msg, isError) {
+        const el = document.getElementById('mpStatus');
+        if (el) {
+            el.textContent = msg;
+            el.className = 'mp-status' + (isError ? ' error' : ' success');
+        }
+    }
+
+    _mpShowLobby(code, isHost) {
+        document.getElementById('mpLobby').style.display = 'block';
+        document.getElementById('mpRoomCode').textContent = code;
+        const startBtn = document.getElementById('mpStart');
+        const waitMsg = document.getElementById('mpWaitMsg');
+        if (isHost) {
+            startBtn.style.display = 'block';
+            waitMsg.style.display = 'none';
+        } else {
+            startBtn.style.display = 'none';
+            waitMsg.style.display = 'block';
+        }
+        this._mpShowStatus(isHost ? '房间已创建，等待玩家加入...' : '已加入房间，等待房主开始...');
+    }
+
+    _mpUpdatePlayerList(players) {
+        const el = document.getElementById('mpPlayerList');
+        if (!el) return;
+        el.innerHTML = players.map(p => {
+            const color = this._mpPlayerColor(p.id);
+            const label = p.isHost ? '房主' : `玩家 ${p.id}`;
+            return `<div class="mp-player-item">
+                <div class="mp-player-dot" style="background:${color}"></div>
+                <span>${label}</span>
+            </div>`;
+        }).join('');
+    }
+
+    // ── Host：广播游戏状态 ──
+    broadcastState() {
+        if (!this.mpWs || this.mpWs.readyState !== WebSocket.OPEN) return;
+        this.mpWs.send(JSON.stringify({ type: 'state', data: this.serializeState() }));
+    }
+
+    serializeState() {
+        // 序列化所有玩家
+        const players = [this._serializePlayer(this.player, 0)];
+        for (const [id, gp] of this.mpGuestPlayers) {
+            players.push(this._serializePlayer(gp, id));
+        }
+        return {
+            enemies: this.enemies.map(e => ({
+                x: e.x, y: e.y, type: e.type, difficulty: e.difficulty,
+                currentHealth: e.currentHealth, maxHealth: e.maxHealth,
+                stunTimer: e.stunTimer, size: e.size, color: e.color, attack: e.attack
+            })),
+            boss: this.boss ? {
+                x: this.boss.x, y: this.boss.y,
+                currentHealth: this.boss.currentHealth, maxHealth: this.boss.maxHealth,
+                size: this.boss.size, phase: this.boss.phase, retreating: this.boss.retreating
+            } : null,
+            items: this.items.map(i => ({
+                x: i.x, y: i.y, type: i.type, rarity: i.rarity,
+                duration: i.duration, maxDuration: i.maxDuration,
+                spinPhase: i.spinPhase, bobPhase: i.bobPhase, size: i.size
+            })),
+            projectiles: this.projectiles.map(p => ({
+                x: p.x, y: p.y, dx: p.dx, dy: p.dy, size: p.size, color: p.color
+            })),
+            enemyBullets: this.enemyBullets.map(b => ({
+                x: b.x, y: b.y, vx: b.vx, vy: b.vy, size: b.size
+            })),
+            players,
+            gameTime: this.gameTime, level: this.level, score: this.score,
+            difficulty: this.difficulty, life: this.life,
+            enemyFreezeTimer: this.enemyFreezeTimer,
+            bossState: this.bossState, bossWarningTimer: this.bossWarningTimer,
+            bossActiveTimer: this.bossActiveTimer, screenShake: this.screenShake
+        };
+    }
+
+    _serializePlayer(p, id) {
+        return {
+            id, x: p.x, y: p.y, size: p.size, color: p.color,
+            currentHealth: p.currentHealth, maxHealth: p.maxHealth,
+            class: p.class, hurtCooldown: p.hurtCooldown, invincibleTimer: p.invincibleTimer,
+            mana: p.mana, maxMana: p.maxMana, rage: p.rage, maxRage: p.maxRage,
+            faith: p.faith, maxFaith: p.maxFaith, shield: p.shield,
+            arrows: p.arrows, maxArrows: p.maxArrows,
+            assassinCharge: p.assassinCharge, maxAssassinCharge: p.maxAssassinCharge,
+            skillQ: { cooldown: p.skillQ.cooldown, maxCooldown: p.skillQ.maxCooldown, level: p.skillQ.level },
+            skillE: { cooldown: p.skillE.cooldown, maxCooldown: p.skillE.maxCooldown, level: p.skillE.level }
+        };
+    }
+
+    // ── Guest：应用 host 广播的世界状态 ──
+    applyRemoteState(snapshot) {
+        if (!snapshot) return;
+
+        // 重建敌人列表（仅用于渲染，不运行 AI）
+        this.enemies = snapshot.enemies.map(e => {
+            const en = new Enemy(e.x, e.y, e.type, e.difficulty || 1);
+            en.currentHealth = e.currentHealth; en.maxHealth = e.maxHealth;
+            en.stunTimer = e.stunTimer || 0;
+            if (e.size)   en.size   = e.size;
+            if (e.color)  en.color  = e.color;
+            if (e.attack) en.attack = e.attack;
+            return en;
+        });
+
+        // Boss
+        if (snapshot.boss) {
+            if (!this.boss) this.boss = new BlockBoss(snapshot.boss.x, snapshot.boss.y, snapshot.difficulty || 1, this.player.maxHealth);
+            Object.assign(this.boss, {
+                x: snapshot.boss.x, y: snapshot.boss.y,
+                currentHealth: snapshot.boss.currentHealth, maxHealth: snapshot.boss.maxHealth,
+                phase: snapshot.boss.phase || 0, retreating: snapshot.boss.retreating || false
+            });
+        } else {
+            this.boss = null;
+        }
+
+        // 道具（仅渲染）
+        this.items = snapshot.items.map(i => {
+            const it = new Item(i.x, i.y, i.type);
+            it.x = i.x; it.y = i.y;
+            it.spinPhase = i.spinPhase || 0; it.bobPhase = i.bobPhase || 0;
+            it.duration = i.duration; it.maxDuration = i.maxDuration;
+            if (i.size) it.size = i.size;
+            return it;
+        });
+
+        // 子弹
+        this.projectiles = snapshot.projectiles.map(p => {
+            const pr = new Projectile(p.x, p.y, p.dx, p.dy, 15);
+            pr.size = p.size || 8; pr.color = p.color || '#ff9800';
+            return pr;
+        });
+        this.enemyBullets = (snapshot.enemyBullets || []).map(b => {
+            const eb = new EnemyBullet(b.x + 6, b.y + 6, b.vx || 0, b.vy || 0, 10);
+            if (b.size) eb.size = b.size;
+            return eb;
+        });
+
+        // 更新本机玩家（接受 host 的位置和生命值）
+        const myData = snapshot.players.find(p => p.id === this.mpPlayerId);
+        if (myData) {
+            this.player.x = myData.x; this.player.y = myData.y;
+            this.player.currentHealth = myData.currentHealth;
+            this.player.maxHealth = myData.maxHealth;
+            this.player.hurtCooldown = myData.hurtCooldown || 0;
+            this.player.invincibleTimer = myData.invincibleTimer || 0;
+            // 同步资源（用于 HUD 显示）
+            if (myData.mana !== undefined)    this.player.mana   = myData.mana;
+            if (myData.maxMana !== undefined) this.player.maxMana = myData.maxMana;
+            if (myData.rage !== undefined)    this.player.rage   = myData.rage;
+            if (myData.faith !== undefined)   this.player.faith  = myData.faith;
+            if (myData.shield !== undefined)  this.player.shield = myData.shield;
+            if (myData.arrows !== undefined)  this.player.arrows = myData.arrows;
+            if (myData.assassinCharge !== undefined) this.player.assassinCharge = myData.assassinCharge;
+            if (myData.skillQ) Object.assign(this.player.skillQ, myData.skillQ);
+            if (myData.skillE) Object.assign(this.player.skillE, myData.skillE);
+            if (myData.class && !this.player.class) {
+                this.player.class = myData.class;
+            }
+        }
+
+        // 其他玩家（用于渲染）
+        this.mpPlayers = snapshot.players.filter(p => p.id !== this.mpPlayerId);
+
+        // 共享游戏状态
+        this.gameTime          = snapshot.gameTime;
+        this.level             = snapshot.level;
+        this.score             = snapshot.score;
+        this.difficulty        = snapshot.difficulty;
+        this.life              = snapshot.life;
+        this.enemyFreezeTimer  = snapshot.enemyFreezeTimer;
+        this.bossState         = snapshot.bossState;
+        this.bossWarningTimer  = snapshot.bossWarningTimer || 0;
+        this.bossActiveTimer   = snapshot.bossActiveTimer  || 0;
+        this.screenShake       = snapshot.screenShake      || 0;
+    }
+
+    // ── Guest：发送输入 ──
+    sendGuestInput() {
+        if (!this.mpWs || this.mpWs.readyState !== WebSocket.OPEN) return;
+        const p = this.player;
+        const hasTarget = p.moving && p.targetX !== null;
+        this.mpWs.send(JSON.stringify({
+            type: 'input',
+            keys: {
+                ArrowUp:    !!this.keys['ArrowUp'],   ArrowDown:  !!this.keys['ArrowDown'],
+                ArrowLeft:  !!this.keys['ArrowLeft'],  ArrowRight: !!this.keys['ArrowRight'],
+                w: !!this.keys['w'], a: !!this.keys['a'],
+                s: !!this.keys['s'], d: !!this.keys['d']
+            },
+            targetX: hasTarget ? p.targetX : null,
+            targetY: hasTarget ? p.targetY : null,
+            moving: hasTarget,
+            // 同步属性给 host（天赋/职业效果用于战斗模拟）
+            stats: {
+                attack: p.attack, defense: p.defense, speed: p.speed,
+                maxHealth: p.maxHealth, class: p.class
+            }
+        }));
+        // 发送后清除移动目标，避免连续帧发送相同位置
+        if (hasTarget) {
+            p.moving = false;
+            p.targetX = null;
+            p.targetY = null;
+        }
+    }
+
+    // ── Host：应用 guest 输入到其 Player 对象 ──
+    _applyGuestInputs() {
+        for (const [id, input] of this.mpGuestInputs) {
+            let gp = this.mpGuestPlayers.get(id);
+            if (!gp) {
+                gp = new Player(this.width / 2 + id * 40, this.height / 2);
+                gp.color = this._mpPlayerColor(id);
+                gp.extraLives = 2; // 额外复活次数
+                this.mpGuestPlayers.set(id, gp);
+            }
+            // 应用 guest 传来的属性（职业/天赋效果同步）
+            if (input.stats) {
+                const s = input.stats;
+                if (s.attack  !== undefined) gp.attack  = s.attack;
+                if (s.defense !== undefined) gp.defense = s.defense;
+                if (s.speed   !== undefined) gp.speed   = s.speed;
+                if (s.maxHealth !== undefined && gp.maxHealth !== s.maxHealth) {
+                    gp.maxHealth = s.maxHealth;
+                    gp.currentHealth = Math.min(gp.currentHealth, gp.maxHealth);
+                }
+                if (s.class && !gp.class) this._applyClassToPlayer(gp, s.class);
+            }
+            if (input.keys) gp.update(input.keys, this.width, this.height);
+            if (input.moving && input.targetX !== null) {
+                gp.targetX = input.targetX;
+                gp.targetY = input.targetY;
+                gp.moving = true;
+                input.moving = false; // 消耗一次点击目标
+            }
+        }
+        // 同步 mpPlayers 供渲染
+        this.mpPlayers = [];
+        for (const [id, gp] of this.mpGuestPlayers) {
+            this.mpPlayers.push({
+                id, x: gp.x, y: gp.y, size: gp.size, color: gp.color,
+                currentHealth: gp.currentHealth, maxHealth: gp.maxHealth,
+                class: gp.class, hurtCooldown: gp.hurtCooldown, invincibleTimer: gp.invincibleTimer
+            });
+        }
+    }
+
+    // ── Host：为指定 Player 对象配置职业 ──
+    _applyClassToPlayer(p, className) {
+        if (!CLASS_BASE_CD[className]) return;
+        p.class = className;
+        const adj = CLASS_BASE_ADJUST[className] || {};
+        for (const [k, v] of Object.entries(adj)) p[k] = (p[k] || 0) + v;
+        const cd = CLASS_BASE_CD[className];
+        p.skillQ.maxCooldown = cd.q;
+        p.skillE.maxCooldown = cd.e;
+    }
+
+    // ── Guest：更新本地资源（保持 HUD 流畅） ──
+    _updateLocalResources() {
+        const p = this.player;
+        if (p.class === 'mage' && p.mana < p.maxMana)
+            p.mana = Math.min(p.maxMana, p.mana + p.manaRegen * DT);
+        if (p.class === 'paladin') {
+            if (p.faith < p.maxFaith) p.faith = Math.min(p.maxFaith, p.faith + p.faithRegen * DT);
+            const cap = p.maxHealth * (p.shieldCapRatio || 0.1);
+            if (p.shield < cap) p.shield = Math.min(cap, p.shield + p.maxHealth * 0.02 * DT);
+        }
+        if (p.skillQ.cooldown > 0) p.skillQ.cooldown -= DT;
+        if (p.skillE.cooldown > 0) p.skillE.cooldown -= DT;
+    }
+
+    // ══════════════════════════════════════════════════════════════════
+    //  联机渲染 & UI
+    // ══════════════════════════════════════════════════════════════════
+
+    _renderMpPlayers() {
+        const ctx = this.ctx;
+        for (const p of this.mpPlayers) {
+            const isHurt = p.hurtCooldown > 0;
+            const isInvincible = p.invincibleTimer > 0;
+            if (isHurt && Math.floor(p.hurtCooldown * 10) % 2 === 0) continue;
+
+            ctx.save();
+            const color = p.color || this._mpPlayerColor(p.id);
+            // 无敌金色描边
+            if (isInvincible) {
+                ctx.shadowBlur = 16; ctx.shadowColor = '#ffd700';
+                ctx.strokeStyle = '#ffd700'; ctx.lineWidth = 3;
+                roundRect(ctx, p.x - 2, p.y - 2, p.size + 4, p.size + 4, 6);
+                ctx.stroke();
+            }
+            ctx.shadowBlur = 8; ctx.shadowColor = color;
+            ctx.fillStyle = color;
+            roundRect(ctx, p.x, p.y, p.size, p.size, 5);
+            ctx.fill();
+            ctx.restore();
+
+            // 血条
+            const bw = p.size + 10, bh = 5;
+            const bx = p.x - 5, by = p.y - 10;
+            const ratio = Math.max(0, p.currentHealth / (p.maxHealth || 1));
+            ctx.fillStyle = 'rgba(0,0,0,0.5)';
+            roundRect(ctx, bx, by, bw, bh, 2); ctx.fill();
+            ctx.fillStyle = ratio > 0.5 ? '#4caf50' : ratio > 0.25 ? '#ffb300' : '#f44336';
+            roundRect(ctx, bx, by, bw * ratio, bh, 2); ctx.fill();
+
+            // 玩家标签
+            ctx.fillStyle = color;
+            ctx.font = '10px Arial'; ctx.textAlign = 'center'; ctx.textBaseline = 'bottom';
+            ctx.fillText(`P${p.id}`, p.x + p.size / 2, p.y - 12);
+        }
+    }
+
+    _renderStartScreen() {
+        const ctx = this.ctx;
+        ctx.save();
+        ctx.translate(this.gameOffsetX, this.gameOffsetY);
+        ctx.scale(this.gameScale, this.gameScale);
+
+        const grad = ctx.createLinearGradient(0, 0, 0, this.height);
+        grad.addColorStop(0, '#07101a'); grad.addColorStop(1, '#050c12');
+        ctx.fillStyle = grad; ctx.fillRect(0, 0, this.width, this.height);
+
+        // 星星背景
+        const t = this.bgTime || 0;
+        ctx.save();
+        for (const s of this.stars) {
+            const twinkle = s.alpha + Math.sin(t * s.twinkleSpeed * 60 + s.twinkleOffset) * 0.25;
+            ctx.globalAlpha = Math.max(0.05, Math.min(1, twinkle));
+            ctx.fillStyle = '#c8e8ff'; ctx.beginPath();
+            ctx.arc(s.x, s.y, s.r, 0, Math.PI * 2); ctx.fill();
+        }
+        ctx.restore();
+
+        ctx.textAlign = 'center'; ctx.textBaseline = 'middle';
+        ctx.fillStyle = '#00c8ff';
+        ctx.font = `bold ${Math.min(56, this.width * 0.12)}px Arial`;
+        ctx.shadowBlur = 30; ctx.shadowColor = '#00c8ff';
+        ctx.fillText('方块快跑', this.width / 2, this.height * 0.38);
+
+        ctx.shadowBlur = 0;
+        ctx.fillStyle = 'rgba(200,232,255,0.5)';
+        ctx.font = `${Math.min(18, this.width * 0.038)}px Arial`;
+        ctx.fillText('生存即胜利', this.width / 2, this.height * 0.5);
+
+        ctx.restore();
+        this.bgTime = (this.bgTime || 0) + DT;
+    }
+
+    _renderPauseOverlay() {
+        const ctx = this.ctx;
+        ctx.save();
+        ctx.fillStyle = 'rgba(0,0,0,0.55)';
+        ctx.fillRect(0, 0, this.width, this.height);
+        ctx.fillStyle = '#ffffff';
+        ctx.font = `bold ${Math.min(52, this.width * 0.11)}px Arial`;
+        ctx.textAlign = 'center'; ctx.textBaseline = 'middle';
+        ctx.shadowBlur = 20; ctx.shadowColor = '#00c8ff';
+        ctx.fillText('已暂停', this.width / 2, this.height * 0.45);
+        ctx.shadowBlur = 0;
+        ctx.fillStyle = 'rgba(200,232,255,0.5)';
+        ctx.font = `${Math.min(16, this.width * 0.034)}px Arial`;
+        ctx.fillText('按 P / ESC 继续', this.width / 2, this.height * 0.56);
+        ctx.restore();
+    }
+
     update() {
+        // ── Guest 模式：仅应用 host 状态，处理本地输入 ──
+        if (this.mpMode === 'guest') {
+            if (!this.isPaused) {
+                if (this.mpStateBuffer) {
+                    this.applyRemoteState(this.mpStateBuffer);
+                    this.mpStateBuffer = null;
+                }
+                // 职业选择触发（level 3+且无职业）
+                if (this.level >= 3 && !this.player.class && !this.showingClassSelection && !this.showingPotentialMenu) {
+                    this.showClassSelection();
+                }
+                // 按等级给予潜能点（每个新等级+1）
+                if (this.level > (this._mpGuestLastLevel || 1)) {
+                    const gained = this.level - (this._mpGuestLastLevel || 1);
+                    this.player.potentialPoints += gained;
+                    this._mpGuestLastLevel = this.level;
+                    if (this.player.potentialPoints > 0 && !this.showingClassSelection) this.showPotentialMenu();
+                }
+                if (!this.showingClassSelection && !this.showingPotentialMenu) {
+                    this.player.update(this.keys, this.width, this.height);
+                }
+                this._updateLocalResources();
+                this.updateEffects();
+                this.updateParticles();
+                this.bgTime += DT;
+                this._uiTimer += DT;
+                if (this._uiTimer >= 0.1) { this.updateUI(); this._uiTimer = 0; }
+                this.sendGuestInput();
+            }
+            return;
+        }
+
+        // ── Host/单人 模式：先应用 guest 输入 ──
+        if (this.mpMode === 'host') this._applyGuestInputs();
+
         if (!this.isPaused) {
             this.gameTime += DT;
             // 难度更平缓且封顶，避免后期速度碾压必死
@@ -693,6 +1272,42 @@ class Game {
 
             // 屏幕震动衰减
             if (this.screenShake > 0) this.screenShake = Math.max(0, this.screenShake - DT);
+        }
+
+        // Host 模式：guest 碰撞检测 + 广播状态
+        if (this.mpMode === 'host') {
+            this._checkGuestCollisions();
+            this.mpFrameCount++;
+            if (this.mpFrameCount % 3 === 0) this.broadcastState();
+        }
+    }
+
+    _checkGuestCollisions() {
+        for (const [, gp] of this.mpGuestPlayers) {
+            if (gp.hurtCooldown > 0) { gp.hurtCooldown -= DT; continue; }
+            for (const enemy of this.enemies) {
+                if (this.checkCollision(gp, enemy)) {
+                    gp.takeDamage(enemy.attack);
+                    gp.hurtCooldown = 0.6 + (gp.hurtCooldownBonus || 0);
+                    break;
+                }
+            }
+            // 魔王碰撞
+            if (this.boss && this.bossState === 'active' && this.checkCollision(gp, this.boss)) {
+                gp.takeDamage(this.boss.attack);
+                gp.hurtCooldown = 0.6 + (gp.hurtCooldownBonus || 0);
+            }
+            // 死亡后复活
+            if (gp.currentHealth <= 0) {
+                if (gp.extraLives > 0) {
+                    gp.extraLives--;
+                    gp.currentHealth = gp.maxHealth;
+                    gp.hurtCooldown = 1.5;
+                    gp.x = this.width / 2; gp.y = this.height / 2;
+                } else {
+                    gp.currentHealth = 0;
+                }
+            }
         }
     }
 
@@ -2176,6 +2791,10 @@ class Game {
         if (adj.autoAttackDmgMult) this.player.autoAttackDmgMult = (this.player.autoAttackDmgMult || 1) * adj.autoAttackDmgMult;
 
         this.showingClassSelection = false;
+        // Guest 模式：把职业选择发给 host
+        if (this.mpMode === 'guest' && this.mpWs && this.mpWs.readyState === WebSocket.OPEN) {
+            this.mpWs.send(JSON.stringify({ type: 'classChoose', choice: name }));
+        }
         if (this.player.potentialPoints > 0) {
             this.showPotentialMenu();
         } else {
@@ -2549,6 +3168,10 @@ class Game {
     endGame() {
         this.isRunning = false;
         if (this._rafId) { cancelAnimationFrame(this._rafId); this._rafId = null; }
+        // Host 广播游戏结束
+        if (this.mpMode === 'host' && this.mpWs && this.mpWs.readyState === WebSocket.OPEN) {
+            this.mpWs.send(JSON.stringify({ type: 'game_over', stats: { time: Math.floor(this.gameTime), score: this.score } }));
+        }
         document.getElementById('finalTime').textContent = Math.floor(this.gameTime);
         document.getElementById('finalScore').textContent = this.score;
         document.getElementById('gameOver').style.display = 'flex';
@@ -2763,8 +3386,25 @@ class Game {
 
     render() {
         const ctx = this.ctx;
+
+        // 清空物理画布（含 letterbox 区域）
+        ctx.clearRect(0, 0, this.canvas.width, this.canvas.height);
+        ctx.fillStyle = '#050a10';
+        ctx.fillRect(0, 0, this.canvas.width, this.canvas.height);
+
+        // 未开始时显示标题界面
+        if (!this.isRunning) {
+            this._renderStartScreen();
+            return;
+        }
+
+        // 外层变换：全屏缩放 + 居中偏移
         ctx.save();
-        // 屏幕震动:对整个画面施加随机平移(暂停时不抖,避免 warning 期间暂停定格抖动)
+        ctx.translate(this.gameOffsetX, this.gameOffsetY);
+        ctx.scale(this.gameScale, this.gameScale);
+
+        // 内层变换：屏幕震动（仅影响游戏世界）
+        ctx.save();
         if (this.screenShake > 0 && !this.isPaused) {
             const intensity = Math.min(12, this.screenShake * 30);
             ctx.translate((Math.random() - 0.5) * intensity, (Math.random() - 0.5) * intensity);
@@ -2773,6 +3413,9 @@ class Game {
         this.renderBackground();
 
         this.player.render(this.ctx);
+
+        // 渲染其他联机玩家
+        if (this.mpMode && this.mpPlayers.length > 0) this._renderMpPlayers();
 
         const frozen = this.enemyFreezeTimer > 0;
         for (let enemy of this.enemies) {
@@ -2798,12 +3441,10 @@ class Game {
 
         this.renderParticles();
 
-        ctx.restore(); // 结束震动 transform
+        ctx.restore(); // 结束震动变换
 
-        // 全屏冰封叠加层(不受震动影响,叠在游戏世界之上 HUD 之下)
+        // HUD 与菜单（在缩放坐标系内，无震动）
         this._renderFreezeOverlay();
-
-        // 以下 UI 不受震动影响
         this._renderSkillHUD();
         this._renderBossHUD();
 
@@ -2812,6 +3453,12 @@ class Game {
         } else if (this.showingPotentialMenu) {
             this.renderPotentialMenu();
         }
+
+        if (this.isPaused && !this.showingClassSelection && !this.showingPotentialMenu) {
+            this._renderPauseOverlay();
+        }
+
+        ctx.restore(); // 结束缩放变换
     }
 
     _renderBossHUD() {
@@ -4456,4 +5103,100 @@ class EnemyBullet {
 window.addEventListener('load', () => {
     const game = new Game();
     game.render();
+
+    // ── 联机大厅按钮逻辑 ──
+    const overlay      = document.getElementById('mpOverlay');
+    const statusEl     = document.getElementById('mpStatus');
+    const mpCodeInput  = document.getElementById('mpCode');
+    const mpLobby      = document.getElementById('mpLobby');
+
+    function setStatus(msg, isErr) {
+        statusEl.textContent = msg;
+        statusEl.className = 'mp-status' + (isErr ? ' error' : ' success');
+    }
+
+    // 读取服务器 URL（可在 URL hash 中指定，如 #ws://yourserver:8080）
+    const serverUrl = location.hash ? location.hash.slice(1) : 'ws://' + location.hostname + ':8080';
+    game.mpServerUrl = serverUrl;
+
+    // 创建房间
+    document.getElementById('mpCreate').addEventListener('click', async () => {
+        setStatus('连接服务器中...');
+        try {
+            await game.connectToServer(serverUrl);
+            game.mpWs.send(JSON.stringify({ type: 'create' }));
+        } catch (e) {
+            setStatus('连接失败：' + e.message, true);
+        }
+    });
+
+    // 加入房间
+    document.getElementById('mpJoin').addEventListener('click', async () => {
+        const code = (mpCodeInput.value || '').toUpperCase().trim();
+        if (code.length !== 4) { setStatus('请输入4位房间码', true); return; }
+        setStatus('连接服务器中...');
+        try {
+            await game.connectToServer(serverUrl);
+            game.mpWs.send(JSON.stringify({ type: 'join', code }));
+        } catch (e) {
+            setStatus('连接失败：' + e.message, true);
+        }
+    });
+
+    // 房主：开始游戏
+    document.getElementById('mpStart').addEventListener('click', () => {
+        if (game.mpWs && game.mpWs.readyState === WebSocket.OPEN) {
+            game.mpWs.send(JSON.stringify({ type: 'start' }));
+        }
+    });
+
+    // 单人游戏
+    document.getElementById('mpSingle').addEventListener('click', () => {
+        overlay.style.display = 'none';
+        game.startGame();
+    });
+
+    // 重启时回到大厅或重新开始
+    document.getElementById('restartBtn').addEventListener('click', () => {
+        game.restartGame();
+        if (game.mpMode) {
+            // 联机模式：重新加入（Host 重新开始游戏需要所有人重连）
+            overlay.style.display = 'flex';
+            mpLobby.style.display = 'none';
+            game.mpMode = null;
+            if (game.mpWs) { game.mpWs.close(); game.mpWs = null; }
+        }
+    });
+
+    // 返回大厅
+    const backBtn = document.getElementById('backToLobbyBtn');
+    if (backBtn) {
+        backBtn.addEventListener('click', () => {
+            game.restartGame();
+            document.getElementById('gameOver').style.display = 'none';
+            overlay.style.display = 'flex';
+            mpLobby.style.display = 'none';
+            if (game.mpWs) { game.mpWs.close(); game.mpWs = null; }
+            game.mpMode = null;
+        });
+    }
+
+    // 暂停按钮（兼容）
+    const pauseBtn = document.getElementById('pauseBtn');
+    if (pauseBtn) pauseBtn.addEventListener('click', () => game.togglePause());
+    const startBtn = document.getElementById('startBtn');
+    if (startBtn) startBtn.addEventListener('click', () => {
+        overlay.style.display = 'none';
+        game.startGame();
+    });
+
+    // 大厅输入框自动大写
+    if (mpCodeInput) {
+        mpCodeInput.addEventListener('input', () => {
+            mpCodeInput.value = mpCodeInput.value.toUpperCase();
+        });
+        mpCodeInput.addEventListener('keydown', (e) => {
+            if (e.key === 'Enter') document.getElementById('mpJoin').click();
+        });
+    }
 });

@@ -1,0 +1,12 @@
+{
+  "name": "fangkuai-kuaipao",
+  "version": "1.0.0",
+  "description": "方块快跑 联机服务器",
+  "main": "server.js",
+  "scripts": {
+    "start": "node server.js"
+  },
+  "dependencies": {
+    "ws": "^8.18.0"
+  }
+}
