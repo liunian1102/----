@@ -38,6 +38,43 @@ function roundRect(ctx, x, y, w, h, r) {
     ctx.closePath();
 }
 
+// 离屏精灵缓存:把带 shadowBlur/渐变的静态图形预渲染一次,之后每帧只 drawImage。
+// scale = 每逻辑像素对应的设备像素(Game.gameScale),窗口缩放时清空重建,保证高分屏清晰。
+const SpriteCache = {
+    scale: 1,
+    dpr: 1,
+    map: new Map(),
+    setScale(scale, dpr) {
+        if (scale !== this.scale || dpr !== this.dpr) {
+            this.scale = scale;
+            this.dpr = dpr;
+            this.map.clear();
+        }
+    },
+    // 光晕按 CSS 像素计算(与主画布 shadowBlur 的观感一致)
+    blur(v) { return v * this.dpr; },
+    // w/h 为逻辑尺寸,pad 为光晕外扩;draw(g) 在 (0,0)-(w,h) 坐标系内绘制
+    get(key, w, h, pad, draw) {
+        let c = this.map.get(key);
+        if (!c) {
+            c = document.createElement('canvas');
+            c.width = Math.max(1, Math.ceil((w + pad * 2) * this.scale));
+            c.height = Math.max(1, Math.ceil((h + pad * 2) * this.scale));
+            const g = c.getContext('2d');
+            g.scale(c.width / (w + pad * 2), c.height / (h + pad * 2));
+            g.translate(pad, pad);
+            draw(g);
+            c.pad = pad;
+            this.map.set(key, c);
+        }
+        return c;
+    },
+    // 在 (x,y) 处按逻辑尺寸 w×h 绘制缓存精灵
+    draw(ctx, c, x, y, w, h) {
+        ctx.drawImage(c, x - c.pad, y - c.pad, w + c.pad * 2, h + c.pad * 2);
+    }
+};
+
 class Game {
     constructor() {
         this.canvas = document.getElementById('gameCanvas');
@@ -45,6 +82,8 @@ class Game {
         this.gameScale = 1;
         this.gameOffsetX = 0;
         this.gameOffsetY = 0;
+        this.dpr = 1;
+        this._patchShadowBlur();
         this.resizeCanvas();
         
         this.player = new Player(this.width / 2, this.height / 2);
@@ -400,14 +439,30 @@ class Game {
     }
 
     resizeCanvas() {
-        this.canvas.width = window.innerWidth;
-        this.canvas.height = window.innerHeight;
+        // 画布按设备像素分配,高分屏(手机 DPR 2~3)不再发虚;DPR 封顶 2,兼顾性能
+        const dpr = Math.min(window.devicePixelRatio || 1, 2);
+        this.dpr = dpr;
+        this.canvas.width = Math.round(window.innerWidth * dpr);
+        this.canvas.height = Math.round(window.innerHeight * dpr);
         const s = Math.min(this.canvas.width / 800, this.canvas.height / 600);
         this.gameScale = s;
         this.gameOffsetX = (this.canvas.width - 800 * s) / 2;
         this.gameOffsetY = (this.canvas.height - 600 * s) / 2;
         this.width = 800;
         this.height = 600;
+        SpriteCache.setScale(s, dpr);
+        this._bgLayers = null; // 背景缓存随缩放重建
+    }
+
+    // shadowBlur 以设备像素计,不受 transform 影响;乘上 dpr 让光晕在高分屏下观感不变
+    _patchShadowBlur() {
+        const desc = Object.getOwnPropertyDescriptor(CanvasRenderingContext2D.prototype, 'shadowBlur');
+        if (!desc || !desc.set) return;
+        const game = this;
+        Object.defineProperty(this.ctx, 'shadowBlur', {
+            get() { return desc.get.call(this) / game.dpr; },
+            set(v) { desc.set.call(this, v * game.dpr); }
+        });
     }
 
     init() {
@@ -514,6 +569,13 @@ class Game {
             clearTimeout(this._resizeTimer);
             this._resizeTimer = setTimeout(() => this.resizeCanvas(), 100);
         });
+
+        // 切后台/锁屏/来电时自动暂停,回来后需手动继续(避免回来时已被打死)
+        document.addEventListener('visibilitychange', () => {
+            if (document.hidden && this.isRunning && !this.isPaused) this.togglePause();
+        });
+        // 失焦时清空按键状态,避免切回来后方向键"卡住"一直移动
+        window.addEventListener('blur', () => { this.keys = {}; });
     }
     
     setPlayerTarget(x, y) {
@@ -3223,37 +3285,47 @@ class Game {
         document.getElementById('score').textContent = this.score;
     }
     
+    // 背景渐变与网格是静态的,预渲染到离屏画布;每帧只画闪烁的星星
+    _buildBgLayers() {
+        const W = this.width, H = this.height;
+        const bg = SpriteCache.get('bg|gradient', W, H, 0, g => {
+            const grad = g.createLinearGradient(0, 0, 0, H);
+            grad.addColorStop(0, '#07101a');
+            grad.addColorStop(1, '#050c12');
+            g.fillStyle = grad;
+            g.fillRect(0, 0, W, H);
+        });
+        // 网格按不透明绘制,渲染时用 globalAlpha 做呼吸效果
+        const grid = SpriteCache.get('bg|grid', W, H, 0, g => {
+            const gridSize = 60;
+            g.strokeStyle = 'rgb(0, 200, 255)';
+            g.lineWidth = 0.5;
+            g.beginPath();
+            for (let x = 0; x < W; x += gridSize) { g.moveTo(x, 0); g.lineTo(x, H); }
+            for (let y = 0; y < H; y += gridSize) { g.moveTo(0, y); g.lineTo(W, y); }
+            g.stroke();
+        });
+        this._bgLayers = { bg, grid };
+    }
+
     renderBackground() {
         const ctx = this.ctx;
-        const grad = ctx.createLinearGradient(0, 0, 0, this.height);
-        grad.addColorStop(0, '#07101a');
-        grad.addColorStop(1, '#050c12');
-        ctx.fillStyle = grad;
-        ctx.fillRect(0, 0, this.width, this.height);
+        if (!this._bgLayers) this._buildBgLayers();
+        const { bg, grid } = this._bgLayers;
+        ctx.drawImage(bg, 0, 0, this.width, this.height);
 
         const t = this.bgTime;
         ctx.save();
+        ctx.fillStyle = '#c8e8ff';
         for (const s of this.stars) {
             const twinkle = s.alpha + Math.sin(t * s.twinkleSpeed * 60 + s.twinkleOffset) * 0.25;
             ctx.globalAlpha = Math.max(0.05, Math.min(1, twinkle));
-            ctx.fillStyle = '#c8e8ff';
             ctx.beginPath();
             ctx.arc(s.x, s.y, s.r, 0, Math.PI * 2);
             ctx.fill();
         }
-        ctx.restore();
-
-        ctx.save();
-        const gridSize = 60;
-        const gridAlpha = 0.06 + Math.sin(t * 0.5) * 0.02;
-        ctx.strokeStyle = `rgba(0, 200, 255, ${gridAlpha})`;
-        ctx.lineWidth = 0.5;
-        for (let x = 0; x < this.width; x += gridSize) {
-            ctx.beginPath(); ctx.moveTo(x, 0); ctx.lineTo(x, this.height); ctx.stroke();
-        }
-        for (let y = 0; y < this.height; y += gridSize) {
-            ctx.beginPath(); ctx.moveTo(0, y); ctx.lineTo(this.width, y); ctx.stroke();
-        }
+        ctx.globalAlpha = 0.06 + Math.sin(t * 0.5) * 0.02;
+        ctx.drawImage(grid, 0, 0, this.width, this.height);
         ctx.restore();
     }
 
@@ -4414,28 +4486,8 @@ class Enemy {
             return;
         }
 
-        ctx.save();
-        const glowColors = { chaser: '#ff1744', patroller: '#2979ff', giant: '#d500f9' };
-        const lightColors = { chaser: '#ff6b6b', patroller: '#64b5f6', giant: '#e040fb' };
-        const darkColors = { chaser: '#b71c1c', patroller: '#0d47a1', giant: '#6a0080' };
-        const glow = glowColors[this.type] || '#ff1744';
-
-        ctx.shadowBlur = this.type === 'giant' ? 20 : 12;
-        ctx.shadowColor = glow;
-
-        const grad = ctx.createLinearGradient(this.x, this.y, this.x + this.size, this.y + this.size);
-        grad.addColorStop(0, lightColors[this.type] || '#ff6b6b');
-        grad.addColorStop(1, darkColors[this.type] || '#b71c1c');
-        ctx.fillStyle = grad;
-        roundRect(ctx, this.x, this.y, this.size, this.size, this.type === 'giant' ? 10 : 6);
-        ctx.fill();
-
-        ctx.shadowBlur = 0;
-        ctx.strokeStyle = `${glow}99`;
-        ctx.lineWidth = 1.5;
-        roundRect(ctx, this.x, this.y, this.size, this.size, this.type === 'giant' ? 10 : 6);
-        ctx.stroke();
-        ctx.restore();
+        // 本体(渐变 + 光晕 + 描边 + 文字)按类型缓存,避免每帧 shadowBlur
+        SpriteCache.draw(ctx, Enemy.bodySprite(this.type, this.size), this.x, this.y, this.size, this.size);
 
         const healthBarWidth = this.size;
         const healthBarHeight = 4;
@@ -4448,19 +4500,8 @@ class Enemy {
         roundRect(ctx, bx, by, healthBarWidth, healthBarHeight, 2);
         ctx.fill();
         ctx.fillStyle = '#ff1744';
-        ctx.shadowBlur = 4;
-        ctx.shadowColor = '#ff1744';
         roundRect(ctx, bx, by, healthBarWidth * healthPercentage, healthBarHeight, 2);
         ctx.fill();
-        ctx.restore();
-
-        ctx.save();
-        ctx.fillStyle = 'rgba(255,255,255,0.9)';
-        ctx.font = `bold ${Math.floor(this.size * 0.38)}px Arial`;
-        ctx.textAlign = 'center';
-        ctx.textBaseline = 'middle';
-        const labels = { chaser: '追', patroller: '巡', giant: '巨', gunner: '炮' };
-        ctx.fillText(labels[this.type] || '?', this.x + this.size / 2, this.y + this.size / 2);
         ctx.restore();
 
         if (this.stunTimer > 0) {
@@ -4484,50 +4525,8 @@ class Enemy {
 
         // 冻结时:在敌人身上叠加冰封效果(蓝色半透明 + 冰晶高光)
         if (frozen) {
-            ctx.save();
-            ctx.globalAlpha = 0.55;
-            // 蓝色冰块叠加
-            const iceGrad = ctx.createLinearGradient(this.x, this.y, this.x + this.size, this.y + this.size);
-            iceGrad.addColorStop(0, 'rgba(160,220,255,0.9)');
-            iceGrad.addColorStop(1, 'rgba(60,140,220,0.7)');
-            ctx.fillStyle = iceGrad;
-            ctx.shadowBlur = 14;
-            ctx.shadowColor = '#88ddff';
-            roundRect(ctx, this.x, this.y, this.size, this.size, this.type === 'giant' ? 10 : 6);
-            ctx.fill();
-            // 冰晶高光纹路
-            ctx.globalAlpha = 0.7;
-            ctx.strokeStyle = 'rgba(200,240,255,0.8)';
-            ctx.lineWidth = 1.2;
-            ctx.shadowBlur = 0;
-            const cx2 = this.x + this.size / 2, cy2 = this.y + this.size / 2;
-            // 米字纹
-            for (let i = 0; i < 4; i++) {
-                const a = (i / 4) * Math.PI;
-                const r = this.size * 0.42;
-                ctx.beginPath();
-                ctx.moveTo(cx2 + Math.cos(a) * r, cy2 + Math.sin(a) * r);
-                ctx.lineTo(cx2 - Math.cos(a) * r, cy2 - Math.sin(a) * r);
-                ctx.stroke();
-            }
-            // 中心小六角
-            ctx.beginPath();
-            for (let i = 0; i < 6; i++) {
-                const a = (i / 6) * Math.PI * 2;
-                const r = this.size * 0.12;
-                i === 0 ? ctx.moveTo(cx2 + Math.cos(a)*r, cy2 + Math.sin(a)*r)
-                        : ctx.lineTo(cx2 + Math.cos(a)*r, cy2 + Math.sin(a)*r);
-            }
-            ctx.closePath();
-            ctx.stroke();
-            // ❄ 图标
-            ctx.globalAlpha = 0.9;
-            ctx.fillStyle = '#ddf4ff';
-            ctx.font = `bold ${Math.floor(this.size * 0.35)}px Arial`;
-            ctx.textAlign = 'center';
-            ctx.textBaseline = 'middle';
-            ctx.fillText('❄', cx2, cy2);
-            ctx.restore();
+            const r = this.type === 'giant' ? 10 : 6;
+            SpriteCache.draw(ctx, Enemy.frozenSprite(this.size, r, true), this.x, this.y, this.size, this.size);
         }
     }
 
@@ -4536,40 +4535,16 @@ class Enemy {
         const cy = this.y + this.size / 2;
 
         ctx.save();
-        // 底座:深橙方块
-        ctx.shadowBlur = 14;
-        ctx.shadowColor = '#ff6f00';
-        const grad = ctx.createLinearGradient(this.x, this.y, this.x + this.size, this.y + this.size);
-        grad.addColorStop(0, '#ffab40');
-        grad.addColorStop(1, '#e65100');
-        ctx.fillStyle = grad;
-        roundRect(ctx, this.x, this.y, this.size, this.size, 7);
-        ctx.fill();
-        ctx.shadowBlur = 0;
-        ctx.strokeStyle = 'rgba(255,111,0,0.8)';
-        ctx.lineWidth = 1.5;
-        roundRect(ctx, this.x, this.y, this.size, this.size, 7);
-        ctx.stroke();
+        // 底座:深橙方块(缓存精灵)
+        SpriteCache.draw(ctx, Enemy.bodySprite('gunner', this.size), this.x, this.y, this.size, this.size);
 
-        // 炮管:从中心向瞄准角延伸的矩形
+        // 炮管:从中心向瞄准角延伸的矩形(缓存精灵,旋转绘制)
         const barrelLen = this.size * 0.65;
         const barrelW   = this.size * 0.28;
         ctx.save();
         ctx.translate(cx, cy);
         ctx.rotate(this.aimAngle);
-        ctx.shadowBlur = 8;
-        ctx.shadowColor = '#ff9800';
-        const bGrad = ctx.createLinearGradient(0, -barrelW / 2, barrelLen, barrelW / 2);
-        bGrad.addColorStop(0, '#ffd54f');
-        bGrad.addColorStop(1, '#bf360c');
-        ctx.fillStyle = bGrad;
-        roundRect(ctx, 0, -barrelW / 2, barrelLen, barrelW, 3);
-        ctx.fill();
-        ctx.shadowBlur = 0;
-        ctx.strokeStyle = 'rgba(255,200,50,0.7)';
-        ctx.lineWidth = 1;
-        roundRect(ctx, 0, -barrelW / 2, barrelLen, barrelW, 3);
-        ctx.stroke();
+        SpriteCache.draw(ctx, Enemy.barrelSprite(barrelLen, barrelW), 0, -barrelW / 2, barrelLen, barrelW);
         ctx.restore();
 
         // 炮管口火花(开火前 0.3s 闪烁)
@@ -4607,8 +4582,6 @@ class Enemy {
         roundRect(ctx, this.x, this.y - 10, this.size, healthBarHeight, 2);
         ctx.fill();
         ctx.fillStyle = '#ff6f00';
-        ctx.shadowBlur = 4;
-        ctx.shadowColor = '#ff6f00';
         roundRect(ctx, this.x, this.y - 10, this.size * healthPercentage, healthBarHeight, 2);
         ctx.fill();
         ctx.restore();
@@ -4626,25 +4599,123 @@ class Enemy {
 
         // 冻结叠加
         if (frozen) {
-            ctx.save();
-            ctx.globalAlpha = 0.55;
-            const iceGrad = ctx.createLinearGradient(this.x, this.y, this.x + this.size, this.y + this.size);
+            SpriteCache.draw(ctx, Enemy.frozenSprite(this.size, 7, false), this.x, this.y, this.size, this.size);
+        }
+    }
+
+    // ── 精灵缓存(静态部分只画一次,之后 drawImage) ──
+    static bodySprite(type, size) {
+        return SpriteCache.get(`enemy|${type}|${size}`, size, size, 24, g => {
+            if (type === 'gunner') {
+                g.shadowBlur = SpriteCache.blur(14);
+                g.shadowColor = '#ff6f00';
+                const grad = g.createLinearGradient(0, 0, size, size);
+                grad.addColorStop(0, '#ffab40');
+                grad.addColorStop(1, '#e65100');
+                g.fillStyle = grad;
+                roundRect(g, 0, 0, size, size, 7);
+                g.fill();
+                g.shadowBlur = 0;
+                g.strokeStyle = 'rgba(255,111,0,0.8)';
+                g.lineWidth = 1.5;
+                roundRect(g, 0, 0, size, size, 7);
+                g.stroke();
+                return;
+            }
+            const glowColors = { chaser: '#ff1744', patroller: '#2979ff', giant: '#d500f9' };
+            const lightColors = { chaser: '#ff6b6b', patroller: '#64b5f6', giant: '#e040fb' };
+            const darkColors = { chaser: '#b71c1c', patroller: '#0d47a1', giant: '#6a0080' };
+            const labels = { chaser: '追', patroller: '巡', giant: '巨' };
+            const glow = glowColors[type] || '#ff1744';
+            const r = type === 'giant' ? 10 : 6;
+
+            g.shadowBlur = SpriteCache.blur(type === 'giant' ? 20 : 12);
+            g.shadowColor = glow;
+            const grad = g.createLinearGradient(0, 0, size, size);
+            grad.addColorStop(0, lightColors[type] || '#ff6b6b');
+            grad.addColorStop(1, darkColors[type] || '#b71c1c');
+            g.fillStyle = grad;
+            roundRect(g, 0, 0, size, size, r);
+            g.fill();
+
+            g.shadowBlur = 0;
+            g.strokeStyle = `${glow}99`;
+            g.lineWidth = 1.5;
+            roundRect(g, 0, 0, size, size, r);
+            g.stroke();
+
+            g.fillStyle = 'rgba(255,255,255,0.9)';
+            g.font = `bold ${Math.floor(size * 0.38)}px Arial`;
+            g.textAlign = 'center';
+            g.textBaseline = 'middle';
+            g.fillText(labels[type] || '?', size / 2, size / 2);
+        });
+    }
+
+    static barrelSprite(len, w) {
+        return SpriteCache.get(`enemy|barrel|${len}|${w}`, len, w, 12, g => {
+            g.shadowBlur = SpriteCache.blur(8);
+            g.shadowColor = '#ff9800';
+            const bGrad = g.createLinearGradient(0, 0, len, w);
+            bGrad.addColorStop(0, '#ffd54f');
+            bGrad.addColorStop(1, '#bf360c');
+            g.fillStyle = bGrad;
+            roundRect(g, 0, 0, len, w, 3);
+            g.fill();
+            g.shadowBlur = 0;
+            g.strokeStyle = 'rgba(255,200,50,0.7)';
+            g.lineWidth = 1;
+            roundRect(g, 0, 0, len, w, 3);
+            g.stroke();
+        });
+    }
+
+    // detailed: 普通敌人带米字纹与六角冰晶;炮手只有冰块 + ❄
+    static frozenSprite(size, r, detailed) {
+        return SpriteCache.get(`enemy|frozen|${size}|${r}|${detailed ? 1 : 0}`, size, size, 20, g => {
+            g.globalAlpha = 0.55;
+            const iceGrad = g.createLinearGradient(0, 0, size, size);
             iceGrad.addColorStop(0, 'rgba(160,220,255,0.9)');
             iceGrad.addColorStop(1, 'rgba(60,140,220,0.7)');
-            ctx.fillStyle = iceGrad;
-            ctx.shadowBlur = 14;
-            ctx.shadowColor = '#88ddff';
-            roundRect(ctx, this.x, this.y, this.size, this.size, 7);
-            ctx.fill();
-            ctx.globalAlpha = 0.9;
-            ctx.fillStyle = '#ddf4ff';
-            ctx.shadowBlur = 0;
-            ctx.font = `bold ${Math.floor(this.size * 0.35)}px Arial`;
-            ctx.textAlign = 'center';
-            ctx.textBaseline = 'middle';
-            ctx.fillText('❄', cx, cy);
-            ctx.restore();
-        }
+            g.fillStyle = iceGrad;
+            g.shadowBlur = SpriteCache.blur(14);
+            g.shadowColor = '#88ddff';
+            roundRect(g, 0, 0, size, size, r);
+            g.fill();
+            g.shadowBlur = 0;
+            const c = size / 2;
+            if (detailed) {
+                g.globalAlpha = 0.7;
+                g.strokeStyle = 'rgba(200,240,255,0.8)';
+                g.lineWidth = 1.2;
+                // 米字纹
+                for (let i = 0; i < 4; i++) {
+                    const a = (i / 4) * Math.PI;
+                    const rr = size * 0.42;
+                    g.beginPath();
+                    g.moveTo(c + Math.cos(a) * rr, c + Math.sin(a) * rr);
+                    g.lineTo(c - Math.cos(a) * rr, c - Math.sin(a) * rr);
+                    g.stroke();
+                }
+                // 中心小六角
+                g.beginPath();
+                for (let i = 0; i < 6; i++) {
+                    const a = (i / 6) * Math.PI * 2;
+                    const rr = size * 0.12;
+                    i === 0 ? g.moveTo(c + Math.cos(a) * rr, c + Math.sin(a) * rr)
+                            : g.lineTo(c + Math.cos(a) * rr, c + Math.sin(a) * rr);
+                }
+                g.closePath();
+                g.stroke();
+            }
+            // ❄ 图标
+            g.globalAlpha = 0.9;
+            g.fillStyle = '#ddf4ff';
+            g.font = `bold ${Math.floor(size * 0.35)}px Arial`;
+            g.textAlign = 'center';
+            g.textBaseline = 'middle';
+            g.fillText('❄', c, c);
+        });
     }
 }
 
