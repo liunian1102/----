@@ -110,7 +110,7 @@ wss.on('connection', ws => {
                 const room = getRoom(info.roomCode);
                 if (!room) break;
                 send(room.host, { type: 'input', playerId: info.playerId, keys: msg.keys,
-                    targetX: msg.targetX, targetY: msg.targetY, moving: msg.moving });
+                    targetX: msg.targetX, targetY: msg.targetY, moving: msg.moving, stats: msg.stats });
                 break;
             }
 

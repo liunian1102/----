@@ -75,6 +75,154 @@ const SpriteCache = {
     }
 };
 
+// 场上敌人数量上限(随难度从 50 增至 80),防止挂机堆怪拖垮帧率
+const maxEnemiesFor = difficulty => Math.floor(40 + 10 * difficulty);
+
+// 大厅卡片上的最高纪录
+function updateBestScoreLabel() {
+    const el = document.getElementById('bestScore');
+    if (!el) return;
+    const b = Store.get('blockrun.best', null);
+    el.textContent = b && (b.score > 0 || b.time > 0) ? `最高分 ${b.score} · 最长生存 ${b.time} 秒` : '';
+}
+
+// 实体唯一 id:联机时 guest 按 id 复用对象并在两次快照之间插值
+let _entityIdSeq = 0;
+const nextEntityId = () => ++_entityIdSeq;
+
+// 联机快照数值量化,缩小网络包
+const q1 = v => Math.round(v * 10) / 10;
+const q2 = v => Math.round(v * 100) / 100;
+const MP_ENEMY_TYPES = ['chaser', 'patroller', 'giant', 'gunner'];
+const MP_ITEM_TYPES = ['potion', 'exp_book', 'snowflake', 'bomb', 'heart', 'potion_invicible'];
+
+// localStorage 读写(隐私模式/禁用存储时静默失败)
+const Store = {
+    get(key, fallback) {
+        try {
+            const v = localStorage.getItem(key);
+            return v == null ? fallback : JSON.parse(v);
+        } catch (e) { return fallback; }
+    },
+    set(key, value) {
+        try { localStorage.setItem(key, JSON.stringify(value)); } catch (e) { /* 忽略 */ }
+    }
+};
+
+// WebAudio 合成音效:无需素材文件。浏览器要求首次用户手势后才能出声,见 Sound.init()
+const Sound = {
+    ctx: null,
+    master: null,
+    muted: Store.get('blockrun.muted', false),
+    _last: {},
+    _noiseBuf: null,
+    // 同名音效最短间隔(秒),避免一帧内多次击杀叠成噪音
+    minGap: { kill: 0.05, skill: 0.08, pickup: 0.06, hurt: 0.1 },
+
+    init() {
+        if (this.ctx) {
+            if (this.ctx.state === 'suspended') this.ctx.resume();
+            return;
+        }
+        const AC = window.AudioContext || window.webkitAudioContext;
+        if (!AC) return;
+        try {
+            this.ctx = new AC();
+        } catch (e) { return; }
+        this.master = this.ctx.createGain();
+        this.master.gain.value = this.muted ? 0 : 0.35;
+        this.master.connect(this.ctx.destination);
+    },
+
+    toggleMute() {
+        this.muted = !this.muted;
+        Store.set('blockrun.muted', this.muted);
+        if (this.master) this.master.gain.value = this.muted ? 0 : 0.35;
+    },
+
+    _tone(freq, dur, type = 'square', vol = 0.2, slide = 1, delay = 0) {
+        const c = this.ctx, t = c.currentTime + delay;
+        const o = c.createOscillator(), g = c.createGain();
+        o.type = type;
+        o.frequency.setValueAtTime(freq, t);
+        if (slide !== 1) o.frequency.exponentialRampToValueAtTime(Math.max(20, freq * slide), t + dur);
+        g.gain.setValueAtTime(0.0001, t);
+        g.gain.exponentialRampToValueAtTime(vol, t + 0.005);
+        g.gain.exponentialRampToValueAtTime(0.0001, t + dur);
+        o.connect(g); g.connect(this.master);
+        o.start(t); o.stop(t + dur + 0.02);
+    },
+
+    _noise(dur, vol = 0.2, filterType = 'lowpass', freq = 1000, delay = 0) {
+        const c = this.ctx, t = c.currentTime + delay;
+        if (!this._noiseBuf) {
+            const len = c.sampleRate; // 1 秒白噪声,复用
+            this._noiseBuf = c.createBuffer(1, len, c.sampleRate);
+            const d = this._noiseBuf.getChannelData(0);
+            for (let i = 0; i < len; i++) d[i] = Math.random() * 2 - 1;
+        }
+        const src = c.createBufferSource(), f = c.createBiquadFilter(), g = c.createGain();
+        src.buffer = this._noiseBuf;
+        f.type = filterType; f.frequency.value = freq;
+        g.gain.setValueAtTime(vol, t);
+        g.gain.exponentialRampToValueAtTime(0.0001, t + dur);
+        src.connect(f); f.connect(g); g.connect(this.master);
+        src.start(t); src.stop(t + dur + 0.02);
+    },
+
+    play(name, arg) {
+        if (!this.ctx || this.muted || this.ctx.state !== 'running') return;
+        const now = this.ctx.currentTime;
+        const gap = this.minGap[name] || 0;
+        if (gap && this._last[name] && now - this._last[name] < gap) return;
+        this._last[name] = now;
+        switch (name) {
+            case 'kill':
+                this._tone(520 + Math.random() * 120, 0.07, 'square', 0.08, 1.6);
+                break;
+            case 'hurt':
+                this._tone(200, 0.18, 'sawtooth', 0.18, 0.5);
+                this._noise(0.12, 0.12, 'lowpass', 900);
+                break;
+            case 'death':
+                this._tone(320, 0.55, 'sawtooth', 0.2, 0.25);
+                break;
+            case 'pickup': {
+                const notes = { common: [660, 880], rare: [660, 880, 1100], epic: [660, 880, 1100, 1320] }[arg] || [660, 880];
+                notes.forEach((f, i) => this._tone(f, 0.12, 'triangle', 0.15, 1, i * 0.06));
+                break;
+            }
+            case 'bomb':
+                this._noise(0.6, 0.35, 'lowpass', 500);
+                this._tone(90, 0.5, 'sine', 0.3, 0.4);
+                break;
+            case 'skill':
+                this._noise(0.15, 0.12, 'bandpass', 1800);
+                this._tone(300, 0.15, 'triangle', 0.1, 2.2);
+                break;
+            case 'levelUp':
+                [523, 659, 784, 1047].forEach((f, i) => this._tone(f, 0.16, 'triangle', 0.18, 1, i * 0.08));
+                break;
+            case 'bossWarn':
+                for (let i = 0; i < 3; i++) {
+                    this._tone(440, 0.18, 'square', 0.12, 1, i * 0.4);
+                    this._tone(330, 0.18, 'square', 0.12, 1, i * 0.4 + 0.2);
+                }
+                break;
+            case 'bossSpawn':
+                this._tone(110, 0.8, 'sawtooth', 0.22, 0.5);
+                this._noise(0.6, 0.2, 'lowpass', 400);
+                break;
+            case 'bossRepel':
+                [392, 523, 659, 784].forEach((f, i) => this._tone(f, 0.2, 'square', 0.12, 1, i * 0.09));
+                break;
+            case 'gameOver':
+                [659, 523, 440, 349].forEach((f, i) => this._tone(f, 0.3, 'triangle', 0.18, 1, i * 0.2));
+                break;
+        }
+    }
+};
+
 class Game {
     constructor() {
         this.canvas = document.getElementById('gameCanvas');
@@ -180,6 +328,11 @@ class Game {
         this.mpGuestInputs = new Map();  // host 端：playerId → {keys, targetX, targetY, moving, castQ, castE}
         this.mpFrameCount = 0;
         this.mpStateBuffer = null;    // guest 端：最新收到的状态快照
+        this.mpSnapTime = 0;          // guest 端：上次应用快照的时刻(ms)
+        this.mpSnapInterval = 50;     // guest 端：快照间隔估计(ms),用于插值
+        this._mpHasOwnPos = false;
+        this._sfxPrev = null;         // 音效边沿检测用的上一帧状态
+        this.muteButton = null;
         this.mpServerUrl = 'ws://localhost:8080'; // 默认，可被大厅覆盖
 
         this.init();
@@ -478,6 +631,8 @@ class Game {
             }
             this.keys[e.key] = true;
 
+            // 在房间码输入框里打字时不触发静音
+            if ((e.key === 'm' || e.key === 'M') && e.target.tagName !== 'INPUT') Sound.toggleMute();
             if (e.key === 'p' || e.key === 'P' || e.key === 'Escape') {
                 if (this.isRunning) this.togglePause();
             }
@@ -531,12 +686,21 @@ class Game {
         const handlePointer = (clientX, clientY) => {
             const { x, y } = toCanvas(clientX, clientY);
 
+            const mb = this.muteButton;
+            if (mb && !this.showingPotentialMenu && !this.showingClassSelection &&
+                x >= mb.x && x <= mb.x + mb.w && y >= mb.y && y <= mb.y + mb.h) {
+                Sound.toggleMute();
+                return;
+            }
+
             if (this.showingPotentialMenu || this.showingClassSelection) {
                 this.checkButtonClick(x, y);
                 return;
             }
 
-            if (!this.isRunning || this.isPaused) return;
+            // 普通暂停(非菜单)时点击屏幕继续,触屏设备没有 P 键
+            if (this.isRunning && this.isPaused) { this.togglePause(); return; }
+            if (!this.isRunning) return;
 
             // 检查是否点在技能按钮上
             for (const btn of this.skillButtons) {
@@ -569,6 +733,12 @@ class Game {
             clearTimeout(this._resizeTimer);
             this._resizeTimer = setTimeout(() => this.resizeCanvas(), 100);
         });
+
+        // 浏览器自动播放策略:音频需在用户手势中创建/恢复
+        const unlockAudio = () => Sound.init();
+        document.addEventListener('pointerdown', unlockAudio);
+        document.addEventListener('touchstart', unlockAudio, { passive: true });
+        document.addEventListener('keydown', unlockAudio);
 
         // 切后台/锁屏/来电时自动暂停,回来后需手动继续(避免回来时已被打死)
         document.addEventListener('visibilitychange', () => {
@@ -695,6 +865,10 @@ class Game {
         this.mpGuestInputs = new Map();
         this.mpFrameCount = 0;
         this.mpStateBuffer = null;
+        this.mpSnapTime = 0;
+        this.mpSnapInterval = 50;
+        this._mpHasOwnPos = false;
+        this._sfxPrev = null;
         this._mpGuestLastLevel = 1;
         document.getElementById('gameOver').style.display = 'none';
         this.updateUI();
@@ -758,7 +932,7 @@ class Game {
                 if (this.mpMode === 'host') {
                     this.mpGuestInputs.set(msg.playerId, {
                         keys: msg.keys, targetX: msg.targetX,
-                        targetY: msg.targetY, moving: msg.moving
+                        targetY: msg.targetY, moving: msg.moving, stats: msg.stats
                     });
                     if (!this.mpGuestPlayers.has(msg.playerId)) {
                         const gp = new Player(this.width / 2 + msg.playerId * 40, this.height / 2);
@@ -783,9 +957,7 @@ class Game {
                 }
                 break;
             case 'game_over':
-                document.getElementById('finalTime').textContent = msg.stats.time;
-                document.getElementById('finalScore').textContent = msg.stats.score;
-                document.getElementById('gameOver').style.display = 'flex';
+                this._showGameOver(msg.stats.time, msg.stats.score);
                 this.isRunning = false;
                 if (this._rafId) { cancelAnimationFrame(this._rafId); this._rafId = null; }
                 break;
@@ -858,110 +1030,148 @@ class Game {
         this.mpWs.send(JSON.stringify({ type: 'state', data: this.serializeState() }));
     }
 
+    // 快照用紧凑数组 + 量化数值,只发渲染需要的动态字段(体积约为对象格式的 1/4)
+    //   e: [id, 类型序号, x, y, hp, maxHp, 眩晕(0/1), (炮手) aimAngle, shootTimer, shootInterval]
+    //   i: [id, 类型序号, 落点x, 落点y, 剩余时长]
+    //   p: [id, 种类(0 普通弹/1 穿透箭), x, y, 角度]
+    //   b: [id, x, y, 角度]
+    //   boss: [x, y, hp, maxHp, 击退中(0/1)]
     serializeState() {
-        // 序列化所有玩家
         const players = [this._serializePlayer(this.player, 0)];
         for (const [id, gp] of this.mpGuestPlayers) {
             players.push(this._serializePlayer(gp, id));
         }
         return {
-            enemies: this.enemies.map(e => ({
-                x: e.x, y: e.y, type: e.type, difficulty: e.difficulty,
-                currentHealth: e.currentHealth, maxHealth: e.maxHealth,
-                stunTimer: e.stunTimer, size: e.size, color: e.color, attack: e.attack
-            })),
-            boss: this.boss ? {
-                x: this.boss.x, y: this.boss.y,
-                currentHealth: this.boss.currentHealth, maxHealth: this.boss.maxHealth,
-                size: this.boss.size, phase: this.boss.phase, retreating: this.boss.retreating
-            } : null,
-            items: this.items.map(i => ({
-                x: i.x, y: i.y, type: i.type, rarity: i.rarity,
-                duration: i.duration, maxDuration: i.maxDuration,
-                spinPhase: i.spinPhase, bobPhase: i.bobPhase, size: i.size
-            })),
-            projectiles: this.projectiles.map(p => ({
-                x: p.x, y: p.y, dx: p.dx, dy: p.dy, size: p.size, color: p.color
-            })),
-            enemyBullets: this.enemyBullets.map(b => ({
-                x: b.x, y: b.y, vx: b.vx, vy: b.vy, size: b.size
-            })),
+            e: this.enemies.map(e => {
+                const row = [e.id, MP_ENEMY_TYPES.indexOf(e.type), q1(e.x), q1(e.y),
+                    Math.ceil(e.currentHealth), Math.ceil(e.maxHealth), e.stunTimer > 0 ? 1 : 0];
+                if (e.type === 'gunner') row.push(q2(e.aimAngle || 0), q2(e.shootTimer || 0), q2(e.shootInterval || 1));
+                return row;
+            }),
+            boss: this.boss ? [q1(this.boss.x), q1(this.boss.y), Math.ceil(this.boss.currentHealth),
+                Math.ceil(this.boss.maxHealth), this.boss.retreating ? 1 : 0] : null,
+            i: this.items.map(i => [i.id, MP_ITEM_TYPES.indexOf(i.type), q1(i.targetX), q1(i.targetY), q1(i.duration)]),
+            p: this.projectiles.map(p => [p.id, p.isPiercing && !p.pierceRemaining ? 1 : 0, q1(p.x), q1(p.y),
+                q2(Math.atan2(p.dy, p.dx))]),
+            b: this.enemyBullets.map(b => [b.id, q1(b.x), q1(b.y), q2(b.angle)]),
             players,
-            gameTime: this.gameTime, level: this.level, score: this.score,
-            difficulty: this.difficulty, life: this.life,
-            enemyFreezeTimer: this.enemyFreezeTimer,
-            bossState: this.bossState, bossWarningTimer: this.bossWarningTimer,
-            bossActiveTimer: this.bossActiveTimer, screenShake: this.screenShake
+            gameTime: q1(this.gameTime), level: this.level, score: this.score,
+            difficulty: q2(this.difficulty), life: this.life,
+            enemyFreezeTimer: q2(this.enemyFreezeTimer),
+            bossState: this.bossState, bossWarningTimer: q2(this.bossWarningTimer),
+            bossActiveTimer: q1(this.bossActiveTimer), screenShake: q2(this.screenShake)
         };
     }
 
     _serializePlayer(p, id) {
-        return {
-            id, x: p.x, y: p.y, size: p.size, color: p.color,
-            currentHealth: p.currentHealth, maxHealth: p.maxHealth,
-            class: p.class, hurtCooldown: p.hurtCooldown, invincibleTimer: p.invincibleTimer,
-            mana: p.mana, maxMana: p.maxMana, rage: p.rage, maxRage: p.maxRage,
-            faith: p.faith, maxFaith: p.maxFaith, shield: p.shield,
-            arrows: p.arrows, maxArrows: p.maxArrows,
-            assassinCharge: p.assassinCharge, maxAssassinCharge: p.maxAssassinCharge,
-            skillQ: { cooldown: p.skillQ.cooldown, maxCooldown: p.skillQ.maxCooldown, level: p.skillQ.level },
-            skillE: { cooldown: p.skillE.cooldown, maxCooldown: p.skillE.maxCooldown, level: p.skillE.level }
+        const d = {
+            id, x: q1(p.x), y: q1(p.y), size: p.size, color: p.color,
+            currentHealth: Math.ceil(p.currentHealth), maxHealth: Math.ceil(p.maxHealth),
+            class: p.class, hurtCooldown: q2(p.hurtCooldown), invincibleTimer: q2(p.invincibleTimer),
+            skillQ: { cooldown: q2(p.skillQ.cooldown), maxCooldown: q2(p.skillQ.maxCooldown), level: p.skillQ.level },
+            skillE: { cooldown: q2(p.skillE.cooldown), maxCooldown: q2(p.skillE.maxCooldown), level: p.skillE.level }
         };
+        // 职业资源只发本职业用到的
+        switch (p.class) {
+            case 'mage':     d.mana = q1(p.mana); d.maxMana = p.maxMana; break;
+            case 'warrior':  d.rage = q1(p.rage); d.maxRage = p.maxRage; break;
+            case 'paladin':  d.faith = q1(p.faith); d.maxFaith = p.maxFaith; d.shield = q1(p.shield); break;
+            case 'archer':   d.arrows = p.arrows; d.maxArrows = p.maxArrows; break;
+            case 'assassin': d.assassinCharge = q1(p.assassinCharge); d.maxAssassinCharge = p.maxAssassinCharge; break;
+        }
+        return d;
+    }
+
+    // ── Guest：插值辅助 ──
+    // 每次快照把对象当前位置记为起点、快照位置记为终点,之后按时间在两者间平滑过渡
+    _mpSetTarget(o, x, y, isNew) {
+        if (isNew || Math.abs(x - o.x) + Math.abs(y - o.y) > 150) {
+            // 新对象或瞬移(复活/出场)直接落位
+            o.x = o._fx = o._tx = x;
+            o.y = o._fy = o._ty = y;
+        } else {
+            o._fx = o.x; o._fy = o.y;
+            o._tx = x;   o._ty = y;
+        }
+    }
+
+    // 按 id 复用对象:已存在的更新,新出现的创建,消失的收集到 removed
+    _mpSyncList(list, rows, create, update) {
+        const byId = new Map();
+        for (const o of list) byId.set(o.id, o);
+        const out = [];
+        for (const r of rows) {
+            let o = byId.get(r[0]);
+            const isNew = !o;
+            if (isNew) { o = create(r); o.id = r[0]; }
+            else byId.delete(r[0]);
+            update(o, r, isNew);
+            out.push(o);
+        }
+        return { list: out, removed: [...byId.values()] };
     }
 
     // ── Guest：应用 host 广播的世界状态 ──
     applyRemoteState(snapshot) {
         if (!snapshot) return;
 
-        // 重建敌人列表（仅用于渲染，不运行 AI）
-        this.enemies = snapshot.enemies.map(e => {
-            const en = new Enemy(e.x, e.y, e.type, e.difficulty || 1);
-            en.currentHealth = e.currentHealth; en.maxHealth = e.maxHealth;
-            en.stunTimer = e.stunTimer || 0;
-            if (e.size)   en.size   = e.size;
-            if (e.color)  en.color  = e.color;
-            if (e.attack) en.attack = e.attack;
-            return en;
-        });
+        // 估算快照间隔(指数平滑),插值时长随网络实际节奏自适应
+        const now = performance.now();
+        if (this.mpSnapTime) {
+            const dt = now - this.mpSnapTime;
+            if (dt > 0 && dt < 500) this.mpSnapInterval = this.mpSnapInterval * 0.8 + dt * 0.2;
+        }
+        this.mpSnapTime = now;
+
+        // 敌人(仅渲染,不运行 AI)
+        const en = this._mpSyncList(this.enemies, snapshot.e || [],
+            r => new Enemy(r[2], r[3], MP_ENEMY_TYPES[r[1]] || 'chaser', 1),
+            (e, r, isNew) => {
+                this._mpSetTarget(e, r[2], r[3], isNew);
+                e.currentHealth = r[4]; e.maxHealth = r[5];
+                e.stunTimer = r[6] ? 1 : 0;
+                if (r.length > 7) { e.aimAngle = r[7]; e.shootTimer = r[8]; e.shootInterval = r[9]; }
+            });
+        this.enemies = en.list;
+        if (en.removed.length > 0) Sound.play('kill');
 
         // Boss
         if (snapshot.boss) {
-            if (!this.boss) this.boss = new BlockBoss(snapshot.boss.x, snapshot.boss.y, snapshot.difficulty || 1, this.player.maxHealth);
-            Object.assign(this.boss, {
-                x: snapshot.boss.x, y: snapshot.boss.y,
-                currentHealth: snapshot.boss.currentHealth, maxHealth: snapshot.boss.maxHealth,
-                phase: snapshot.boss.phase || 0, retreating: snapshot.boss.retreating || false
-            });
+            const [bx, by, hp, maxHp, retreating] = snapshot.boss;
+            const isNew = !this.boss;
+            if (isNew) this.boss = new BlockBoss(bx, by, snapshot.difficulty || 1, this.player.maxHealth);
+            this._mpSetTarget(this.boss, bx, by, isNew);
+            this.boss.currentHealth = hp;
+            this.boss.maxHealth = maxHp;
+            this.boss.retreating = !!retreating;
         } else {
             this.boss = null;
         }
 
-        // 道具（仅渲染）
-        this.items = snapshot.items.map(i => {
-            const it = new Item(i.x, i.y, i.type);
-            it.x = i.x; it.y = i.y;
-            it.spinPhase = i.spinPhase || 0; it.bobPhase = i.bobPhase || 0;
-            it.duration = i.duration; it.maxDuration = i.maxDuration;
-            if (i.size) it.size = i.size;
-            return it;
-        });
+        // 道具(仅渲染;落地/旋转动画在本地跑)
+        const it = this._mpSyncList(this.items, snapshot.i || [],
+            r => new Item(r[2], r[3], MP_ITEM_TYPES[r[1]] || 'potion'),
+            (o, r) => { o.duration = r[4]; });
+        this.items = it.list;
+        // 还剩不少时长就消失 = 被拾取了
+        const picked = it.removed.find(o => o.duration > 0.3);
+        if (picked) Sound.play('pickup', picked.rarity);
 
         // 子弹
-        this.projectiles = snapshot.projectiles.map(p => {
-            const pr = new Projectile(p.x, p.y, p.dx, p.dy, 15);
-            pr.size = p.size || 8; pr.color = p.color || '#ff9800';
-            return pr;
-        });
-        this.enemyBullets = (snapshot.enemyBullets || []).map(b => {
-            const eb = new EnemyBullet(b.x + 6, b.y + 6, b.vx || 0, b.vy || 0, 10);
-            if (b.size) eb.size = b.size;
-            return eb;
-        });
+        this.projectiles = this._mpSyncList(this.projectiles, snapshot.p || [],
+            r => r[1] === 1
+                ? new PiercingArrow(r[2], r[3], Math.cos(r[4]), Math.sin(r[4]), 0, null)
+                : new Projectile(r[2], r[3], Math.cos(r[4]), Math.sin(r[4]), 0),
+            (o, r, isNew) => { this._mpSetTarget(o, r[2], r[3], isNew); o.angle = r[4]; }).list;
+        this.enemyBullets = this._mpSyncList(this.enemyBullets, snapshot.b || [],
+            r => new EnemyBullet(r[1] + 6, r[2] + 6, Math.cos(r[3]), Math.sin(r[3]), 0),
+            (o, r, isNew) => { this._mpSetTarget(o, r[1], r[2], isNew); o.angle = r[3]; }).list;
 
         // 更新本机玩家（接受 host 的位置和生命值）
         const myData = snapshot.players.find(p => p.id === this.mpPlayerId);
         if (myData) {
-            this.player.x = myData.x; this.player.y = myData.y;
+            this._mpSetTarget(this.player, myData.x, myData.y, !this._mpHasOwnPos);
+            this._mpHasOwnPos = true;
             this.player.currentHealth = myData.currentHealth;
             this.player.maxHealth = myData.maxHealth;
             this.player.hurtCooldown = myData.hurtCooldown || 0;
@@ -981,8 +1191,16 @@ class Game {
             }
         }
 
-        // 其他玩家（用于渲染）
-        this.mpPlayers = snapshot.players.filter(p => p.id !== this.mpPlayerId);
+        // 其他玩家（用于渲染，复用对象以便插值）
+        const prevOthers = new Map(this.mpPlayers.map(p => [p.id, p]));
+        this.mpPlayers = snapshot.players.filter(p => p.id !== this.mpPlayerId).map(d => {
+            const o = prevOthers.get(d.id);
+            const { x, y, ...rest } = d;
+            if (!o) { const n = { ...rest, x, y }; this._mpSetTarget(n, x, y, true); return n; }
+            Object.assign(o, rest);
+            this._mpSetTarget(o, x, y, false);
+            return o;
+        });
 
         // 共享游戏状态
         this.gameTime          = snapshot.gameTime;
@@ -997,12 +1215,39 @@ class Game {
         this.screenShake       = snapshot.screenShake      || 0;
     }
 
+    // ── Guest：每帧在两次快照之间插值位置,并在本地推进纯视觉动画 ──
+    _mpInterpolate() {
+        const a = this.mpSnapTime
+            ? Math.max(0, Math.min(1, (performance.now() - this.mpSnapTime) / Math.max(16, this.mpSnapInterval)))
+            : 1;
+        const lerp = (o, trailMax) => {
+            if (o._tx === undefined) return;
+            if (trailMax && o.trail) {
+                o.trail.push({ x: o.x + o.size / 2, y: o.y + o.size / 2 });
+                if (o.trail.length > trailMax) o.trail.shift();
+            }
+            o.x = o._fx + (o._tx - o._fx) * a;
+            o.y = o._fy + (o._ty - o._fy) * a;
+        };
+        for (const e of this.enemies) lerp(e);
+        for (const p of this.projectiles) lerp(p, p instanceof PiercingArrow ? 12 : 8);
+        for (const b of this.enemyBullets) lerp(b, 8);
+        for (const p of this.mpPlayers) {
+            lerp(p);
+            if (p.hurtCooldown > 0) p.hurtCooldown -= DT;
+            if (p.invincibleTimer > 0) p.invincibleTimer -= DT;
+        }
+        lerp(this.player);
+        if (this.boss) { lerp(this.boss); this.boss.phase += 0.04; }
+        for (const it of this.items) it.update();
+    }
+
     // ── Guest：发送输入 ──
     sendGuestInput() {
         if (!this.mpWs || this.mpWs.readyState !== WebSocket.OPEN) return;
         const p = this.player;
         const hasTarget = p.moving && p.targetX !== null;
-        this.mpWs.send(JSON.stringify({
+        const payload = JSON.stringify({
             type: 'input',
             keys: {
                 ArrowUp:    !!this.keys['ArrowUp'],   ArrowDown:  !!this.keys['ArrowDown'],
@@ -1018,7 +1263,14 @@ class Game {
                 attack: p.attack, defense: p.defense, speed: p.speed,
                 maxHealth: p.maxHealth, class: p.class
             }
-        }));
+        });
+        // 输入没变化时不必每帧发送(host 会沿用上一次输入),仅保留 250ms 心跳
+        const now = performance.now();
+        if (payload !== this._mpLastInput || now - (this._mpLastInputTime || 0) > 250) {
+            this.mpWs.send(payload);
+            this._mpLastInput = payload;
+            this._mpLastInputTime = now;
+        }
         // 发送后清除移动目标，避免连续帧发送相同位置
         if (hasTarget) {
             p.moving = false;
@@ -1184,7 +1436,7 @@ class Game {
         ctx.shadowBlur = 0;
         ctx.fillStyle = 'rgba(200,232,255,0.5)';
         ctx.font = `${Math.min(16, this.width * 0.034)}px Arial`;
-        ctx.fillText('按 P / ESC 继续', this.width / 2, this.height * 0.56);
+        ctx.fillText('点击屏幕 / 按 P 继续 · M 静音', this.width / 2, this.height * 0.56);
         ctx.restore();
     }
 
@@ -1210,6 +1462,9 @@ class Game {
                 if (!this.showingClassSelection && !this.showingPotentialMenu) {
                     this.player.update(this.keys, this.width, this.height);
                 }
+                // 位置以 host 为准:覆盖本地移动,在快照间平滑插值
+                this._mpInterpolate();
+                this._sfxTick();
                 this._updateLocalResources();
                 this.updateEffects();
                 this.updateParticles();
@@ -1330,6 +1585,7 @@ class Game {
                 this.updateUI();
                 this._uiTimer = 0;
             }
+            this._sfxTick();
             this.checkGameOver();
 
             // 屏幕震动衰减
@@ -1341,6 +1597,24 @@ class Game {
             this._checkGuestCollisions();
             this.mpFrameCount++;
             if (this.mpFrameCount % 3 === 0) this.broadcastState();
+        }
+    }
+
+    // 通过状态变化触发音效:受击/死亡/升级/魔王阶段。host 与 guest 都适用(guest 状态来自快照)
+    _sfxTick() {
+        const p = this.player;
+        const cur = { hurt: p.hurtCooldown || 0, life: this.life, level: this.level, boss: this.bossState };
+        const prev = this._sfxPrev;
+        this._sfxPrev = cur;
+        if (!prev) return;
+        if (cur.hurt > prev.hurt + 0.3 && this.life > 0) {
+            Sound.play(cur.life < prev.life ? 'death' : 'hurt');
+        }
+        if (cur.level > prev.level) Sound.play('levelUp');
+        if (cur.boss !== prev.boss) {
+            if (cur.boss === 'warning') Sound.play('bossWarn');
+            else if (cur.boss === 'active') Sound.play('bossSpawn');
+            else if (cur.boss === 'retreating') Sound.play('bossRepel');
         }
     }
 
@@ -1721,6 +1995,7 @@ class Game {
     spawnEnemies() {
         // 魔王活跃 / 击退中,停刷普通敌人
         if (this.bossState === 'active' || this.bossState === 'retreating') return;
+        if (this.enemies.length >= maxEnemiesFor(this.difficulty)) return;
         // 刷怪概率随难度上升但封顶,避免后期数量碾压
         const spawnChance = Math.min(0.045, 0.018 + 0.008 * (this.difficulty - 1));
         if (Math.random() < spawnChance) {
@@ -1792,6 +2067,7 @@ class Game {
         const cx = item.x + item.size / 2;
         const cy = item.y + item.size / 2;
         const burstCount = { common: 12, rare: 20, epic: 30 }[item.rarity] || 12;
+        Sound.play(item.type === 'bomb' ? 'bomb' : 'pickup', item.rarity);
         this.spawnBurstRing(cx, cy, item.size * 1.5, item.color, burstCount);
         this.spawnParticles(cx, cy, item.color, burstCount, 1.5, 5, 2, 5, 0.04);
         // 史诗道具额外金色光圈
@@ -2138,6 +2414,7 @@ class Game {
         else if (cls === 'assassin') this._assassinQ(skill);
         else if (cls === 'archer') this._archerQ(skill);
         else if (cls === 'paladin') this._paladinQ(skill);
+        if (skill.cooldown > 0) Sound.play('skill');
     }
 
     castSkillE() {
@@ -2150,6 +2427,7 @@ class Game {
         else if (cls === 'assassin') this._assassinE(skill);
         else if (cls === 'archer') this._archerE(skill);
         else if (cls === 'paladin') this._paladinE(skill);
+        if (skill.cooldown > 0) Sound.play('skill');
     }
 
     _warriorQ(skill) {
@@ -2576,6 +2854,7 @@ class Game {
 
     // 统一击杀结算入口:替代旧的 score+=10; exp+=5; checkLevelUp() 三连
     _onEnemyKilled() {
+        Sound.play('kill');
         this.score += 10 * (this.scoreMult || 1);
         this.exp += 5;
         if (this.player.lifeStealPerKill) {
@@ -3234,8 +3513,29 @@ class Game {
         if (this.mpMode === 'host' && this.mpWs && this.mpWs.readyState === WebSocket.OPEN) {
             this.mpWs.send(JSON.stringify({ type: 'game_over', stats: { time: Math.floor(this.gameTime), score: this.score } }));
         }
-        document.getElementById('finalTime').textContent = Math.floor(this.gameTime);
-        document.getElementById('finalScore').textContent = this.score;
+        this._showGameOver(Math.floor(this.gameTime), this.score);
+    }
+
+    // 结算弹窗 + 最高纪录(分数与生存时间分别记录,存 localStorage)
+    _showGameOver(time, score) {
+        Sound.play('gameOver');
+        const best = Store.get('blockrun.best', { score: 0, time: 0 });
+        const newScore = score > best.score;
+        const newTime = time > best.time;
+        if (newScore || newTime) {
+            Store.set('blockrun.best', { score: Math.max(score, best.score), time: Math.max(time, best.time) });
+        }
+        document.getElementById('finalTime').textContent = time;
+        document.getElementById('finalScore').textContent = score;
+        const bestEl = document.getElementById('bestRecord');
+        if (bestEl) {
+            const b = Store.get('blockrun.best', { score: 0, time: 0 });
+            bestEl.textContent = (newScore || newTime)
+                ? `🏆 新纪录!  最高分 ${b.score} · 最长生存 ${b.time} 秒`
+                : `最高分 ${b.score} · 最长生存 ${b.time} 秒`;
+            bestEl.classList.toggle('new-record', newScore || newTime);
+        }
+        updateBestScoreLabel();
         document.getElementById('gameOver').style.display = 'flex';
     }
     
@@ -3519,6 +3819,7 @@ class Game {
         this._renderFreezeOverlay();
         this._renderSkillHUD();
         this._renderBossHUD();
+        this._renderMuteButton();
 
         if (this.showingClassSelection) {
             this.renderClassSelection();
@@ -3531,6 +3832,27 @@ class Game {
         }
 
         ctx.restore(); // 结束缩放变换
+    }
+
+    _renderMuteButton() {
+        const size = 30, x = this.width - size - 10, y = 10;
+        this.muteButton = { x, y, w: size, h: size };
+        const ctx = this.ctx;
+        ctx.save();
+        ctx.globalAlpha = 0.7;
+        ctx.fillStyle = 'rgba(0,0,0,0.45)';
+        roundRect(ctx, x, y, size, size, 6);
+        ctx.fill();
+        ctx.strokeStyle = 'rgba(0,200,255,0.5)';
+        ctx.lineWidth = 1;
+        roundRect(ctx, x, y, size, size, 6);
+        ctx.stroke();
+        ctx.font = '16px Arial';
+        ctx.textAlign = 'center';
+        ctx.textBaseline = 'middle';
+        ctx.fillStyle = '#ffffff';
+        ctx.fillText(Sound.muted ? '🔇' : '🔊', x + size / 2, y + size / 2 + 1);
+        ctx.restore();
     }
 
     _renderBossHUD() {
@@ -4249,6 +4571,7 @@ class Player {
 
 class Enemy {
     constructor(x, y, type, difficulty) {
+        this.id = nextEntityId();
         this.x = x;
         this.y = y;
         this.type = type;
@@ -4721,6 +5044,7 @@ class Enemy {
 
 class Item {
     constructor(x, y, type) {
+        this.id = nextEntityId();
         this.targetX = x;
         this.targetY = y;
         this.x = x;
@@ -4991,6 +5315,7 @@ class BlockBoss {
 
 class Projectile {
     constructor(x, y, dx, dy, damage = 15) {
+        this.id = nextEntityId();
         this.x = x;
         this.y = y;
         this.size = 8;
@@ -5032,6 +5357,7 @@ class Projectile {
 
 class PiercingArrow {
     constructor(x, y, dx, dy, damage, game) {
+        this.id = nextEntityId();
         this.x = x;
         this.y = y;
         this.size = 8;
@@ -5116,6 +5442,7 @@ class PiercingArrow {
 
 class EnemyBullet {
     constructor(x, y, vx, vy, damage) {
+        this.id = nextEntityId();
         this.x = x - 6;
         this.y = y - 6;
         this.size = 12;
@@ -5174,6 +5501,7 @@ class EnemyBullet {
 window.addEventListener('load', () => {
     const game = new Game();
     game.render();
+    updateBestScoreLabel();
 
     // ── 联机大厅按钮逻辑 ──
     const overlay      = document.getElementById('mpOverlay');
