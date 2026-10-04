@@ -330,6 +330,7 @@ class Game {
         this.mpStateBuffer = null;    // guest 端：最新收到的状态快照
         this.mpSnapTime = 0;          // guest 端：上次应用快照的时刻(ms)
         this.mpSnapInterval = 50;     // guest 端：快照间隔估计(ms),用于插值
+        this._mpFx = [];              // host 端：待广播的粒子生成调用
         this._mpHasOwnPos = false;
         this._sfxPrev = null;         // 音效边沿检测用的上一帧状态
         this.muteButton = null;
@@ -637,21 +638,8 @@ class Game {
                 if (this.isRunning) this.togglePause();
             }
             if (!this.isPaused && this.isRunning) {
-                if (e.key === 'q' || e.key === 'Q') {
-                    if (this.mpMode === 'guest') {
-                        if (this.mpWs && this.mpWs.readyState === WebSocket.OPEN)
-                            this.mpWs.send(JSON.stringify({ type: 'castSkill', skill: 'Q' }));
-                    } else {
-                        this.castSkillQ();
-                    }
-                } else if (e.key === 'e' || e.key === 'E') {
-                    if (this.mpMode === 'guest') {
-                        if (this.mpWs && this.mpWs.readyState === WebSocket.OPEN)
-                            this.mpWs.send(JSON.stringify({ type: 'castSkill', skill: 'E' }));
-                    } else {
-                        this.castSkillE();
-                    }
-                }
+                if (e.key === 'q' || e.key === 'Q') this._requestSkill('Q');
+                else if (e.key === 'e' || e.key === 'E') this._requestSkill('E');
             }
         });
         
@@ -705,8 +693,7 @@ class Game {
             // 检查是否点在技能按钮上
             for (const btn of this.skillButtons) {
                 if (x >= btn.x && x <= btn.x + btn.w && y >= btn.y && y <= btn.y + btn.h) {
-                    if (btn.skill === 'Q') this.castSkillQ();
-                    else                   this.castSkillE();
+                    this._requestSkill(btn.skill);
                     return; // 不触发移动
                 }
             }
@@ -867,6 +854,7 @@ class Game {
         this.mpStateBuffer = null;
         this.mpSnapTime = 0;
         this.mpSnapInterval = 50;
+        this._mpFx = [];
         this._mpHasOwnPos = false;
         this._sfxPrev = null;
         this._mpGuestLastLevel = 1;
@@ -942,13 +930,7 @@ class Game {
                 }
                 break;
             case 'castSkill':
-                if (this.mpMode === 'host') {
-                    const gp = this.mpGuestPlayers.get(msg.playerId);
-                    if (gp) {
-                        // 用保存的 player 引用临时执行技能（简化：直接由 host game 处理）
-                        // 此处预留，完整实现见 _applyGuestInputs
-                    }
-                }
+                if (this.mpMode === 'host' && !this.isPaused) this._castGuestSkill(msg.playerId, msg.skill);
                 break;
             case 'classChoose':
                 if (this.mpMode === 'host') {
@@ -1055,12 +1037,32 @@ class Game {
                 q2(Math.atan2(p.dy, p.dx))]),
             b: this.enemyBullets.map(b => [b.id, q1(b.x), q1(b.y), q2(b.angle)]),
             players,
+            ef: this._mpTakeNewEffects(),
+            fx: this._mpFx.splice(0),
             gameTime: q1(this.gameTime), level: this.level, score: this.score,
+            exp: Math.floor(this.exp), expToNext: this.expToNext, maxLife: this.maxLife,
             difficulty: q2(this.difficulty), life: this.life,
             enemyFreezeTimer: q2(this.enemyFreezeTimer),
             bossState: this.bossState, bossWarningTimer: q2(this.bossWarningTimer),
             bossActiveTimer: q1(this.bossActiveTimer), screenShake: q2(this.screenShake)
         };
+    }
+
+    // 自上次广播以来新增的特效(纯数据对象),数值量化后发送
+    _mpTakeNewEffects() {
+        const out = [];
+        for (const e of this.effects) {
+            if (e._mpSent) continue;
+            e._mpSent = true;
+            const c = {};
+            for (const k in e) {
+                if (k === '_mpSent') continue;
+                const v = e[k];
+                c[k] = typeof v === 'number' ? q2(v) : v;
+            }
+            out.push(c);
+        }
+        return out;
     }
 
     _serializePlayer(p, id) {
@@ -1184,8 +1186,9 @@ class Game {
             if (myData.shield !== undefined)  this.player.shield = myData.shield;
             if (myData.arrows !== undefined)  this.player.arrows = myData.arrows;
             if (myData.assassinCharge !== undefined) this.player.assassinCharge = myData.assassinCharge;
-            if (myData.skillQ) Object.assign(this.player.skillQ, myData.skillQ);
-            if (myData.skillE) Object.assign(this.player.skillE, myData.skillE);
+            // 只同步冷却;等级/冷却上限来自本地天赋,由 sendGuestInput 发给 host
+            if (myData.skillQ) this.player.skillQ.cooldown = myData.skillQ.cooldown;
+            if (myData.skillE) this.player.skillE.cooldown = myData.skillE.cooldown;
             if (myData.class && !this.player.class) {
                 this.player.class = myData.class;
             }
@@ -1202,10 +1205,23 @@ class Game {
             return o;
         });
 
+        // 特效与粒子(技能/命中/拾取的视觉反馈)
+        if (snapshot.ef) for (const e of snapshot.ef) this.effects.push(e);
+        if (snapshot.fx) {
+            for (const [kind, ...a] of snapshot.fx) {
+                if (kind === 'h') this.spawnHitParticles(...a);
+                else if (kind === 'p') this.spawnParticles(...a);
+                else if (kind === 'r') this.spawnBurstRing(...a);
+            }
+        }
+
         // 共享游戏状态
         this.gameTime          = snapshot.gameTime;
         this.level             = snapshot.level;
         this.score             = snapshot.score;
+        if (snapshot.exp !== undefined)       this.exp       = snapshot.exp;
+        if (snapshot.expToNext !== undefined) this.expToNext = snapshot.expToNext;
+        if (snapshot.maxLife !== undefined)   this.maxLife   = snapshot.maxLife;
         this.difficulty        = snapshot.difficulty;
         this.life              = snapshot.life;
         this.enemyFreezeTimer  = snapshot.enemyFreezeTimer;
@@ -1261,7 +1277,9 @@ class Game {
             // 同步属性给 host（天赋/职业效果用于战斗模拟）
             stats: {
                 attack: p.attack, defense: p.defense, speed: p.speed,
-                maxHealth: p.maxHealth, class: p.class
+                maxHealth: p.maxHealth, class: p.class,
+                qLevel: p.skillQ.level, eLevel: p.skillE.level,
+                qMaxCd: p.skillQ.maxCooldown, eMaxCd: p.skillE.maxCooldown
             }
         });
         // 输入没变化时不必每帧发送(host 会沿用上一次输入),仅保留 250ms 心跳
@@ -1300,6 +1318,10 @@ class Game {
                     gp.currentHealth = Math.min(gp.currentHealth, gp.maxHealth);
                 }
                 if (s.class && !gp.class) this._applyClassToPlayer(gp, s.class);
+                if (s.qLevel)  gp.skillQ.level = s.qLevel;
+                if (s.eLevel)  gp.skillE.level = s.eLevel;
+                if (s.qMaxCd)  gp.skillQ.maxCooldown = s.qMaxCd;
+                if (s.eMaxCd)  gp.skillE.maxCooldown = s.eMaxCd;
             }
             if (input.keys) gp.update(input.keys, this.width, this.height);
             if (input.moving && input.targetX !== null) {
@@ -1322,7 +1344,7 @@ class Game {
 
     // ── Host：为指定 Player 对象配置职业 ──
     _applyClassToPlayer(p, className) {
-        if (!CLASS_BASE_CD[className]) return;
+        if (!CLASS_BASE_CD[className] || p.class) return;
         p.class = className;
         const adj = CLASS_BASE_ADJUST[className] || {};
         for (const [k, v] of Object.entries(adj)) p[k] = (p[k] || 0) + v;
@@ -1495,75 +1517,10 @@ class Game {
                 this.autoAttackTimer = this.autoAttackInterval;
             }
 
-            if (this.player.skillQ.cooldown > 0) this.player.skillQ.cooldown -= DT;
-            if (this.player.skillE.cooldown > 0) this.player.skillE.cooldown -= DT;
-
-            if (this.player.class === 'mage' && this.player.mana < this.player.maxMana) {
-                this.player.mana = Math.min(this.player.maxMana, this.player.mana + this.player.manaRegen * DT);
-            }
-            // 战士怒气自动衰减(战斗中也持续)
-            if (this.player.class === 'warrior' && this.player.rage > 0) {
-                const decayRate = 2 * (this.warriorRageDecayMult || 1); // /秒
-                this.player.rage = Math.max(0, this.player.rage - decayRate * DT);
-            }
-            // 圣骑士护盾持续回复(上限 = maxHealth * shieldCapRatio)
-            if (this.player.class === 'paladin') {
-                const cap = this.player.maxHealth * (this.player.shieldCapRatio || 0.10);
-                if (this.player.shield < cap) {
-                    const regen = this.player.maxHealth * 0.02; // /秒(2% maxHP)
-                    this.player.shield = Math.min(cap, this.player.shield + regen * DT);
-                }
-            }
-            if (this.player.class === 'archer' && this.player.reloadTimer > 0) {
-                this.player.reloadTimer -= DT;
-                if (this.player.reloadTimer <= 0) {
-                    this.player.arrows = Math.min(this.player.arrows + 1, this.player.maxArrows);
-                    // 没装满就继续下一发
-                    if (this.player.arrows < this.player.maxArrows) {
-                        this.player.reloadTimer = this.player.reloadDuration;
-                    } else {
-                        this.player.reloadTimer = 0;
-                    }
-                }
-            }
-            if (this.player.class === 'paladin') {
-                if (this.player.faith < this.player.maxFaith) {
-                    this.player.faith = Math.min(this.player.maxFaith, this.player.faith + this.player.faithRegen * DT);
-                }
-                if (this.player.holyAuraActive) {
-                    this.player.holyAuraTimer -= DT;
-                    if (this.player.holyAuraTimer <= 0) {
-                        this.player.holyAuraActive = false;
-                    } else {
-                        this.player.heal(this.player.maxHealth * 0.1 * DT);
-                        const pcx = this.player.x + this.player.size / 2;
-                        const pcy = this.player.y + this.player.size / 2;
-                        const auraDmgTick = this._computeAttackDamage(this.player.attack) * 0.5 * DT * (this.paladinSkillDmgMult || 1);
-                        for (let i = this.enemies.length - 1; i >= 0; i--) {
-                            const e = this.enemies[i];
-                            const dx = e.x + e.size / 2 - pcx;
-                            const dy = e.y + e.size / 2 - pcy;
-                            if (Math.sqrt(dx * dx + dy * dy) <= 80) {
-                                e.takeDamage(auraDmgTick);
-                                if (e.currentHealth <= 0) {
-                                    this.spawnHitParticles(e.x + e.size / 2, e.y + e.size / 2, e.color, 10);
-                                    this._onEnemyKilled();
-                                    this.enemies.splice(i, 1);
-                                }
-                            }
-                        }
-                        // 圣光光环对魔王也持续造伤
-                        if (this.boss && this.bossState === 'active') {
-                            const bx = this.boss.x + this.boss.size / 2;
-                            const by = this.boss.y + this.boss.size / 2;
-                            if (Math.sqrt((bx - pcx) ** 2 + (by - pcy) ** 2) <= 80 + this.boss.size / 2) {
-                                this.boss.takeDamage(auraDmgTick);
-                                this.bossDamageDealt += auraDmgTick;
-                            }
-                        }
-                        this.effects.push({ type: 'holyAura', x: pcx, y: pcy, radius: 80, color: '#ffd700', ttl: 0.35, maxTtl: 0.35, pulse: this.player.holyAuraTimer });
-                    }
-                }
+            this._tickPlayerResources();
+            // 联机:guest 的冷却/资源/圣光光环也由 host 推进
+            if (this.mpMode === 'host') {
+                for (const gp of this.mpGuestPlayers.values()) this._runAsPlayer(gp, () => this._tickPlayerResources());
             }
 
             this.bgTime += DT;
@@ -1603,7 +1560,8 @@ class Game {
     // 通过状态变化触发音效:受击/死亡/升级/魔王阶段。host 与 guest 都适用(guest 状态来自快照)
     _sfxTick() {
         const p = this.player;
-        const cur = { hurt: p.hurtCooldown || 0, life: this.life, level: this.level, boss: this.bossState };
+        const cur = { hurt: p.hurtCooldown || 0, life: this.life, level: this.level, boss: this.bossState,
+                      q: p.skillQ.cooldown, e: p.skillE.cooldown };
         const prev = this._sfxPrev;
         this._sfxPrev = cur;
         if (!prev) return;
@@ -1611,11 +1569,124 @@ class Game {
             Sound.play(cur.life < prev.life ? 'death' : 'hurt');
         }
         if (cur.level > prev.level) Sound.play('levelUp');
+        if (cur.q > prev.q + 0.2 || cur.e > prev.e + 0.2) Sound.play('skill');
         if (cur.boss !== prev.boss) {
             if (cur.boss === 'warning') Sound.play('bossWarn');
             else if (cur.boss === 'active') Sound.play('bossSpawn');
             else if (cur.boss === 'retreating') Sound.play('bossRepel');
         }
+    }
+
+    // 技能冷却 + 职业资源回复/衰减 + 圣光光环,作用于 this.player(guest 通过 _runAsPlayer 复用)
+    _tickPlayerResources() {
+        if (this.player.skillQ.cooldown > 0) this.player.skillQ.cooldown -= DT;
+        if (this.player.skillE.cooldown > 0) this.player.skillE.cooldown -= DT;
+
+        if (this.player.class === 'mage' && this.player.mana < this.player.maxMana) {
+            this.player.mana = Math.min(this.player.maxMana, this.player.mana + this.player.manaRegen * DT);
+        }
+        // 战士怒气自动衰减(战斗中也持续)
+        if (this.player.class === 'warrior' && this.player.rage > 0) {
+            const decayRate = 2 * (this.warriorRageDecayMult || 1); // /秒
+            this.player.rage = Math.max(0, this.player.rage - decayRate * DT);
+        }
+        // 圣骑士护盾持续回复(上限 = maxHealth * shieldCapRatio)
+        if (this.player.class === 'paladin') {
+            const cap = this.player.maxHealth * (this.player.shieldCapRatio || 0.10);
+            if (this.player.shield < cap) {
+                const regen = this.player.maxHealth * 0.02; // /秒(2% maxHP)
+                this.player.shield = Math.min(cap, this.player.shield + regen * DT);
+            }
+        }
+        if (this.player.class === 'archer' && this.player.reloadTimer > 0) {
+            this.player.reloadTimer -= DT;
+            if (this.player.reloadTimer <= 0) {
+                this.player.arrows = Math.min(this.player.arrows + 1, this.player.maxArrows);
+                // 没装满就继续下一发
+                if (this.player.arrows < this.player.maxArrows) {
+                    this.player.reloadTimer = this.player.reloadDuration;
+                } else {
+                    this.player.reloadTimer = 0;
+                }
+            }
+        }
+        if (this.player.class === 'paladin') {
+            if (this.player.faith < this.player.maxFaith) {
+                this.player.faith = Math.min(this.player.maxFaith, this.player.faith + this.player.faithRegen * DT);
+            }
+            if (this.player.holyAuraActive) {
+                this.player.holyAuraTimer -= DT;
+                if (this.player.holyAuraTimer <= 0) {
+                    this.player.holyAuraActive = false;
+                } else {
+                    this.player.heal(this.player.maxHealth * 0.1 * DT);
+                    const pcx = this.player.x + this.player.size / 2;
+                    const pcy = this.player.y + this.player.size / 2;
+                    const auraDmgTick = this._computeAttackDamage(this.player.attack) * 0.5 * DT * (this.paladinSkillDmgMult || 1);
+                    for (let i = this.enemies.length - 1; i >= 0; i--) {
+                        const e = this.enemies[i];
+                        const dx = e.x + e.size / 2 - pcx;
+                        const dy = e.y + e.size / 2 - pcy;
+                        if (Math.sqrt(dx * dx + dy * dy) <= 80) {
+                            e.takeDamage(auraDmgTick);
+                            if (e.currentHealth <= 0) {
+                                this.spawnHitParticles(e.x + e.size / 2, e.y + e.size / 2, e.color, 10);
+                                this._onEnemyKilled();
+                                this.enemies.splice(i, 1);
+                            }
+                        }
+                    }
+                    // 圣光光环对魔王也持续造伤
+                    if (this.boss && this.bossState === 'active') {
+                        const bx = this.boss.x + this.boss.size / 2;
+                        const by = this.boss.y + this.boss.size / 2;
+                        if (Math.sqrt((bx - pcx) ** 2 + (by - pcy) ** 2) <= 80 + this.boss.size / 2) {
+                            this.boss.takeDamage(auraDmgTick);
+                            this.bossDamageDealt += auraDmgTick;
+                        }
+                    }
+                    this.effects.push({ type: 'holyAura', x: pcx, y: pcy, radius: 80, color: '#ffd700', ttl: 0.35, maxTtl: 0.35, pulse: this.player.holyAuraTimer });
+                }
+            }
+        }
+    }
+
+    // 以指定玩家身份执行 fn:技能/资源代码统一读写 this.player,host 替 guest 施法时临时替换。
+    // fn 内新排入的 pendingActions 会记住施法者,延迟触发时同样以该玩家身份执行。
+    _runAsPlayer(p, fn) {
+        if (!p || p === this.player) return fn();
+        const saved = this.player;
+        const n = this.pendingActions.length;
+        this.player = p;
+        this._actingAs = p;
+        try {
+            return fn();
+        } finally {
+            for (let i = n; i < this.pendingActions.length; i++) {
+                if (!this.pendingActions[i].player) this.pendingActions[i].player = p;
+            }
+            this.player = saved;
+            this._actingAs = null;
+            // 替身期间推迟的升级结算,换回 host 后补上
+            this.checkLevelUp();
+        }
+    }
+
+    // ── Host：执行 guest 请求的技能 ──
+    _castGuestSkill(playerId, which) {
+        const gp = this.mpGuestPlayers.get(playerId);
+        if (!gp || !gp.class || gp.currentHealth <= 0) return;
+        this._runAsPlayer(gp, () => (which === 'E' ? this.castSkillE() : this.castSkillQ()));
+    }
+
+    // 本机按下 Q/E(键盘或触屏按钮):guest 发给 host 执行,其余本地执行
+    _requestSkill(which) {
+        if (this.mpMode === 'guest') {
+            if (this.mpWs && this.mpWs.readyState === WebSocket.OPEN)
+                this.mpWs.send(JSON.stringify({ type: 'castSkill', skill: which }));
+            return;
+        }
+        if (which === 'E') this.castSkillE(); else this.castSkillQ();
     }
 
     _checkGuestCollisions() {
@@ -1654,7 +1725,11 @@ class Game {
             a.delay -= DT;
             if (a.delay <= 0) {
                 this.pendingActions.splice(i, 1);
-                try { a.fn(); } catch (e) { console.error(e); }
+                try {
+                    // 施法者已离开房间则丢弃
+                    if (a.player && a.player !== this.player && ![...this.mpGuestPlayers.values()].includes(a.player)) continue;
+                    this._runAsPlayer(a.player, a.fn);
+                } catch (e) { console.error(e); }
             }
         }
     }
@@ -2165,7 +2240,14 @@ class Game {
         }
     }
 
+    // 联机:host 记录粒子生成调用,随快照发给 guest 重放(比发送粒子本身小得多)
+    _mpRecordFx(kind, args) {
+        if (this.mpMode !== 'host') return;
+        if (this._mpFx.length < 200) this._mpFx.push([kind, ...args.map(v => typeof v === 'number' ? q2(v) : v)]);
+    }
+
     spawnHitParticles(x, y, color, count) {
+        this._mpRecordFx('h', [x, y, color, count]);
         // 粒子数量上限,避免密集场景导致掉帧
         const cap = 500;
         if (this.particles.length >= cap) return;
@@ -2186,6 +2268,7 @@ class Game {
     }
 
     spawnParticles(x, y, color, count, speedMin, speedMax, sizeMin, sizeMax, decay) {
+        this._mpRecordFx('p', [x, y, color, count, speedMin, speedMax, sizeMin, sizeMax, decay || 0]);
         const cap = 500;
         if (this.particles.length >= cap) return;
         count = Math.min(count, cap - this.particles.length);
@@ -2205,6 +2288,7 @@ class Game {
     }
 
     spawnBurstRing(x, y, radius, color, count) {
+        this._mpRecordFx('r', [x, y, radius, color, count]);
         const cap = 500;
         if (this.particles.length >= cap) return;
         count = Math.min(count, cap - this.particles.length);
@@ -2414,7 +2498,6 @@ class Game {
         else if (cls === 'assassin') this._assassinQ(skill);
         else if (cls === 'archer') this._archerQ(skill);
         else if (cls === 'paladin') this._paladinQ(skill);
-        if (skill.cooldown > 0) Sound.play('skill');
     }
 
     castSkillE() {
@@ -2427,7 +2510,6 @@ class Game {
         else if (cls === 'assassin') this._assassinE(skill);
         else if (cls === 'archer') this._archerE(skill);
         else if (cls === 'paladin') this._paladinE(skill);
-        if (skill.cooldown > 0) Sound.play('skill');
     }
 
     _warriorQ(skill) {
@@ -2865,6 +2947,7 @@ class Game {
     }
     
     checkLevelUp() {
+        if (this._actingAs) return; // 替 guest 施法期间推迟,_runAsPlayer 结束后补结算
         if (this.exp >= this.expToNext) {
             this.exp -= this.expToNext;
             this.level++;
@@ -3819,6 +3902,7 @@ class Game {
         this._renderFreezeOverlay();
         this._renderSkillHUD();
         this._renderBossHUD();
+        this._renderStatsHUD();
         this._renderMuteButton();
 
         if (this.showingClassSelection) {
@@ -3832,6 +3916,62 @@ class Game {
         }
 
         ctx.restore(); // 结束缩放变换
+    }
+
+    // 左上角状态面板:命数 / 等级 / 经验 / 分数 / 时间(宽 100,不与顶部魔王血条重叠)
+    _renderStatsHUD() {
+        const ctx = this.ctx;
+        const x = 10, y = 10, w = 100, h = 56;
+        ctx.save();
+        ctx.fillStyle = 'rgba(0, 10, 20, 0.55)';
+        roundRect(ctx, x, y, w, h, 8);
+        ctx.fill();
+        ctx.strokeStyle = 'rgba(0, 200, 255, 0.35)';
+        ctx.lineWidth = 1;
+        roundRect(ctx, x, y, w, h, 8);
+        ctx.stroke();
+
+        // 命数(只剩 1 条时闪烁提醒)
+        const lastLife = this.life <= 1;
+        const pulse = lastLife ? 0.55 + 0.45 * Math.abs(Math.sin(this.bgTime * 5)) : 1;
+        ctx.textBaseline = 'middle';
+        ctx.font = 'bold 14px Arial';
+        ctx.textAlign = 'left';
+        ctx.globalAlpha = pulse;
+        ctx.fillStyle = '#ff4d6d';
+        ctx.fillText('♥', x + 8, y + 14);
+        ctx.fillStyle = lastLife ? '#ff8a80' : '#ffffff';
+        ctx.font = 'bold 13px Arial';
+        ctx.fillText(`${this.life}/${this.maxLife}`, x + 24, y + 14);
+        ctx.globalAlpha = 1;
+
+        ctx.textAlign = 'right';
+        ctx.fillStyle = '#00e5ff';
+        ctx.fillText(`Lv${this.level}`, x + w - 8, y + 14);
+
+        // 经验条
+        const ex = x + 8, ey = y + 25, ew = w - 16, eh = 5;
+        const ratio = this.expToNext > 0 ? Math.max(0, Math.min(1, this.exp / this.expToNext)) : 0;
+        ctx.fillStyle = 'rgba(255,255,255,0.12)';
+        roundRect(ctx, ex, ey, ew, eh, 2.5);
+        ctx.fill();
+        if (ratio > 0) {
+            ctx.fillStyle = '#00e5ff';
+            roundRect(ctx, ex, ey, Math.max(eh, ew * ratio), eh, 2.5);
+            ctx.fill();
+        }
+
+        // 分数 + 生存时间
+        const t = Math.floor(this.gameTime);
+        const mm = Math.floor(t / 60), ss = String(t % 60).padStart(2, '0');
+        ctx.font = '11px Arial';
+        ctx.textAlign = 'left';
+        ctx.fillStyle = '#ffd54f';
+        ctx.fillText(`★ ${this.score}`, x + 8, y + 44);
+        ctx.textAlign = 'right';
+        ctx.fillStyle = 'rgba(200,232,255,0.8)';
+        ctx.fillText(`${mm}:${ss}`, x + w - 8, y + 44);
+        ctx.restore();
     }
 
     _renderMuteButton() {
@@ -3917,7 +4057,7 @@ class Game {
             ctx.font = 'bold 12px Arial';
             ctx.textAlign = 'center';
             ctx.textBaseline = 'middle';
-            ctx.fillText(`方块大魔王  ${Math.ceil(this.boss.currentHealth)}/${this.boss.maxHealth}`, bx + barW / 2, by + barH / 2);
+            ctx.fillText(`方块大魔王  ${Math.ceil(this.boss.currentHealth)}/${Math.ceil(this.boss.maxHealth)}`, bx + barW / 2, by + barH / 2);
 
             // 第二行:坚持倒计时 + 累计伤害进度
             const subBarW = barW;
