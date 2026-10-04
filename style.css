@@ -372,3 +372,181 @@ button:active {
         letter-spacing: 4px;
     }
 }
+
+/* ── 局外成长:大厅摘要 / 新手指南 / 成就与外观 ── */
+.mp-progress {
+    color: rgba(200, 232, 255, 0.55);
+    font-size: 0.8em;
+    margin: -14px 0 20px;
+}
+.mp-progress:empty { display: none; }
+
+.mp-extra-row {
+    display: flex;
+    gap: 8px;
+}
+.mp-extra-row .mp-btn {
+    padding: 10px 6px;
+    font-size: 0.85em;
+}
+
+.game-over p.run-unlocks {
+    font-size: 0.95em;
+    color: #ffd54f;
+    max-width: 90vw;
+    text-align: center;
+    text-shadow: 0 0 10px rgba(255, 213, 79, 0.4);
+}
+.game-over p.run-unlocks:empty { display: none; }
+
+.panel-overlay {
+    position: fixed;
+    inset: 0;
+    background: rgba(2, 6, 14, 0.82);
+    display: flex;
+    justify-content: center;
+    align-items: center;
+    z-index: 300;
+    backdrop-filter: blur(4px);
+    padding: 16px;
+}
+
+.panel-card {
+    background: linear-gradient(160deg, #0d1f35 0%, #091624 100%);
+    border: 1px solid rgba(0, 200, 255, 0.3);
+    border-radius: 16px;
+    padding: 24px 22px;
+    width: min(480px, 100%);
+    max-height: calc(100vh - 32px);
+    overflow-y: auto;
+    color: #c8e8ff;
+    box-shadow: 0 0 50px rgba(0, 200, 255, 0.12), 0 20px 60px rgba(0, 0, 0, 0.6);
+}
+
+.panel-title {
+    color: #00e5ff;
+    font-size: 1.5em;
+    letter-spacing: 4px;
+    text-align: center;
+    margin-bottom: 14px;
+    text-shadow: 0 0 16px rgba(0, 200, 255, 0.6);
+}
+
+.panel-subtitle {
+    color: rgba(0, 229, 255, 0.8);
+    font-size: 0.9em;
+    font-weight: 700;
+    letter-spacing: 2px;
+    margin: 14px 0 8px;
+}
+
+.tips-list {
+    list-style: none;
+    display: flex;
+    flex-direction: column;
+    gap: 10px;
+    margin-bottom: 18px;
+    font-size: 0.88em;
+    line-height: 1.55;
+}
+.tips-list li {
+    background: rgba(0, 200, 255, 0.05);
+    border: 1px solid rgba(0, 200, 255, 0.12);
+    border-radius: 10px;
+    padding: 8px 12px;
+}
+.tips-list b {
+    display: block;
+    color: #fff;
+    margin-bottom: 2px;
+}
+kbd {
+    display: inline-block;
+    padding: 0 6px;
+    border: 1px solid rgba(200, 232, 255, 0.4);
+    border-radius: 4px;
+    font-family: inherit;
+    font-size: 0.9em;
+    color: #fff;
+    background: rgba(255, 255, 255, 0.08);
+}
+
+.progress-stats {
+    display: grid;
+    grid-template-columns: repeat(3, 1fr);
+    gap: 8px;
+    text-align: center;
+    font-size: 0.75em;
+    color: rgba(200, 232, 255, 0.6);
+}
+.progress-stats b {
+    display: block;
+    font-size: 1.35em;
+    color: #ffd54f;
+}
+
+.skin-list {
+    display: grid;
+    grid-template-columns: repeat(3, 1fr);
+    gap: 8px;
+}
+.skin-item {
+    display: flex;
+    flex-direction: column;
+    align-items: center;
+    gap: 5px;
+    padding: 10px 4px;
+    font-size: 0.8em;
+    letter-spacing: 0;
+    background: rgba(0, 200, 255, 0.05);
+    border: 1px solid rgba(0, 200, 255, 0.15);
+    color: #c8e8ff;
+}
+.skin-item.selected {
+    border-color: #ffd54f;
+    box-shadow: 0 0 12px rgba(255, 213, 79, 0.35);
+}
+.skin-item.locked {
+    opacity: 0.45;
+    cursor: not-allowed;
+}
+.skin-item .swatch {
+    width: 26px;
+    height: 26px;
+    border-radius: 6px;
+}
+.skin-item .need {
+    font-size: 0.85em;
+    color: rgba(200, 232, 255, 0.6);
+    font-weight: 400;
+}
+
+.ach-list {
+    display: flex;
+    flex-direction: column;
+    gap: 6px;
+    margin-bottom: 18px;
+}
+.ach-item {
+    display: flex;
+    align-items: center;
+    gap: 10px;
+    padding: 7px 10px;
+    border-radius: 9px;
+    background: rgba(255, 255, 255, 0.03);
+    border: 1px solid rgba(255, 255, 255, 0.06);
+    font-size: 0.82em;
+}
+.ach-item .ach-icon {
+    font-size: 1.3em;
+    width: 26px;
+    text-align: center;
+}
+.ach-item .ach-name { color: #fff; font-weight: 700; }
+.ach-item .ach-desc { color: rgba(200, 232, 255, 0.55); }
+.ach-item.done {
+    border-color: rgba(255, 213, 79, 0.4);
+    background: rgba(255, 213, 79, 0.06);
+}
+.ach-item.done .ach-name { color: #ffd54f; }
+.ach-item:not(.done) .ach-icon { filter: grayscale(1); opacity: 0.4; }

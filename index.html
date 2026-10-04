@@ -13,6 +13,7 @@
             <h2 class="mp-title">方块快跑</h2>
             <div class="mp-subtitle">生存即胜利</div>
             <div id="bestScore" class="mp-best"></div>
+            <div id="progressSummary" class="mp-progress"></div>
             <div class="mp-buttons">
                 <button id="mpCreate" class="mp-btn mp-btn-primary">创建房间</button>
                 <div class="mp-join-row">
@@ -20,6 +21,10 @@
                     <button id="mpJoin" class="mp-btn mp-btn-secondary">加入</button>
                 </div>
                 <button id="mpSingle" class="mp-btn mp-btn-ghost">单人游戏</button>
+                <div class="mp-extra-row">
+                    <button id="openTips" class="mp-btn mp-btn-ghost">玩法说明</button>
+                    <button id="openProgress" class="mp-btn mp-btn-ghost">成就与外观</button>
+                </div>
             </div>
             <div id="mpStatus" class="mp-status"></div>
             <div id="mpLobby" class="mp-lobby" style="display:none">
@@ -28,6 +33,36 @@
                 <button id="mpStart" class="mp-btn mp-btn-primary mp-start-btn" style="display:none">开始游戏</button>
                 <div id="mpWaitMsg" class="mp-wait-msg" style="display:none">等待房主开始游戏...</div>
             </div>
+        </div>
+    </div>
+
+    <!-- 首次游玩提示(只自动弹出一次,大厅「玩法说明」可再次打开) -->
+    <div id="tipsOverlay" class="panel-overlay" style="display:none">
+        <div class="panel-card">
+            <h3 class="panel-title">新手指南</h3>
+            <ul class="tips-list">
+                <li><b>🕹 移动</b>WASD / 方向键,或点击、触摸屏幕上的目标位置。碰到敌人会掉血,活下去就是胜利。</li>
+                <li><b>🎯 自动攻击</b>角色会自动攻击最近的敌人,你只需专注走位和拾取道具。</li>
+                <li><b>⭐ 升级与天赋</b>击杀得经验,每次升级从 3 张天赋卡中挑一张强化自己。</li>
+                <li><b>⚔ 职业与技能</b>3 级时选择职业(战士/法师/刺客/弓手/圣骑士),之后按 <kbd>Q</kbd> / <kbd>E</kbd> 或点右下角按钮释放技能。</li>
+                <li><b>👑 方块大魔王</b>每隔约 60 秒,红色边框预警后魔王降临。打出足够伤害或坚持 30 秒即可击退,奖励 +1 命、+1 天赋和分数。</li>
+                <li><b>🎁 道具</b>药水回血、雪花冻结敌人、炸弹清场、爱心加命;越稀有的道具消失越快。</li>
+                <li><b>⏸ 其他</b><kbd>P</kbd> / <kbd>Esc</kbd> 暂停,<kbd>M</kbd> 静音。累计分数和成就可以解锁新的方块外观。</li>
+            </ul>
+            <button id="closeTips" class="mp-btn mp-btn-primary">知道了,开始冒险</button>
+        </div>
+    </div>
+
+    <!-- 成就与外观 -->
+    <div id="progressOverlay" class="panel-overlay" style="display:none">
+        <div class="panel-card">
+            <h3 class="panel-title">成就与外观</h3>
+            <div id="progressStats" class="progress-stats"></div>
+            <div class="panel-subtitle">外观</div>
+            <div id="skinList" class="skin-list"></div>
+            <div class="panel-subtitle">成就 <span id="achCount"></span></div>
+            <div id="achList" class="ach-list"></div>
+            <button id="closeProgress" class="mp-btn mp-btn-primary">返回</button>
         </div>
     </div>
 
@@ -65,6 +100,7 @@
         <p>生存时间: <span id="finalTime">0</span>秒</p>
         <p>最终分数: <span id="finalScore">0</span></p>
         <p id="bestRecord" class="best-record"></p>
+        <p id="runUnlocks" class="run-unlocks"></p>
         <div class="game-over-btns">
             <button id="restartBtn">重新开始</button>
             <button id="backToLobbyBtn">返回大厅</button>
