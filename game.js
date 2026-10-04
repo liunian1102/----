@@ -442,6 +442,10 @@ class Game {
         this.boss = null;
         this.screenShake = 0;
         this._lastBossWarnSec = 0;
+        // 打击感:顿帧剩余(真实秒)、本机受击红色暗角、上次击杀顿帧时间(防连杀卡顿)
+        this.hitStop = 0;
+        this.hurtVignette = 0;
+        this._lastKillStopAt = 0;
 
         // ── 联机多人 ──
         this.mpMode = null;           // null | 'host' | 'guest'
@@ -880,6 +884,18 @@ class Game {
                 try {
                     const elapsed = Math.min(100, now - this._lastFrameTime); // 切后台回来时一次性补帧,封顶 100ms
                     this._lastFrameTime = now;
+                    // 顿帧(hit-stop):单人/客机冻结模拟,画面照常绘制(含震屏);
+                    // 联机主机的模拟不能停(会卡住所有客机),改为冻结画面,结束后自然追上
+                    if (this.hitStop > 0) {
+                        this.hitStop -= elapsed / 1000;
+                        if (this.mpMode !== 'host') {
+                            this._frameAccum = 0;
+                            this.render();
+                            this._rafId = requestAnimationFrame(loop);
+                            return;
+                        }
+                    }
+                    const holdFrame = this.hitStop > 0;
                     this._frameAccum += elapsed;
                     // 安全阀:累计帧步数封顶 10 帧,避免长时间冻结后死循环补帧
                     let steps = 0;
@@ -889,7 +905,7 @@ class Game {
                         steps++;
                     }
                     if (this._frameAccum > TICK_MS * 10) this._frameAccum = 0;
-                    this.render();
+                    if (!holdFrame) this.render();
                 } catch (err) {
                     // 不让一次异常杀死整个循环;打印堆栈供排查
                     console.error('[game loop error]', err);
@@ -950,6 +966,10 @@ class Game {
         this.boss = null;
         this.screenShake = 0;
         this._lastBossWarnSec = 0;
+        // 打击感:顿帧剩余(真实秒)、本机受击红色暗角、上次击杀顿帧时间(防连杀卡顿)
+        this.hitStop = 0;
+        this.hurtVignette = 0;
+        this._lastKillStopAt = 0;
         // 联机状态重置
         this.mpPlayers = [];
         this.mpGuestPlayers = new Map();
@@ -1137,12 +1157,13 @@ class Game {
         return {
             e: this.enemies.map(e => {
                 const row = [e.id, MP_ENEMY_TYPES.indexOf(e.type), q1(e.x), q1(e.y),
-                    Math.ceil(e.currentHealth), Math.ceil(e.maxHealth), e.stunTimer > 0 ? 1 : 0];
+                    Math.ceil(e.currentHealth), Math.ceil(e.maxHealth), (e.stunTimer > 0 ? 1 : 0) | (e._mpHit ? 2 : 0)];
+                e._mpHit = false;
                 if (e.type === 'gunner') row.push(q2(e.aimAngle || 0), q2(e.shootTimer || 0), q2(e.shootInterval || 1));
                 return row;
             }),
             boss: this.boss ? [q1(this.boss.x), q1(this.boss.y), Math.ceil(this.boss.currentHealth),
-                Math.ceil(this.boss.maxHealth), this.boss.retreating ? 1 : 0] : null,
+                Math.ceil(this.boss.maxHealth), this.boss.retreating ? 1 : 0, this._mpTakeBossHit()] : null,
             i: this.items.map(i => [i.id, MP_ITEM_TYPES.indexOf(i.type), q1(i.targetX), q1(i.targetY), q1(i.duration)]),
             p: this.projectiles.map(p => [p.id, p.isPiercing && !p.pierceRemaining ? 1 : 0, q1(p.x), q1(p.y),
                 q2(Math.atan2(p.dy, p.dx))]),
@@ -1157,6 +1178,12 @@ class Game {
             bossState: this.bossState, bossWarningTimer: q2(this.bossWarningTimer),
             bossActiveTimer: q1(this.bossActiveTimer), screenShake: q2(this.screenShake)
         };
+    }
+
+    _mpTakeBossHit() {
+        const hit = this.boss._mpHit ? 1 : 0;
+        this.boss._mpHit = false;
+        return hit;
     }
 
     // 自上次广播以来新增的特效(纯数据对象),数值量化后发送
@@ -1180,7 +1207,7 @@ class Game {
         const d = {
             id, x: q1(p.x), y: q1(p.y), size: p.size, color: p.color,
             currentHealth: Math.ceil(p.currentHealth), maxHealth: Math.ceil(p.maxHealth),
-            class: p.class, hurtCooldown: q2(p.hurtCooldown), invincibleTimer: q2(p.invincibleTimer),
+            class: p.class, hurtCooldown: q2(p.hurtCooldown), invincibleTimer: q2(p.invincibleTimer), kc: p.killCount || 0,
             skillQ: { cooldown: q2(p.skillQ.cooldown), maxCooldown: q2(p.skillQ.maxCooldown), level: p.skillQ.level },
             skillE: { cooldown: q2(p.skillE.cooldown), maxCooldown: q2(p.skillE.maxCooldown), level: p.skillE.level }
         };
@@ -1242,7 +1269,8 @@ class Game {
             (e, r, isNew) => {
                 this._mpSetTarget(e, r[2], r[3], isNew);
                 e.currentHealth = r[4]; e.maxHealth = r[5];
-                e.stunTimer = r[6] ? 1 : 0;
+                e.stunTimer = r[6] & 1 ? 1 : 0;
+                if (r[6] & 2) e.flash();
                 if (r.length > 7) { e.aimAngle = r[7]; e.shootTimer = r[8]; e.shootInterval = r[9]; }
             });
         this.enemies = en.list;
@@ -1250,13 +1278,14 @@ class Game {
 
         // Boss
         if (snapshot.boss) {
-            const [bx, by, hp, maxHp, retreating] = snapshot.boss;
+            const [bx, by, hp, maxHp, retreating, hit] = snapshot.boss;
             const isNew = !this.boss;
             if (isNew) this.boss = new BlockBoss(bx, by, snapshot.difficulty || 1, this.player.maxHealth);
             this._mpSetTarget(this.boss, bx, by, isNew);
             this.boss.currentHealth = hp;
             this.boss.maxHealth = maxHp;
             this.boss.retreating = !!retreating;
+            if (hit) this.boss.flash();
         } else {
             this.boss = null;
         }
@@ -1289,6 +1318,7 @@ class Game {
             this.player.maxHealth = myData.maxHealth;
             this.player.hurtCooldown = myData.hurtCooldown || 0;
             this.player.invincibleTimer = myData.invincibleTimer || 0;
+            this.player.killCount = myData.kc || 0;
             // 同步资源（用于 HUD 显示）
             if (myData.mana !== undefined)    this.player.mana   = myData.mana;
             if (myData.maxMana !== undefined) this.player.maxMana = myData.maxMana;
@@ -1602,6 +1632,7 @@ class Game {
                 // 位置以 host 为准:覆盖本地移动,在快照间平滑插值
                 this._mpInterpolate();
                 this._sfxTick();
+                this._tickHitFeedback();
                 this._progressTick();
                 this._updateLocalResources();
                 this.updateEffects();
@@ -1656,6 +1687,7 @@ class Game {
                 this._uiTimer = 0;
             }
             this._sfxTick();
+            this._tickHitFeedback();
             this._progressTick();
             this.checkGameOver();
 
@@ -1763,20 +1795,92 @@ class Game {
     _sfxTick() {
         const p = this.player;
         const cur = { hurt: p.hurtCooldown || 0, life: this.life, level: this.level, boss: this.bossState,
-                      q: p.skillQ.cooldown, e: p.skillE.cooldown };
+                      q: p.skillQ.cooldown, e: p.skillE.cooldown, kills: p.killCount || 0 };
         const prev = this._sfxPrev;
         this._sfxPrev = cur;
         if (!prev) return;
         if (cur.hurt > prev.hurt + 0.3 && this.life > 0) {
-            Sound.play(cur.life < prev.life ? 'death' : 'hurt');
+            const died = cur.life < prev.life;
+            Sound.play(died ? 'death' : 'hurt');
+            this._onLocalHurt(died);
         }
+        if (cur.kills > prev.kills) this._onLocalKill();
         if (cur.level > prev.level) Sound.play('levelUp');
         if (cur.q > prev.q + 0.2 || cur.e > prev.e + 0.2) Sound.play('skill');
         if (cur.boss !== prev.boss) {
             if (cur.boss === 'warning') Sound.play('bossWarn');
             else if (cur.boss === 'active') Sound.play('bossSpawn');
-            else if (cur.boss === 'retreating') Sound.play('bossRepel');
+            else if (cur.boss === 'retreating') {
+                Sound.play('bossRepel');
+                this._triggerHitStop(0.16);
+                this._vibrate([30, 40, 90]);
+            }
         }
+    }
+
+    // ── 打击感 ──
+    // 受击/击杀反馈只对"本机玩家"触发:由 _sfxTick 对 this.player 做边沿检测,
+    // host 与 guest(状态来自快照)走同一条路径,替 guest 结算时不会误触发 host 的顿帧/震动
+    _triggerHitStop(sec) {
+        this.hitStop = Math.max(this.hitStop || 0, sec);
+    }
+
+    _vibrate(pattern) {
+        if (Sound.muted || typeof navigator === 'undefined' || !navigator.vibrate) return;
+        try { navigator.vibrate(pattern); } catch (_) { /* 部分浏览器在无用户手势时会抛错 */ }
+    }
+
+    _onLocalHurt(died) {
+        this._triggerHitStop(died ? 0.14 : 0.07);
+        this._vibrate(died ? [60, 40, 120] : 45);
+        this.hurtVignette = died ? 0.5 : 0.35;
+        this.screenShake = Math.max(this.screenShake, died ? 0.35 : 0.15);
+    }
+
+    _onLocalKill() {
+        // 连续击杀时节流,避免 AoE/高频普攻把游戏顿成幻灯片
+        const now = performance.now();
+        if (now - this._lastKillStopAt < 180) return;
+        this._lastKillStopAt = now;
+        this._triggerHitStop(0.035);
+        this._vibrate(15);
+    }
+
+    // 击退:把敌人沿 (dirX, dirY) 方向推开。魔王不吃击退,巨人只吃三成
+    _knockbackDir(target, dirX, dirY, force) {
+        if (!(target instanceof Enemy)) return;
+        const d = Math.sqrt(dirX * dirX + dirY * dirY);
+        if (d === 0) return;
+        const f = force * (target.type === 'giant' ? 0.3 : 1);
+        target.kbX = (dirX / d) * f;
+        target.kbY = (dirY / d) * f;
+    }
+
+    // 以 (fromX, fromY) 为源点向外击退
+    _knockbackFrom(target, fromX, fromY, force) {
+        this._knockbackDir(target, target.x + target.size / 2 - fromX, target.y + target.size / 2 - fromY, force);
+    }
+
+    // 白闪计时与受击暗角衰减(guest 也跑,白闪状态来自快照标记)
+    _tickHitFeedback() {
+        for (const e of this.enemies) if (e.hitFlash > -1) e.hitFlash = Math.max(-1, e.hitFlash - DT);
+        if (this.boss && this.boss.hitFlash > -1) this.boss.hitFlash = Math.max(-1, this.boss.hitFlash - DT);
+        if (this.hurtVignette > 0) this.hurtVignette = Math.max(0, this.hurtVignette - DT);
+    }
+
+    // 本机受击时屏幕四周泛红
+    _renderHurtVignette() {
+        if (this.hurtVignette <= 0) return;
+        const ctx = this.ctx;
+        const W = this.width, H = this.height;
+        const a = Math.min(1, this.hurtVignette / 0.35) * 0.55;
+        const g = ctx.createRadialGradient(W / 2, H / 2, Math.min(W, H) * 0.3, W / 2, H / 2, Math.max(W, H) * 0.65);
+        g.addColorStop(0, 'rgba(255,0,40,0)');
+        g.addColorStop(1, `rgba(255,0,40,${a})`);
+        ctx.save();
+        ctx.fillStyle = g;
+        ctx.fillRect(0, 0, W, H);
+        ctx.restore();
     }
 
     // 基础自动攻击:朝最近敌人(或魔王)发射,无职业/前期也有输出;间隔来自 this.player 的天赋
@@ -2098,6 +2202,7 @@ class Game {
     updateEnemies() {
         for (let i = this.enemies.length - 1; i >= 0; i--) {
             const e = this.enemies[i];
+            e.applyKnockback(this.width, this.height);
             if (this.enemyFreezeTimer <= 0) {
                 e.update(this.player.x, this.player.y, this.width, this.height);
             }
@@ -2153,6 +2258,7 @@ class Game {
                     this.player.hurtCooldown = 0.6 + (this.player.hurtCooldownBonus || 0);
                     this.player.gainRage(15 + (this.player.rageOnHurtBonus || 0));
                     this.spawnHitParticles(this.player.x + this.player.size / 2, this.player.y + this.player.size / 2, '#ff4444', 8);
+                    this._knockbackFrom(this.enemies[i], this.player.x + this.player.size / 2, this.player.y + this.player.size / 2, 5);
                 }
                 this.enemies[i].takeDamage(this.player.attack);
                 
@@ -2245,6 +2351,7 @@ class Game {
                     if (proj.hitEnemies && proj.hitEnemies.has(this.enemies[j])) continue;
                     const dmg = proj.damage != null ? proj.damage : 15;
                     this.enemies[j].takeDamage(dmg);
+                    this._knockbackDir(this.enemies[j], proj.dx, proj.dy, 2.5);
                     if (proj.hitEnemies) proj.hitEnemies.add(this.enemies[j]);
                     // 投射物击杀立即结算
                     if (this.enemies[j].currentHealth <= 0) {
@@ -2645,6 +2752,7 @@ class Game {
 
     _dealDamage(target, dmg) {
         target.takeDamage(dmg);
+        this._knockbackFrom(target, this.player.x + this.player.size / 2, this.player.y + this.player.size / 2, 3.5);
         this.player.gainRage(10);
         // 魔王特殊处理:不死亡,只累计伤害
         if (this.boss && target === this.boss) {
@@ -3151,6 +3259,8 @@ class Game {
     // 统一击杀结算入口:替代旧的 score+=10; exp+=5; checkLevelUp() 三连
     _onEnemyKilled() {
         Sound.play('kill');
+        // 击杀计数随玩家快照下发,本机据此触发击杀顿帧/震动(guest 也能拿到自己的击杀反馈)
+        this.player.killCount = (this.player.killCount || 0) + 1;
         this.score += 10 * (this.scoreMult || 1);
         this.exp += 5;
         if (this.player.lifeStealPerKill) {
@@ -4130,6 +4240,7 @@ class Game {
         ctx.restore(); // 结束震动变换
 
         // HUD 与菜单（在缩放坐标系内，无震动）
+        this._renderHurtVignette();
         this._renderFreezeOverlay();
         this._renderSkillHUD();
         this._renderBossHUD();
@@ -5009,6 +5120,12 @@ class Enemy {
 
         this.stunTimer = 0;
 
+        // 受击反馈:hitFlash>0 时白闪;降为负值时作为再次闪白的间隔(持续伤害时呈闪烁而非常亮)
+        this.hitFlash = -1;
+        // 击退速度(像素/帧,每帧衰减),由 Game 在 updateEnemies 推进
+        this.kbX = 0;
+        this.kbY = 0;
+
         this.initType();
     }
     
@@ -5202,7 +5319,36 @@ class Enemy {
     takeDamage(damage) {
         const actualDamage = Math.max(1, damage - this.defense);
         this.currentHealth = Math.max(0, this.currentHealth - actualDamage);
+        this.flash();
         return actualDamage;
+    }
+
+    // 白闪;_mpHit 让 host 在下一个快照里告诉 guest 也闪一下
+    flash() {
+        if (this.hitFlash <= -0.04) {
+            this.hitFlash = 0.08;
+            this._mpHit = true;
+        }
+    }
+
+    // 击退位移(冻结/眩晕时也生效),限制在场地内
+    applyKnockback(width, height) {
+        if (!this.kbX && !this.kbY) return;
+        this.x = Math.max(0, Math.min(width - this.size, this.x + this.kbX));
+        this.y = Math.max(0, Math.min(height - this.size, this.y + this.kbY));
+        this.kbX *= 0.8;
+        this.kbY *= 0.8;
+        if (Math.abs(this.kbX) + Math.abs(this.kbY) < 0.1) this.kbX = this.kbY = 0;
+    }
+
+    _renderHitFlash(ctx) {
+        if (this.hitFlash <= 0) return;
+        ctx.save();
+        ctx.globalAlpha = Math.min(1, this.hitFlash / 0.08) * 0.85;
+        ctx.fillStyle = '#ffffff';
+        roundRect(ctx, this.x, this.y, this.size, this.size, this.type === 'giant' ? 10 : this.type === 'gunner' ? 7 : 6);
+        ctx.fill();
+        ctx.restore();
     }
     
     render(ctx, frozen = false) {
@@ -5214,6 +5360,7 @@ class Enemy {
 
         // 本体(渐变 + 光晕 + 描边 + 文字)按类型缓存,避免每帧 shadowBlur
         SpriteCache.draw(ctx, Enemy.bodySprite(this.type, this.size), this.x, this.y, this.size, this.size);
+        this._renderHitFlash(ctx);
 
         const healthBarWidth = this.size;
         const healthBarHeight = 4;
@@ -5299,6 +5446,7 @@ class Enemy {
         ctx.restore();
 
         ctx.restore();
+        this._renderHitFlash(ctx);
 
         // 血条
         const healthBarHeight = 4;
@@ -5626,6 +5774,7 @@ class BlockBoss {
         this.retreatTimer = 0;
         // 浮动相位
         this.phase = 0;
+        this.hitFlash = -1; // 受击白闪,同 Enemy
     }
 
     update(playerX, playerY) {
@@ -5652,7 +5801,15 @@ class BlockBoss {
     takeDamage(damage) {
         // 魔王不死,血量归零由 Game 端判定击退
         this.currentHealth = Math.max(0, this.currentHealth - damage);
+        this.flash();
         return damage;
+    }
+
+    flash() {
+        if (this.hitFlash <= -0.04) {
+            this.hitFlash = 0.08;
+            this._mpHit = true;
+        }
     }
 
     triggerRetreat(playerX, playerY) {
@@ -5700,6 +5857,14 @@ class BlockBoss {
         ctx.lineWidth = 3;
         roundRect(ctx, this.x, this.y, this.size, this.size, 14);
         ctx.stroke();
+
+        if (this.hitFlash > 0) {
+            ctx.shadowBlur = 0;
+            ctx.globalAlpha *= Math.min(1, this.hitFlash / 0.08) * 0.6;
+            ctx.fillStyle = '#ffffff';
+            roundRect(ctx, this.x, this.y, this.size, this.size, 14);
+            ctx.fill();
+        }
         ctx.restore();
 
         // 中心红色眼睛/符号
@@ -5792,6 +5957,7 @@ class PiercingArrow {
             if (Math.abs(ax - ex) < (e.size / 2 + this.size / 2) && Math.abs(ay - ey) < (e.size / 2 + this.size / 2)) {
                 this.hitEnemies.add(e);
                 e.takeDamage(this.damage);
+                this.game._knockbackDir(e, this.dx, this.dy, 4);
                 this.game.spawnHitParticles(ex, ey, '#aaff44', 6);
                 if (e.currentHealth <= 0) {
                     this.game.spawnHitParticles(ex, ey, e.color, 10);
