@@ -266,8 +266,6 @@ class Game {
         this.difficulty = 1;
 
         this.enemyFreezeTimer = 0;
-        this.autoAttackTimer = 0;
-        this.autoAttackInterval = 0.6;
 
         // 方块大魔王调度
         this.bossState = 'idle';      // idle | warning | active | retreating
@@ -284,30 +282,9 @@ class Game {
 
         // 天赋系统
         this.talentDefs = this._buildTalentDefs();
-        this.acquiredTalents = [];      // [{ id, count }]
         this.currentTalentChoices = []; // 当前菜单的 3 张候选(talentDef)
         this.scoreMult = 1;             // 击杀分数倍率(丰厚奖励天赋)
         this.expGrowthMult = 1;         // 升级所需经验递增系数(速学天赋,<1 表示放缓)
-        // 职业天赋累积倍率默认值
-        this.warriorSkillDmgMult = 1;
-        this.warriorRageDecayMult = 1;
-        this.mageStunBonus = 0;
-        this.magePenetration = 0;
-        this.mageQCostMult = 1;
-        this.assassinSkillDmgMult = 1;
-        this.assassinExtraTargets = 0;
-        this.archerSkillDmgMult = 1;
-        this.archerProjSpeedMult = 1;
-        this.archerMultiShot = 1;
-        this.archerPiercing = 0;
-        this.paladinSkillDmgMult = 1;
-        this.paladinAuraDurationBonus = 0;
-        // 新职业专属 flag
-        this.bloodRageStacks = 0;      // 战士:血怒叠层
-        this.warriorRavenous = false;  // 战士:嗜血战意
-        this.mageMulticast = false;    // 法师:奥术连击
-        this.mageBloodMagic = false;   // 法师:血魔契约
-        this.archerAutoDmgMult = 1;    // 弓手:普攻投射物倍率
         // 魔王状态重置
         this.bossState = 'idle';
         this.bossTimer = this.bossInterval || 60;
@@ -355,7 +332,7 @@ class Game {
               apply: g => { g.player.attack += 15; g.player.defense = Math.max(0, g.player.defense - 3); } },
             { id: 'rapidFire',   name: '连射',       icon: '➳', color: '#ffb74d', rarity: 'rare',
               desc: '自动攻击间隔 ×0.85', stackable: true, maxStacks: 4,
-              apply: g => { g.autoAttackInterval = Math.max(0.1, g.autoAttackInterval * 0.85); } },
+              apply: g => { g.player.autoAttackInterval = Math.max(0.1, g.player.autoAttackInterval * 0.85); } },
             { id: 'wrath',       name: '暴怒',       icon: '💢', color: '#e53935', rarity: 'epic',
               desc: '永久效果:每损失 10% 生命,攻击力额外 +5%', stackable: false,
               apply: g => { g.player.wrathBonus = true; } },
@@ -410,7 +387,7 @@ class Game {
             { id: 'warriorHeavyHit', name: '重击', icon: '⚒', color: '#bf360c', rarity: 'rare',
               desc: '战士技能伤害 +30%', stackable: true, maxStacks: 3,
               applicable: g => g.player.class === 'warrior',
-              apply: g => { g.warriorSkillDmgMult = (g.warriorSkillDmgMult || 1) * 1.30; } },
+              apply: g => { g.player.warriorSkillDmgMult = (g.player.warriorSkillDmgMult || 1) * 1.30; } },
             { id: 'warriorIronWill', name: '钢铁意志', icon: '✚', color: '#d84315', rarity: 'common',
               desc: '受伤额外获得 5 怒气', stackable: true, maxStacks: 3,
               applicable: g => g.player.class === 'warrior',
@@ -420,7 +397,7 @@ class Game {
             { id: 'magePenetrate', name: '法术穿透', icon: '✸', color: '#26c6da', rarity: 'rare',
               desc: '法师技能无视目标 30% 防御', stackable: true, maxStacks: 2,
               applicable: g => g.player.class === 'mage',
-              apply: g => { g.magePenetration = (g.magePenetration || 0) + 0.3; } },
+              apply: g => { g.player.magePenetration = (g.player.magePenetration || 0) + 0.3; } },
             { id: 'mageManaWell', name: '法力之泉', icon: '✺', color: '#29b6f6', rarity: 'rare',
               desc: '最大法力 +10,法力恢复 +1/s', stackable: true, maxStacks: 4,
               applicable: g => g.player.class === 'mage',
@@ -428,13 +405,13 @@ class Game {
             { id: 'mageFrostMastery', name: '斥力精通', icon: '↔', color: '#80deea', rarity: 'epic',
               desc: 'E 斥力波击退距离 +30% 并附加短暂僵直', stackable: true, maxStacks: 2,
               applicable: g => g.player.class === 'mage',
-              apply: g => { g.mageStunBonus = (g.mageStunBonus || 0) + 2; } },
+              apply: g => { g.player.mageStunBonus = (g.player.mageStunBonus || 0) + 2; } },
 
             // --- 刺客专属 ---
             { id: 'assassinDeadly', name: '致命一击', icon: '☠', color: '#7b1fa2', rarity: 'rare',
               desc: '刺客技能伤害 +25%', stackable: true, maxStacks: 3,
               applicable: g => g.player.class === 'assassin',
-              apply: g => { g.assassinSkillDmgMult = (g.assassinSkillDmgMult || 1) * 1.25; } },
+              apply: g => { g.player.assassinSkillDmgMult = (g.player.assassinSkillDmgMult || 1) * 1.25; } },
             { id: 'assassinShadow', name: '影袭', icon: '◐', color: '#9c27b0', rarity: 'common',
               desc: 'Q 闪现斩冷却 -1 秒', stackable: true, maxStacks: 2,
               applicable: g => g.player.class === 'assassin' && g.player.skillQ.maxCooldown > 1,
@@ -442,13 +419,13 @@ class Game {
             { id: 'assassinCombo', name: '连击专精', icon: '✕', color: '#aa00ff', rarity: 'epic',
               desc: 'E 连刺额外多攻击 1 个目标', stackable: true, maxStacks: 2,
               applicable: g => g.player.class === 'assassin',
-              apply: g => { g.assassinExtraTargets = (g.assassinExtraTargets || 0) + 1; } },
+              apply: g => { g.player.assassinExtraTargets = (g.player.assassinExtraTargets || 0) + 1; } },
 
             // --- 弓手专属 ---
             { id: 'archerSharpshooter', name: '神射手', icon: '◎', color: '#9ccc65', rarity: 'rare',
               desc: '弓手技能伤害 +20%', stackable: true, maxStacks: 3,
               applicable: g => g.player.class === 'archer',
-              apply: g => { g.archerSkillDmgMult = (g.archerSkillDmgMult || 1) * 1.20; } },
+              apply: g => { g.player.archerSkillDmgMult = (g.player.archerSkillDmgMult || 1) * 1.20; } },
             { id: 'archerBigQuiver', name: '大箭袋', icon: '⫷', color: '#558b2f', rarity: 'rare',
               desc: '最大箭矢 +2', stackable: true, maxStacks: 3,
               applicable: g => g.player.class === 'archer',
@@ -462,7 +439,7 @@ class Game {
             { id: 'paladinHolyStrike', name: '神圣冲击', icon: '✦', color: '#ffd700', rarity: 'rare',
               desc: '圣骑士技能伤害 +30%', stackable: true, maxStacks: 3,
               applicable: g => g.player.class === 'paladin',
-              apply: g => { g.paladinSkillDmgMult = (g.paladinSkillDmgMult || 1) * 1.30; } },
+              apply: g => { g.player.paladinSkillDmgMult = (g.player.paladinSkillDmgMult || 1) * 1.30; } },
             { id: 'paladinFaithLight', name: '持久信念', icon: '✟', color: '#ffd54f', rarity: 'rare',
               desc: '最大信念 +30,信念恢复 +3/s', stackable: true, maxStacks: 4,
               applicable: g => g.player.class === 'paladin',
@@ -470,20 +447,20 @@ class Game {
             { id: 'paladinAuraDuration', name: '光辉持续', icon: '☀', color: '#ffecb3', rarity: 'epic',
               desc: 'E 神圣光环持续时间 +2 秒', stackable: true, maxStacks: 2,
               applicable: g => g.player.class === 'paladin',
-              apply: g => { g.paladinAuraDurationBonus = (g.paladinAuraDurationBonus || 0) + 2; } },
+              apply: g => { g.player.paladinAuraDurationBonus = (g.player.paladinAuraDurationBonus || 0) + 2; } },
 
             // --- 新机制相关天赋 ---
             // 战士:狂涛(怒气衰减减半)
             { id: 'warriorWildTide', name: '狂涛', icon: '〜', color: '#ff6f00', rarity: 'epic',
               desc: '怒气衰减速度 ×0.5', stackable: false,
               applicable: g => g.player.class === 'warrior',
-              apply: g => { g.warriorRageDecayMult = (g.warriorRageDecayMult || 1) * 0.5; } },
+              apply: g => { g.player.warriorRageDecayMult = (g.player.warriorRageDecayMult || 1) * 0.5; } },
 
             // 法师:冷凝(Q 开关消耗减半)
             { id: 'mageCondense', name: '冷凝', icon: '❅', color: '#26c6da', rarity: 'epic',
               desc: '魔力涌注每次普攻法力消耗 ×0.5', stackable: false,
               applicable: g => g.player.class === 'mage',
-              apply: g => { g.mageQCostMult = (g.mageQCostMult || 1) * 0.5; } },
+              apply: g => { g.player.mageQCostMult = (g.player.mageQCostMult || 1) * 0.5; } },
 
             // 圣骑士:壁垒(护盾上限 +5% maxHP)
             { id: 'paladinBulwark', name: '壁垒', icon: '◫', color: '#1976d2', rarity: 'epic',
@@ -501,15 +478,15 @@ class Game {
             { id: 'archerSwiftBolt', name: '疾矢', icon: '➳', color: '#9ccc65', rarity: 'common',
               desc: '普攻投射物速度 +25%', stackable: true, maxStacks: 2,
               applicable: g => g.player.class === 'archer',
-              apply: g => { g.archerProjSpeedMult = (g.archerProjSpeedMult || 1) * 1.25; } },
+              apply: g => { g.player.archerProjSpeedMult = (g.player.archerProjSpeedMult || 1) * 1.25; } },
             { id: 'archerMultiShot', name: '多重射击', icon: '✂', color: '#7cb342', rarity: 'rare',
               desc: '普攻额外发射 1 发(扇形散布)', stackable: true, maxStacks: 1,
-              applicable: g => g.player.class === 'archer' && (g.archerMultiShot || 1) < 3,
-              apply: g => { g.archerMultiShot = (g.archerMultiShot || 1) + 1; } },
+              applicable: g => g.player.class === 'archer' && (g.player.archerMultiShot || 1) < 3,
+              apply: g => { g.player.archerMultiShot = (g.player.archerMultiShot || 1) + 1; } },
             { id: 'archerPiercing', name: '箭无虚发', icon: '➝', color: '#558b2f', rarity: 'epic',
               desc: '普攻穿透 1 个敌人', stackable: true, maxStacks: 1,
-              applicable: g => g.player.class === 'archer' && (g.archerPiercing || 0) < 2,
-              apply: g => { g.archerPiercing = (g.archerPiercing || 0) + 1; } },
+              applicable: g => g.player.class === 'archer' && (g.player.archerPiercing || 0) < 2,
+              apply: g => { g.player.archerPiercing = (g.player.archerPiercing || 0) + 1; } },
 
             // --- 史诗类 ---
             { id: 'fastLearner', name: '速学',       icon: '★', color: '#ab47bc', rarity: 'epic',
@@ -529,31 +506,31 @@ class Game {
             { id: 'warriorBloodRage', name: '血怒', icon: '🩸', color: '#d50000', rarity: 'rare',
               desc: '战士每 20 怒气提供 +5% 攻击伤害(可叠加)', stackable: true, maxStacks: 3,
               applicable: g => g.player.class === 'warrior',
-              apply: g => { g.bloodRageStacks = (g.bloodRageStacks || 0) + 1; } },
+              apply: g => { g.player.bloodRageStacks = (g.player.bloodRageStacks || 0) + 1; } },
             { id: 'warriorRavenous', name: '嗜血战意', icon: '⚔', color: '#b71c1c', rarity: 'epic',
               desc: '战士怒气 ≥70 时全部伤害 +30%', stackable: false,
               applicable: g => g.player.class === 'warrior',
-              apply: g => { g.warriorRavenous = true; } },
+              apply: g => { g.player.warriorRavenous = true; } },
 
             // === 强化职业特色:法师(多重施法 / 法力不够血来凑)===
             { id: 'mageMulticast', name: '奥术连击', icon: '✦', color: '#26c6da', rarity: 'epic',
               desc: '斥力波释放后 0.4s 再次无消耗触发一次', stackable: false,
               applicable: g => g.player.class === 'mage',
-              apply: g => { g.mageMulticast = true; } },
+              apply: g => { g.player.mageMulticast = true; } },
             { id: 'mageBloodMagic', name: '血魔契约', icon: '✟', color: '#ad1457', rarity: 'epic',
               desc: '法力不足时消耗 2× 差额生命替代', stackable: false,
               applicable: g => g.player.class === 'mage',
-              apply: g => { g.mageBloodMagic = true; } },
+              apply: g => { g.player.mageBloodMagic = true; } },
 
             // === 强化职业特色:弓手(投射物伤害高,防御低)===
             { id: 'archerStrongBow', name: '强弓', icon: '⟶', color: '#7cb342', rarity: 'rare',
               desc: '弓手普攻投射物伤害 +25%(可叠加)', stackable: true, maxStacks: 3,
               applicable: g => g.player.class === 'archer',
-              apply: g => { g.archerAutoDmgMult = (g.archerAutoDmgMult || 1) * 1.25; } },
+              apply: g => { g.player.archerAutoDmgMult = (g.player.archerAutoDmgMult || 1) * 1.25; } },
             { id: 'archerHunter', name: '猎手本能', icon: '◉', color: '#33691e', rarity: 'epic',
               desc: '弓手普攻投射物伤害 +60%,防御 -3', stackable: false,
               applicable: g => g.player.class === 'archer',
-              apply: g => { g.archerAutoDmgMult = (g.archerAutoDmgMult || 1) * 1.60; g.player.defense = Math.max(0, g.player.defense - 3); } },
+              apply: g => { g.player.archerAutoDmgMult = (g.player.archerAutoDmgMult || 1) * 1.60; g.player.defense = Math.max(0, g.player.defense - 3); } },
 
             // === 强化职业特色:刺客(高移速)===
             { id: 'assassinFleet', name: '疾影', icon: '➹', color: '#ce93d8', rarity: 'common',
@@ -563,7 +540,7 @@ class Game {
             { id: 'assassinShadowstep', name: '影步', icon: '☄', color: '#7b1fa2', rarity: 'epic',
               desc: '移动速度 ×1.3,刺客技能伤害 +15%', stackable: false,
               applicable: g => g.player.class === 'assassin',
-              apply: g => { g.player.speed *= 1.3; g.assassinSkillDmgMult = (g.assassinSkillDmgMult || 1) * 1.15; } },
+              apply: g => { g.player.speed *= 1.3; g.player.assassinSkillDmgMult = (g.player.assassinSkillDmgMult || 1) * 1.15; } },
 
             // === 强化职业特色:圣骑士(高防低攻)===
             { id: 'paladinHolyShield', name: '圣盾术', icon: '🛡', color: '#1565c0', rarity: 'rare',
@@ -801,7 +778,6 @@ class Game {
         this.gameTime = 0;
         this.difficulty = 1;
         this.enemyFreezeTimer = 0;
-        this.autoAttackTimer = 0;
         this.showingPotentialMenu = false;
         this.showingClassSelection = false;
         this.particles = [];
@@ -813,30 +789,9 @@ class Game {
         this.bgTime = 0;
         this.stars = this._initStars(120);
         // 天赋状态重置
-        this.acquiredTalents = [];
         this.currentTalentChoices = [];
-        this.autoAttackInterval = 0.6;
         this.scoreMult = 1;
         this.expGrowthMult = 1;
-        // 职业天赋累积倍率重置
-        this.warriorSkillDmgMult = 1;
-        this.warriorRageDecayMult = 1;
-        this.mageStunBonus = 0;
-        this.magePenetration = 0;
-        this.mageQCostMult = 1;
-        this.assassinSkillDmgMult = 1;
-        this.assassinExtraTargets = 0;
-        this.archerSkillDmgMult = 1;
-        this.archerProjSpeedMult = 1;
-        this.archerMultiShot = 1;
-        this.archerPiercing = 0;
-        this.paladinSkillDmgMult = 1;
-        this.paladinAuraDurationBonus = 0;
-        this.bloodRageStacks = 0;
-        this.warriorRavenous = false;
-        this.mageMulticast = false;
-        this.mageBloodMagic = false;
-        this.archerAutoDmgMult = 1;
         // 魔王状态重置
         this.bossState = 'idle';
         this.bossTimer = this.bossInterval || 60;
@@ -931,6 +886,13 @@ class Game {
                 break;
             case 'castSkill':
                 if (this.mpMode === 'host' && !this.isPaused) this._castGuestSkill(msg.playerId, msg.skill);
+                break;
+            case 'talentChoose':
+                if (this.mpMode === 'host') {
+                    const gp = this.mpGuestPlayers.get(msg.playerId);
+                    const def = this.talentDefs.find(t => t.id === msg.talentId);
+                    if (gp && def) this._runAsPlayer(gp, () => this._applyTalent(def));
+                }
                 break;
             case 'classChoose':
                 if (this.mpMode === 'host') {
@@ -1075,10 +1037,10 @@ class Game {
         };
         // 职业资源只发本职业用到的
         switch (p.class) {
-            case 'mage':     d.mana = q1(p.mana); d.maxMana = p.maxMana; break;
+            case 'mage':     d.mana = q1(p.mana); d.maxMana = p.maxMana; d.qOn = p.qToggleActive ? 1 : 0; break;
             case 'warrior':  d.rage = q1(p.rage); d.maxRage = p.maxRage; break;
             case 'paladin':  d.faith = q1(p.faith); d.maxFaith = p.maxFaith; d.shield = q1(p.shield); break;
-            case 'archer':   d.arrows = p.arrows; d.maxArrows = p.maxArrows; break;
+            case 'archer':   d.arrows = p.arrows; d.maxArrows = p.maxArrows; d.reload = q2(p.reloadTimer); d.reloadDur = q2(p.reloadDuration); break;
             case 'assassin': d.assassinCharge = q1(p.assassinCharge); d.maxAssassinCharge = p.maxAssassinCharge; break;
         }
         return d;
@@ -1186,6 +1148,10 @@ class Game {
             if (myData.shield !== undefined)  this.player.shield = myData.shield;
             if (myData.arrows !== undefined)  this.player.arrows = myData.arrows;
             if (myData.assassinCharge !== undefined) this.player.assassinCharge = myData.assassinCharge;
+            if (myData.maxArrows !== undefined) this.player.maxArrows = myData.maxArrows;
+            if (myData.reload !== undefined)  this.player.reloadTimer = myData.reload;
+            if (myData.reloadDur !== undefined) this.player.reloadDuration = myData.reloadDur;
+            if (myData.qOn !== undefined)     this.player.qToggleActive = !!myData.qOn;
             // 只同步冷却;等级/冷却上限来自本地天赋,由 sendGuestInput 发给 host
             if (myData.skillQ) this.player.skillQ.cooldown = myData.skillQ.cooldown;
             if (myData.skillE) this.player.skillE.cooldown = myData.skillE.cooldown;
@@ -1510,17 +1476,14 @@ class Game {
             if (this.enemyFreezeTimer > 0) this.enemyFreezeTimer -= DT;
             this.updateInvincible();
 
-            // 基础自动攻击：朝最近敌人(或魔王)发射,无职业/前期也有输出
-            this.autoAttackTimer -= DT;
-            if (this.autoAttackTimer <= 0 && (this.enemies.length > 0 || (this.boss && this.bossState === 'active'))) {
-                this.shoot();
-                this.autoAttackTimer = this.autoAttackInterval;
-            }
-
+            this._tickAutoAttack();
             this._tickPlayerResources();
-            // 联机:guest 的冷却/资源/圣光光环也由 host 推进
+            // 联机:guest 的普攻/冷却/资源/圣光光环也由 host 推进(各用各的天赋)
             if (this.mpMode === 'host') {
-                for (const gp of this.mpGuestPlayers.values()) this._runAsPlayer(gp, () => this._tickPlayerResources());
+                for (const gp of this.mpGuestPlayers.values()) {
+                    if (gp.currentHealth <= 0) continue;
+                    this._runAsPlayer(gp, () => { this._tickAutoAttack(); this._tickPlayerResources(); });
+                }
             }
 
             this.bgTime += DT;
@@ -1577,6 +1540,16 @@ class Game {
         }
     }
 
+    // 基础自动攻击:朝最近敌人(或魔王)发射,无职业/前期也有输出;间隔来自 this.player 的天赋
+    _tickAutoAttack() {
+        const p = this.player;
+        p.autoAttackTimer -= DT;
+        if (p.autoAttackTimer <= 0 && (this.enemies.length > 0 || (this.boss && this.bossState === 'active'))) {
+            this.shoot();
+            p.autoAttackTimer = p.autoAttackInterval;
+        }
+    }
+
     // 技能冷却 + 职业资源回复/衰减 + 圣光光环,作用于 this.player(guest 通过 _runAsPlayer 复用)
     _tickPlayerResources() {
         if (this.player.skillQ.cooldown > 0) this.player.skillQ.cooldown -= DT;
@@ -1587,7 +1560,7 @@ class Game {
         }
         // 战士怒气自动衰减(战斗中也持续)
         if (this.player.class === 'warrior' && this.player.rage > 0) {
-            const decayRate = 2 * (this.warriorRageDecayMult || 1); // /秒
+            const decayRate = 2 * (this.player.warriorRageDecayMult || 1); // /秒
             this.player.rage = Math.max(0, this.player.rage - decayRate * DT);
         }
         // 圣骑士护盾持续回复(上限 = maxHealth * shieldCapRatio)
@@ -1622,7 +1595,7 @@ class Game {
                     this.player.heal(this.player.maxHealth * 0.1 * DT);
                     const pcx = this.player.x + this.player.size / 2;
                     const pcy = this.player.y + this.player.size / 2;
-                    const auraDmgTick = this._computeAttackDamage(this.player.attack) * 0.5 * DT * (this.paladinSkillDmgMult || 1);
+                    const auraDmgTick = this._computeAttackDamage(this.player.attack) * 0.5 * DT * (this.player.paladinSkillDmgMult || 1);
                     for (let i = this.enemies.length - 1; i >= 0; i--) {
                         const e = this.enemies[i];
                         const dx = e.x + e.size / 2 - pcx;
@@ -2037,7 +2010,7 @@ class Game {
                     // 投射物击杀立即结算
                     if (this.enemies[j].currentHealth <= 0) {
                         this.spawnHitParticles(this.enemies[j].x + this.enemies[j].size / 2, this.enemies[j].y + this.enemies[j].size / 2, this.enemies[j].color, 10);
-                        this._onEnemyKilled();
+                        this._runAsPlayer(proj.owner, () => this._onEnemyKilled());
                         this.enemies.splice(j, 1);
                     } else {
                         this.spawnHitParticles(this.enemies[j].x + this.enemies[j].size / 2, this.enemies[j].y + this.enemies[j].size / 2, '#ffaa00', 4);
@@ -2515,7 +2488,7 @@ class Game {
     _warriorQ(skill) {
         if (this.player.rage < 30) return;
         this.player.rage -= 30;
-        const dmg = this._computeAttackDamage(this.player.attack) * 1.5 * this._getSkillMultiplier(skill.level) * (this.warriorSkillDmgMult || 1);
+        const dmg = this._computeAttackDamage(this.player.attack) * 1.5 * this._getSkillMultiplier(skill.level) * (this.player.warriorSkillDmgMult || 1);
         const range = skill.level >= 3 ? 150 : 120;
         const pcx = this.player.x + this.player.size / 2;
         const pcy = this.player.y + this.player.size / 2;
@@ -2556,7 +2529,7 @@ class Game {
             const nx = dx / dist, ny = dy / dist;
             target.x -= nx * 150;
             target.y -= ny * 150;
-            const dmg = this._computeAttackDamage(this.player.attack) * 2 * this._getSkillMultiplier(skill.level) * (this.warriorSkillDmgMult || 1);
+            const dmg = this._computeAttackDamage(this.player.attack) * 2 * this._getSkillMultiplier(skill.level) * (this.player.warriorSkillDmgMult || 1);
             this._dealDamage(target, dmg);
             this.effects.push({ type: 'slash', x1: pcx, y1: pcy, x2: pcx + nx * 100, y2: pcy + ny * 100, color: '#4488ff', ttl: 0.3, maxTtl: 0.3 });
             this.effects.push({ type: 'shockwave', x: tcx, y: tcy, radius: 10, maxRadius: 80, color: '#88aaff', ttl: 0.35, maxTtl: 0.35 });
@@ -2583,7 +2556,7 @@ class Game {
         if (!this._payMana(3)) return;
         this._mageRepulseEffect(skill);
         // 奥术连击:0.4s 后再次无消耗触发一次
-        if (this.mageMulticast) {
+        if (this.player.mageMulticast) {
             this.pendingActions.push({ delay: 0.4, fn: () => this._mageRepulseEffect(skill) });
         }
         skill.cooldown = skill.maxCooldown;
@@ -2597,8 +2570,8 @@ class Game {
         const pushForce  = skill.level >= 3 ? 220 : skill.level === 2 ? 180 : 140;
         const dmg        = this._computeAttackDamage(this.player.attack) * 1.0
                            * this._getSkillMultiplier(skill.level)
-                           * (1 + (this.magePenetration || 0));
-        const stunBonus  = this.mageStunBonus || 0; // 天赋"寒冰精通"复用:短暂僵直
+                           * (1 + (this.player.magePenetration || 0));
+        const stunBonus  = this.player.mageStunBonus || 0; // 天赋"寒冰精通"复用:短暂僵直
         const particleCount = skill.level >= 3 ? 36 : 24;
 
         for (let i = this.enemies.length - 1; i >= 0; i--) {
@@ -2663,7 +2636,7 @@ class Game {
         // 法师法力支付辅助:成功返回 true
         // 若蓝不够且开启"血魔契约",改用 2× 差额生命补足
         if (this.player.mana >= cost) { this.player.mana -= cost; return true; }
-        if (this.mageBloodMagic) {
+        if (this.player.mageBloodMagic) {
             const deficit = cost - this.player.mana;
             const hpCost = deficit * 2;
             if (this.player.currentHealth > hpCost + 1) {
@@ -2694,7 +2667,7 @@ class Game {
             this.player.y = target.y - ny * (target.size + this.player.size * 0.5);
         }
         const chargeMult = this._consumeAssassinCharge();
-        const dmg = this._computeAttackDamage(this.player.attack) * 2.5 * this._getSkillMultiplier(skill.level) * (this.assassinSkillDmgMult || 1) * chargeMult;
+        const dmg = this._computeAttackDamage(this.player.attack) * 2.5 * this._getSkillMultiplier(skill.level) * (this.player.assassinSkillDmgMult || 1) * chargeMult;
         this._dealDamage(target, dmg);
         const newPcx = this.player.x + this.player.size / 2;
         const newPcy = this.player.y + this.player.size / 2;
@@ -2705,7 +2678,7 @@ class Game {
     }
 
     _assassinE(skill) {
-        const baseTargets = 3 + (this.assassinExtraTargets || 0);
+        const baseTargets = 3 + (this.player.assassinExtraTargets || 0);
         const targets = this._findClosestEnemies(baseTargets);
         if (targets.length === 0) return;
         const chargeMult = this._consumeAssassinCharge();
@@ -2715,7 +2688,7 @@ class Game {
                 delay: idx * 0.1,
                 fn: () => {
                     if (t.currentHealth <= 0) return;
-                    const dmg = this._computeAttackDamage(this.player.attack) * 1.0 * this._getSkillMultiplier(skill.level) * (this.assassinSkillDmgMult || 1) * chargeMult;
+                    const dmg = this._computeAttackDamage(this.player.attack) * 1.0 * this._getSkillMultiplier(skill.level) * (this.player.assassinSkillDmgMult || 1) * chargeMult;
                     this._dealDamage(t, dmg);
                     const tx = t.x + t.size / 2;
                     const ty = t.y + t.size / 2;
@@ -2742,8 +2715,9 @@ class Game {
         }
         const speed = 12;
         const lastArrowMult = isLastArrow ? 2 : 1;
-        const dmg = this._computeAttackDamage(this.player.attack) * 1.8 * this._getSkillMultiplier(skill.level) * (this.archerSkillDmgMult || 1) * lastArrowMult;
+        const dmg = this._computeAttackDamage(this.player.attack) * 1.8 * this._getSkillMultiplier(skill.level) * (this.player.archerSkillDmgMult || 1) * lastArrowMult;
         const arrow = new PiercingArrow(pcx - 4, pcy - 4, Math.cos(angle) * speed, Math.sin(angle) * speed, dmg, this);
+        arrow.owner = this.player;
         this.projectiles.push(arrow);
         const arrowColor = isLastArrow ? '#ffeb3b' : '#aaff44';
         this.effects.push({ type: 'arrow', x: pcx, y: pcy, angle, length: isLastArrow ? 42 : 30, color: arrowColor, ttl: 0.3, maxTtl: 0.3 });
@@ -2757,7 +2731,7 @@ class Game {
         const pcx = this.player.x + this.player.size / 2;
         const pcy = this.player.y + this.player.size / 2;
         const count = skill.level >= 3 ? 14 : 10;
-        const dmg = this._computeAttackDamage(this.player.attack) * 0.8 * this._getSkillMultiplier(skill.level) * (this.archerSkillDmgMult || 1);
+        const dmg = this._computeAttackDamage(this.player.attack) * 0.8 * this._getSkillMultiplier(skill.level) * (this.player.archerSkillDmgMult || 1);
         for (let i = 0; i < count; i++) {
             this.pendingActions.push({
                 delay: i * 0.1,
@@ -2790,7 +2764,7 @@ class Game {
         if (targets.length === 0) return;
         const target = targets[0];
         this.player.faith -= 20;
-        const dmg = this._computeAttackDamage(this.player.attack) * 2 * this._getSkillMultiplier(skill.level) * (this.paladinSkillDmgMult || 1);
+        const dmg = this._computeAttackDamage(this.player.attack) * 2 * this._getSkillMultiplier(skill.level) * (this.player.paladinSkillDmgMult || 1);
         this._dealDamage(target, dmg);
         target.stunTimer = 1.5;
         const tcx = target.x + target.size / 2;
@@ -2805,7 +2779,7 @@ class Game {
         if (this.player.faith < 50) return;
         this.player.faith -= 50;
         this.player.holyAuraActive = true;
-        this.player.holyAuraTimer = 5 + (this.paladinAuraDurationBonus || 0);
+        this.player.holyAuraTimer = 5 + (this.player.paladinAuraDurationBonus || 0);
         const pcx = this.player.x + this.player.size / 2;
         const pcy = this.player.y + this.player.size / 2;
         this.effects.push({ type: 'holyAura', x: pcx, y: pcy, radius: 80, color: '#ffd700', ttl: 0.6, maxTtl: 0.6, pulse: 5 });
@@ -2835,15 +2809,15 @@ class Game {
 
         // 弓手:疾矢(投射物速度倍率),多重射击(扇形多发),箭无虚发(穿透)
         const baseSpeed = 7;
-        const speed = baseSpeed * (cls === 'archer' ? (this.archerProjSpeedMult || 1) : 1);
+        const speed = baseSpeed * (cls === 'archer' ? (this.player.archerProjSpeedMult || 1) : 1);
         // 弓手专属:自动攻击投射物伤害倍率(强弓/猎手本能/狩猎专精天赋)
-        const archerAutoMult = cls === 'archer' ? (this.archerAutoDmgMult || 1) : 1;
+        const archerAutoMult = cls === 'archer' ? (this.player.archerAutoDmgMult || 1) : 1;
         const dmg = this._computeAttackDamage(this.player.attack) * (this.player.autoAttackDmgMult || 1) * archerAutoMult;
 
         // 法师 Q 开关:激活时附加法术伤害并消耗法力(支持血魔契约)
         let mageBonusDmg = 0;
         if (cls === 'mage' && this.player.qToggleActive) {
-            const cost = Math.max(1, Math.ceil(this.player.maxMana * 0.10 * (this.mageQCostMult || 1)));
+            const cost = Math.max(1, Math.ceil(this.player.maxMana * 0.10 * (this.player.mageQCostMult || 1)));
             if (this._payMana(cost)) {
                 mageBonusDmg = this.player.maxMana * 1.5;
             } else {
@@ -2852,8 +2826,8 @@ class Game {
             }
         }
 
-        const fanCount = cls === 'archer' ? (this.archerMultiShot || 1) : 1;
-        const pierce = cls === 'archer' ? (this.archerPiercing || 0) : 0;
+        const fanCount = cls === 'archer' ? (this.player.archerMultiShot || 1) : 1;
+        const pierce = cls === 'archer' ? (this.player.archerPiercing || 0) : 0;
         // 扇形角度散布
         const spread = fanCount > 1 ? (15 * Math.PI / 180) : 0; // ±15°
         const baseAngle = Math.atan2(dy, dx);
@@ -2864,6 +2838,7 @@ class Game {
             const vx = Math.cos(ang) * speed;
             const vy = Math.sin(ang) * speed;
             const proj = new Projectile(cx - 5, cy - 5, vx, vy, dmg + mageBonusDmg);
+            proj.owner = this.player;
             proj.bonusMagicDmg = mageBonusDmg;
             if (pierce > 0) {
                 proj.isPiercing = true;
@@ -2923,13 +2898,13 @@ class Game {
         }
         // 战士:血怒(每 20 怒气 +5% 攻击,× 已叠层数)
         if (this.player.class === 'warrior') {
-            const bloodStacks = this.bloodRageStacks || 0;
+            const bloodStacks = this.player.bloodRageStacks || 0;
             if (bloodStacks > 0) {
                 const rageBands = Math.floor(this.player.rage / 20);
                 dmg *= (1 + rageBands * 0.05 * bloodStacks);
             }
             // 嗜血战意:怒气 ≥70 时所有伤害 +30%
-            if (this.warriorRavenous && this.player.rage >= 70) dmg *= 1.3;
+            if (this.player.warriorRavenous && this.player.rage >= 70) dmg *= 1.3;
         }
         return dmg;
     }
@@ -3243,7 +3218,7 @@ class Game {
         // 1. 过滤可用天赋:满足 applicable + 未达 maxStacks
         const eligible = this.talentDefs.filter(t => {
             if (t.applicable && !t.applicable(this)) return false;
-            const got = this.acquiredTalents.find(a => a.id === t.id);
+            const got = this.player.acquiredTalents.find(a => a.id === t.id);
             if (got) {
                 if (!t.stackable) return false;
                 if (t.maxStacks && got.count >= t.maxStacks) return false;
@@ -3271,6 +3246,14 @@ class Game {
         return chosen;
     }
 
+    // 应用天赋到 this.player 并记录层数(host 替 guest 应用时经由 _runAsPlayer)
+    _applyTalent(talent) {
+        talent.apply(this);
+        const existing = this.player.acquiredTalents.find(a => a.id === talent.id);
+        if (existing) existing.count++;
+        else this.player.acquiredTalents.push({ id: talent.id, count: 1 });
+    }
+
     handlePotentialChoice(choice) {
         // choice: 0 = 跳过, 1/2/3 = 天赋卡索引(1-based)
         if (choice === 0) {
@@ -3284,12 +3267,12 @@ class Game {
             return;
         }
 
-        talent.apply(this);
+        this._applyTalent(talent);
         this.player.potentialPoints--;
-
-        const existing = this.acquiredTalents.find(a => a.id === talent.id);
-        if (existing) existing.count++;
-        else this.acquiredTalents.push({ id: talent.id, count: 1 });
+        // 联机:guest 把所选天赋告诉 host,由 host 应用到该 guest 的 Player(团队类天赋作用于全队)
+        if (this.mpMode === 'guest' && this.mpWs && this.mpWs.readyState === WebSocket.OPEN) {
+            this.mpWs.send(JSON.stringify({ type: 'talentChoose', talentId: talent.id }));
+        }
 
         this.updateUI();
 
@@ -3423,7 +3406,7 @@ class Game {
                 ctx.font = `${cardDescSize}px Arial`;
                 this._wrapText(ctx, t.desc, cx + iconBoxW, cy + 14 + cardNameSize + 6, cardW - iconBoxW - 10, cardDescSize + 3);
 
-                const got = this.acquiredTalents.find(a => a.id === t.id);
+                const got = this.player.acquiredTalents.find(a => a.id === t.id);
                 if (got) {
                     ctx.fillStyle = 'rgba(255, 204, 0, 0.85)';
                     ctx.font = `${Math.max(9, cardDescSize - 1)}px Arial`;
@@ -3451,7 +3434,7 @@ class Game {
                 ctx.textBaseline = 'top';
                 this._wrapTextCenter(ctx, t.desc, cx + cardW / 2, cy + cardH * 0.60, cardW - 16, cardDescSize + 3);
 
-                const got = this.acquiredTalents.find(a => a.id === t.id);
+                const got = this.player.acquiredTalents.find(a => a.id === t.id);
                 if (got) {
                     ctx.fillStyle = 'rgba(255, 204, 0, 0.85)';
                     ctx.font = `${Math.max(9, cardDescSize - 1)}px Arial`;
@@ -3478,13 +3461,13 @@ class Game {
         this.drawButton(skipX, skipY, skipW, skipH, '#78909c', '跳过', 0);
 
         // 已获得天赋小列表(底部)
-        if (this.acquiredTalents.length > 0) {
+        if (this.player.acquiredTalents.length > 0) {
             ctx.save();
             ctx.fillStyle = 'rgba(200, 232, 255, 0.55)';
             ctx.font = `${Math.max(9, subFontSize - 3)}px Arial`;
             ctx.textAlign = 'center';
             ctx.textBaseline = 'bottom';
-            const summary = this.acquiredTalents.map(a => {
+            const summary = this.player.acquiredTalents.map(a => {
                 const def = this.talentDefs.find(d => d.id === a.id);
                 return def ? (def.name + (a.count > 1 ? `×${a.count}` : '')) : '';
             }).filter(Boolean).join('  ·  ');
@@ -4345,7 +4328,7 @@ class Game {
             roundRect(ctx, qSlotX - 3, baseY - 3, slotW + 6, slotH + 6, slotR + 2);
             ctx.stroke();
             ctx.shadowBlur = 0;
-            const cost = Math.max(1, Math.ceil(this.player.maxMana * 0.10 * (this.mageQCostMult || 1)));
+            const cost = Math.max(1, Math.ceil(this.player.maxMana * 0.10 * (this.player.mageQCostMult || 1)));
             ctx.fillStyle = '#4dd0e1';
             ctx.font = 'bold 10px Arial';
             ctx.textAlign = 'center';
@@ -4527,6 +4510,29 @@ class Player {
         this.targetX = null;
         this.targetY = null;
         this.moving = false;
+
+        // 天赋(按玩家存储;联机时每个 guest 各有一份)
+        this.acquiredTalents = [];      // [{ id, count }]
+        this.autoAttackTimer = 0;
+        this.autoAttackInterval = 0.6;
+        this.warriorSkillDmgMult = 1;
+        this.warriorRageDecayMult = 1;
+        this.bloodRageStacks = 0;       // 战士:血怒叠层
+        this.warriorRavenous = false;   // 战士:嗜血战意
+        this.mageStunBonus = 0;
+        this.magePenetration = 0;
+        this.mageQCostMult = 1;
+        this.mageMulticast = false;     // 法师:奥术连击
+        this.mageBloodMagic = false;    // 法师:血魔契约
+        this.assassinSkillDmgMult = 1;
+        this.assassinExtraTargets = 0;
+        this.archerSkillDmgMult = 1;
+        this.archerProjSpeedMult = 1;
+        this.archerMultiShot = 1;
+        this.archerPiercing = 0;
+        this.archerAutoDmgMult = 1;     // 弓手:普攻投射物倍率
+        this.paladinSkillDmgMult = 1;
+        this.paladinAuraDurationBonus = 0;
     }
     
     update(keys, width, height) {
@@ -5532,7 +5538,7 @@ class PiercingArrow {
                 this.game.spawnHitParticles(ex, ey, '#aaff44', 6);
                 if (e.currentHealth <= 0) {
                     this.game.spawnHitParticles(ex, ey, e.color, 10);
-                    this.game._onEnemyKilled();
+                    this.game._runAsPlayer(this.owner, () => this.game._onEnemyKilled());
                     this.game.enemies.splice(j, 1);
                 }
             }

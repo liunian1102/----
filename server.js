@@ -130,7 +130,7 @@ wss.on('connection', ws => {
                 if (!info || info.isHost) break;
                 const room = getRoom(info.roomCode);
                 if (!room) break;
-                send(room.host, { type: 'talentChoose', playerId: info.playerId, choiceIndex: msg.choiceIndex });
+                send(room.host, { type: 'talentChoose', playerId: info.playerId, talentId: msg.talentId });
                 break;
             }
 
