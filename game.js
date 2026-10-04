@@ -24,8 +24,13 @@ const CLASS_BASE_ADJUST = {
 };
 
 function roundRect(ctx, x, y, w, h, r) {
-    r = Math.min(r, w / 2, h / 2);
     ctx.beginPath();
+    addRoundRect(ctx, x, y, w, h, r);
+}
+
+// 只往当前路径追加一个圆角矩形子路径(不 beginPath),用于把多个圆角矩形合并成一次 fill
+function addRoundRect(ctx, x, y, w, h, r) {
+    r = Math.min(r, w / 2, h / 2);
     ctx.moveTo(x + r, y);
     ctx.lineTo(x + w - r, y);
     ctx.arcTo(x + w, y, x + w, y + r, r);
@@ -72,6 +77,15 @@ const SpriteCache = {
     // 在 (x,y) 处按逻辑尺寸 w×h 绘制缓存精灵
     draw(ctx, c, x, y, w, h) {
         ctx.drawImage(c, x - c.pad, y - c.pad, w + c.pad * 2, h + c.pad * 2);
+    },
+    // 按精灵原生像素 1:1 绘制,左上角对齐到设备像素:整体变换退化为整数平移,
+    // Skia 走直接拷贝而不做插值缩放,大批量绘制时快数倍。位置误差 ≤ 半个设备像素,肉眼不可见。
+    // snap = 当前画布变换 {a, e, f}(只含缩放 + 平移,a 即 gameScale,与精灵的 scale 相同)
+    drawPx(ctx, c, x, y, snap) {
+        const a = snap.a;
+        const dx = Math.round((x - c.pad) * a + snap.e);
+        const dy = Math.round((y - c.pad) * a + snap.f);
+        ctx.drawImage(c, (dx - snap.e) / a, (dy - snap.f) / a, c.width / a, c.height / a);
     },
     // 光晕 blur(CSS 像素)换算成精灵需要的逻辑外扩:高斯 σ = blur/2,画到 3σ 基本看不见
     padFor(blur) { return Math.ceil(blur * 1.5 * this.dpr / this.scale) + 2; },
@@ -4050,7 +4064,10 @@ class Game {
         const ctx = this.ctx;
         if (!this._bgLayers) this._buildBgLayers();
         const { bg, grid } = this._bgLayers;
-        ctx.drawImage(bg, 0, 0, this.width, this.height);
+        // 背景层同样按设备像素 1:1 绘制(缩放比例非整数时插值缩放整屏图很慢)
+        const m = ctx.getTransform();
+        const snap = { a: m.a, e: m.e, f: m.f };
+        SpriteCache.drawPx(ctx, bg, 0, 0, snap);
 
         const t = this.bgTime;
         ctx.save();
@@ -4063,7 +4080,7 @@ class Game {
             ctx.fill();
         }
         ctx.globalAlpha = 0.06 + Math.sin(t * 0.5) * 0.02;
-        ctx.drawImage(grid, 0, 0, this.width, this.height);
+        SpriteCache.drawPx(ctx, grid, 0, 0, snap);
         ctx.restore();
     }
 
@@ -4227,10 +4244,7 @@ class Game {
         // 渲染其他联机玩家
         if (this.mpMode && this.mpPlayers.length > 0) this._renderMpPlayers();
 
-        const frozen = this.enemyFreezeTimer > 0;
-        for (let enemy of this.enemies) {
-            enemy.render(this.ctx, frozen);
-        }
+        this._renderEnemies(ctx, this.enemyFreezeTimer > 0);
 
         // 渲染魔王(在敌人之上,投射物之下)
         if (this.boss) this.boss.render(this.ctx);
@@ -4520,6 +4534,22 @@ class Game {
         ctx.closePath();
         ctx.fill();
         return true;
+    }
+
+    // 敌人分三遍画,每遍内部状态一致、尽量合批:
+    // 1) 本体/炮管/白闪:精灵按设备像素 1:1 绘制(SpriteCache.drawPx),关掉插值;
+    // 2) 所有血条、装弹条合并成几条路径,每种颜色只 fill 一次(原先每个敌人 2~4 次 fill + save/restore);
+    // 3) 眩晕星星与冰封叠加盖在血条之上,与原来单个敌人内的层次一致。
+    _renderEnemies(ctx, frozen) {
+        const enemies = this.enemies;
+        if (enemies.length === 0) return;
+        const m = ctx.getTransform(); // 世界变换只有缩放 + 平移(含震屏)
+        const snap = { a: m.a, e: m.e, f: m.f };
+        ctx.imageSmoothingEnabled = false;
+        for (const e of enemies) e.render(ctx, snap);
+        ctx.imageSmoothingEnabled = true;
+        Enemy.renderBars(ctx, enemies);
+        for (const e of enemies) e.renderOverlays(ctx, snap, frozen);
     }
 
     _renderEffects() {
@@ -5432,80 +5462,33 @@ class Enemy {
         if (Math.abs(this.kbX) + Math.abs(this.kbY) < 0.1) this.kbX = this.kbY = 0;
     }
 
-    _renderHitFlash(ctx) {
+    _renderHitFlash(ctx, snap) {
         if (this.hitFlash <= 0) return;
-        ctx.save();
+        const r = this.type === 'giant' ? 10 : this.type === 'gunner' ? 7 : 6;
+        const alpha = ctx.globalAlpha;
         ctx.globalAlpha = Math.min(1, this.hitFlash / 0.08) * 0.85;
-        ctx.fillStyle = '#ffffff';
-        roundRect(ctx, this.x, this.y, this.size, this.size, this.type === 'giant' ? 10 : this.type === 'gunner' ? 7 : 6);
-        ctx.fill();
-        ctx.restore();
+        SpriteCache.drawPx(ctx, Enemy.flashSprite(this.size, r), this.x, this.y, snap);
+        ctx.globalAlpha = alpha;
     }
-    
-    render(ctx, frozen = false) {
-        // 炮手有专属渲染
-        if (this.type === 'gunner') {
-            this._renderGunner(ctx, frozen);
-            return;
-        }
 
+    // 第 1 遍:本体(炮手含炮管、炮口火花、"炮"字)+ 受击白闪。血条见 renderBars,星星/冰封见 renderOverlays。
+    // 由 Game._renderEnemies 调用,调用前已关闭 imageSmoothing
+    render(ctx, snap) {
         // 本体(渐变 + 光晕 + 描边 + 文字)按类型缓存,避免每帧 shadowBlur
-        SpriteCache.draw(ctx, Enemy.bodySprite(this.type, this.size), this.x, this.y, this.size, this.size);
-        this._renderHitFlash(ctx);
-
-        const healthBarWidth = this.size;
-        const healthBarHeight = 4;
-        const healthPercentage = this.currentHealth / this.maxHealth;
-        const bx = this.x;
-        const by = this.y - 10;
-
-        ctx.save();
-        ctx.fillStyle = 'rgba(0,0,0,0.5)';
-        roundRect(ctx, bx, by, healthBarWidth, healthBarHeight, 2);
-        ctx.fill();
-        ctx.fillStyle = '#ff1744';
-        roundRect(ctx, bx, by, healthBarWidth * healthPercentage, healthBarHeight, 2);
-        ctx.fill();
-        ctx.restore();
-
-        if (this.stunTimer > 0) {
-            const cx = this.x + this.size / 2;
-            const cy = this.y - 16;
-            ctx.save();
-            ctx.shadowBlur = 10;
-            ctx.shadowColor = '#ffd700';
-            for (let i = 0; i < 3; i++) {
-                const a = (Date.now() * 0.003 + i * (Math.PI * 2 / 3));
-                const sx = cx + Math.cos(a) * 8;
-                const sy = cy + Math.sin(a) * 4 - 2;
-                ctx.fillStyle = '#ffd700';
-                ctx.font = '11px Arial';
-                ctx.textAlign = 'center';
-                ctx.textBaseline = 'middle';
-                ctx.fillText('★', sx, sy);
-            }
-            ctx.restore();
-        }
-
-        // 冻结时:在敌人身上叠加冰封效果(蓝色半透明 + 冰晶高光)
-        if (frozen) {
-            const r = this.type === 'giant' ? 10 : 6;
-            SpriteCache.draw(ctx, Enemy.frozenSprite(this.size, r, true), this.x, this.y, this.size, this.size);
-        }
+        SpriteCache.drawPx(ctx, Enemy.bodySprite(this.type, this.size), this.x, this.y, snap);
+        if (this.type === 'gunner') this._renderGunnerTop(ctx, snap);
+        this._renderHitFlash(ctx, snap);
     }
 
-    _renderGunner(ctx, frozen) {
+    _renderGunnerTop(ctx, snap) {
         const cx = this.x + this.size / 2;
         const cy = this.y + this.size / 2;
 
-        ctx.save();
-        // 底座:深橙方块(缓存精灵)
-        SpriteCache.draw(ctx, Enemy.bodySprite('gunner', this.size), this.x, this.y, this.size, this.size);
-
-        // 炮管:从中心向瞄准角延伸的矩形(缓存精灵,旋转绘制)
+        // 炮管:从中心向瞄准角延伸的矩形(缓存精灵,旋转绘制,需要插值)
         const barrelLen = this.size * 0.65;
         const barrelW   = this.size * 0.28;
         ctx.save();
+        ctx.imageSmoothingEnabled = true;
         ctx.translate(cx, cy);
         ctx.rotate(this.aimAngle);
         SpriteCache.draw(ctx, Enemy.barrelSprite(barrelLen, barrelW), 0, -barrelW / 2, barrelLen, barrelW);
@@ -5527,44 +5510,52 @@ class Enemy {
             ctx.restore();
         }
 
-        // 中心图标
-        ctx.save();
-        ctx.fillStyle = 'rgba(255,255,255,0.9)';
-        ctx.font = `bold ${Math.floor(this.size * 0.3)}px Arial`;
-        ctx.textAlign = 'center';
-        ctx.textBaseline = 'middle';
-        ctx.fillText('炮', cx, cy);
-        ctx.restore();
+        // 中心图标(盖在炮管上,缓存成精灵)
+        SpriteCache.drawPx(ctx, Enemy.gunnerLabelSprite(this.size), this.x, this.y, snap);
+    }
 
-        ctx.restore();
-        this._renderHitFlash(ctx);
+    // 第 2 遍:所有敌人的血条(炮手另有装弹条)合并绘制,每种颜色一条路径、一次 fill
+    static renderBars(ctx, enemies) {
+        const fill = (color, add) => {
+            ctx.fillStyle = color;
+            ctx.beginPath();
+            let any = false;
+            for (const e of enemies) any = add(e) || any;
+            if (any) ctx.fill();
+        };
+        // 血条底槽
+        fill('rgba(0,0,0,0.5)', e => { addRoundRect(ctx, e.x, e.y - 10, e.size, 4, 2); return true; });
+        // 血量
+        const hp = e => addRoundRect(ctx, e.x, e.y - 10, e.size * (e.currentHealth / e.maxHealth), 4, 2);
+        fill('#ff1744', e => e.type !== 'gunner' && (hp(e), true));
+        fill('#ff6f00', e => e.type === 'gunner' && (hp(e), true));
+        // 炮手装弹进度条(显示下次开火倒计时)
+        const reloadPct = e => Math.max(0, 1 - e.shootTimer / e.shootInterval);
+        const reload = e => addRoundRect(ctx, e.x, e.y - 5, e.size * reloadPct(e), 3, 1);
+        fill('rgba(0,0,0,0.4)', e => e.type === 'gunner' && (addRoundRect(ctx, e.x, e.y - 5, e.size, 3, 1), true));
+        fill('#ffeb3b', e => e.type === 'gunner' && reloadPct(e) > 0.8 && (reload(e), true));
+        fill('#ff9800', e => e.type === 'gunner' && reloadPct(e) <= 0.8 && (reload(e), true));
+    }
 
-        // 血条
-        const healthBarHeight = 4;
-        const healthPercentage = this.currentHealth / this.maxHealth;
-        ctx.save();
-        ctx.fillStyle = 'rgba(0,0,0,0.5)';
-        roundRect(ctx, this.x, this.y - 10, this.size, healthBarHeight, 2);
-        ctx.fill();
-        ctx.fillStyle = '#ff6f00';
-        roundRect(ctx, this.x, this.y - 10, this.size * healthPercentage, healthBarHeight, 2);
-        ctx.fill();
-        ctx.restore();
+    // 第 3 遍:眩晕星星、冰封叠加
+    renderOverlays(ctx, snap, frozen) {
+        if (this.stunTimer > 0 && this.type !== 'gunner') {
+            const cx = this.x + this.size / 2;
+            const cy = this.y - 16;
+            const star = Enemy.stunStarSprite();
+            for (let i = 0; i < 3; i++) {
+                const a = (Date.now() * 0.003 + i * (Math.PI * 2 / 3));
+                const sx = cx + Math.cos(a) * 8;
+                const sy = cy + Math.sin(a) * 4 - 2;
+                SpriteCache.drawPx(ctx, star, sx - 6, sy - 6, snap);
+            }
+        }
 
-        // 装弹进度条(显示下次开火倒计时)
-        const reloadPct = Math.max(0, 1 - this.shootTimer / this.shootInterval);
-        ctx.save();
-        ctx.fillStyle = 'rgba(0,0,0,0.4)';
-        roundRect(ctx, this.x, this.y - 5, this.size, 3, 1);
-        ctx.fill();
-        ctx.fillStyle = reloadPct > 0.8 ? '#ffeb3b' : '#ff9800';
-        roundRect(ctx, this.x, this.y - 5, this.size * reloadPct, 3, 1);
-        ctx.fill();
-        ctx.restore();
-
-        // 冻结叠加
+        // 冻结时:在敌人身上叠加冰封效果(蓝色半透明 + 冰晶高光;炮手只有冰块 + ❄)
         if (frozen) {
-            SpriteCache.draw(ctx, Enemy.frozenSprite(this.size, 7, false), this.x, this.y, this.size, this.size);
+            const isGunner = this.type === 'gunner';
+            const r = isGunner ? 7 : this.type === 'giant' ? 10 : 6;
+            SpriteCache.drawPx(ctx, Enemy.frozenSprite(this.size, r, !isGunner), this.x, this.y, snap);
         }
     }
 
@@ -5616,6 +5607,38 @@ class Enemy {
             g.textAlign = 'center';
             g.textBaseline = 'middle';
             g.fillText(labels[type] || '?', size / 2, size / 2);
+        });
+    }
+
+    // 受击白闪:纯白圆角块,绘制时用 globalAlpha 控制强度
+    static flashSprite(size, r) {
+        return SpriteCache.get(`enemy|flash|${size}|${r}`, size, size, 1, g => {
+            g.fillStyle = '#ffffff';
+            roundRect(g, 0, 0, size, size, r);
+            g.fill();
+        });
+    }
+
+    static gunnerLabelSprite(size) {
+        return SpriteCache.get(`enemy|gunnerLabel|${size}`, size, size, 1, g => {
+            g.fillStyle = 'rgba(255,255,255,0.9)';
+            g.font = `bold ${Math.floor(size * 0.3)}px Arial`;
+            g.textAlign = 'center';
+            g.textBaseline = 'middle';
+            g.fillText('炮', size / 2, size / 2);
+        });
+    }
+
+    // 眩晕星星(带金色光晕),12×12 逻辑尺寸,星形居中
+    static stunStarSprite() {
+        return SpriteCache.get('enemy|stunStar', 12, 12, SpriteCache.padFor(10), g => {
+            g.shadowBlur = SpriteCache.blur(10);
+            g.shadowColor = '#ffd700';
+            g.fillStyle = '#ffd700';
+            g.font = '11px Arial';
+            g.textAlign = 'center';
+            g.textBaseline = 'middle';
+            g.fillText('★', 6, 6);
         });
     }
 
