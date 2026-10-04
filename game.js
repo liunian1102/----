@@ -389,6 +389,25 @@ const Sound = {
                 this._tone(110, 0.8, 'sawtooth', 0.22, 0.5);
                 this._noise(0.6, 0.2, 'lowpass', 400);
                 break;
+            case 'bossTell':
+                this._tone(260, 0.25, 'square', 0.1, 1.8);
+                break;
+            case 'bossCharge':
+                this._noise(0.35, 0.22, 'bandpass', 700);
+                this._tone(180, 0.3, 'sawtooth', 0.14, 0.5);
+                break;
+            case 'bossRing':
+                this._tone(900, 0.18, 'square', 0.1, 0.4);
+                this._noise(0.15, 0.1, 'highpass', 2500);
+                break;
+            case 'bossSlam':
+                this._noise(0.5, 0.35, 'lowpass', 300);
+                this._tone(70, 0.45, 'sine', 0.35, 0.5);
+                break;
+            case 'bossEnrage':
+                this._tone(140, 0.6, 'sawtooth', 0.2, 2);
+                this._tone(147, 0.6, 'sawtooth', 0.2, 2);
+                break;
             case 'bossRepel':
                 [392, 523, 659, 784].forEach((f, i) => this._tone(f, 0.2, 'square', 0.12, 1, i * 0.09));
                 break;
@@ -1176,7 +1195,7 @@ class Game {
     //   i: [id, 类型序号, 落点x, 落点y, 剩余时长]
     //   p: [id, 种类(0 普通弹/1 穿透箭), x, y, 角度]
     //   b: [id, x, y, 角度]
-    //   boss: [x, y, hp, maxHp, 击退中(0/1)]
+    //   boss: [x, y, hp, maxHp, 击退中(0/1), 受击闪白(0/1), 招式序号(BlockBoss.ATK_CODES), 招式阶段, 阶段剩余, 阶段总长, 招式角度, 狂暴(0/1)]
     serializeState() {
         const players = [this._serializePlayer(this.player, 0)];
         for (const [id, gp] of this.mpGuestPlayers) {
@@ -1191,7 +1210,9 @@ class Game {
                 return row;
             }),
             boss: this.boss ? [q1(this.boss.x), q1(this.boss.y), Math.ceil(this.boss.currentHealth),
-                Math.ceil(this.boss.maxHealth), this.boss.retreating ? 1 : 0, this._mpTakeBossHit()] : null,
+                Math.ceil(this.boss.maxHealth), this.boss.retreating ? 1 : 0, this._mpTakeBossHit(),
+                BlockBoss.ATK_CODES.indexOf(this.boss.atk), this.boss.atkPhase, q2(this.boss.atkTimer),
+                q2(this.boss.atkDur), q2(this.boss.atkAngle), this.boss.enraged ? 1 : 0] : null,
             i: this.items.map(i => [i.id, MP_ITEM_TYPES.indexOf(i.type), q1(i.targetX), q1(i.targetY), q1(i.duration)]),
             p: this.projectiles.map(p => [p.id, p.isPiercing && !p.pierceRemaining ? 1 : 0, q1(p.x), q1(p.y),
                 q2(Math.atan2(p.dy, p.dx))]),
@@ -1204,7 +1225,7 @@ class Game {
             difficulty: q2(this.difficulty), life: this.life,
             enemyFreezeTimer: q2(this.enemyFreezeTimer),
             bossState: this.bossState, bossWarningTimer: q2(this.bossWarningTimer),
-            bossActiveTimer: q1(this.bossActiveTimer), screenShake: q2(this.screenShake)
+            bossActiveTimer: q1(this.bossActiveTimer), bossDamageDealt: Math.floor(this.bossDamageDealt), screenShake: q2(this.screenShake)
         };
     }
 
@@ -1306,7 +1327,7 @@ class Game {
 
         // Boss
         if (snapshot.boss) {
-            const [bx, by, hp, maxHp, retreating, hit] = snapshot.boss;
+            const [bx, by, hp, maxHp, retreating, hit, atk, atkPhase, atkTimer, atkDur, atkAngle, enraged] = snapshot.boss;
             const isNew = !this.boss;
             if (isNew) this.boss = new BlockBoss(bx, by, snapshot.difficulty || 1, this.player.maxHealth);
             this._mpSetTarget(this.boss, bx, by, isNew);
@@ -1314,6 +1335,12 @@ class Game {
             this.boss.maxHealth = maxHp;
             this.boss.retreating = !!retreating;
             if (hit) this.boss.flash();
+            this.boss.atk = BlockBoss.ATK_CODES[atk] || null;
+            this.boss.atkPhase = atkPhase || 0;
+            this.boss.atkTimer = atkTimer || 0;
+            this.boss.atkDur = atkDur || 1;
+            this.boss.atkAngle = atkAngle || 0;
+            this.boss.enraged = !!enraged;
         } else {
             this.boss = null;
         }
@@ -1401,6 +1428,7 @@ class Game {
         this.bossState         = snapshot.bossState;
         this.bossWarningTimer  = snapshot.bossWarningTimer || 0;
         this.bossActiveTimer   = snapshot.bossActiveTimer  || 0;
+        this.bossDamageDealt   = snapshot.bossDamageDealt  || 0;
         this.screenShake       = snapshot.screenShake      || 0;
     }
 
@@ -1427,7 +1455,11 @@ class Game {
             if (p.invincibleTimer > 0) p.invincibleTimer -= DT;
         }
         lerp(this.player);
-        if (this.boss) { lerp(this.boss); this.boss.phase += 0.04; }
+        if (this.boss) {
+            lerp(this.boss);
+            this.boss.phase += 0.04;
+            if (this.boss.atk) this.boss.atkTimer = Math.max(0, this.boss.atkTimer - DT);
+        }
         for (const it of this.items) it.update();
     }
 
@@ -1822,8 +1854,10 @@ class Game {
     // 通过状态变化触发音效:受击/死亡/升级/魔王阶段。host 与 guest 都适用(guest 状态来自快照)
     _sfxTick() {
         const p = this.player;
+        const b = this.boss;
         const cur = { hurt: p.hurtCooldown || 0, life: this.life, level: this.level, boss: this.bossState,
-                      q: p.skillQ.cooldown, e: p.skillE.cooldown, kills: p.killCount || 0 };
+                      q: p.skillQ.cooldown, e: p.skillE.cooldown, kills: p.killCount || 0,
+                      atk: b && b.atk ? b.atk + b.atkPhase : '', rage: !!(b && b.enraged) };
         const prev = this._sfxPrev;
         this._sfxPrev = cur;
         if (!prev) return;
@@ -1835,6 +1869,11 @@ class Game {
         if (cur.kills > prev.kills) this._onLocalKill();
         if (cur.level > prev.level) Sound.play('levelUp');
         if (cur.q > prev.q + 0.2 || cur.e > prev.e + 0.2) Sound.play('skill');
+        if (cur.atk !== prev.atk && cur.atk) {
+            if (cur.atk.endsWith('0')) Sound.play('bossTell');
+            else Sound.play(cur.atk === 'slam1' ? 'bossSlam' : cur.atk === 'ring1' ? 'bossRing' : 'bossCharge');
+        }
+        if (cur.rage && !prev.rage) Sound.play('bossEnrage');
         if (cur.boss !== prev.boss) {
             if (cur.boss === 'warning') Sound.play('bossWarn');
             else if (cur.boss === 'active') Sound.play('bossSpawn');
@@ -2044,9 +2083,21 @@ class Game {
                 }
             }
             // 魔王碰撞
-            if (this.boss && this.bossState === 'active' && this.checkCollision(gp, this.boss)) {
+            if (gp.hurtCooldown <= 0 && this.boss && this.bossState === 'active' && this.checkCollision(gp, this.boss)) {
                 gp.takeDamage(this.boss.attack);
                 gp.hurtCooldown = 0.6 + (gp.hurtCooldownBonus || 0);
+            }
+            // 敌方子弹(炮手/魔王弹幕)
+            if (gp.hurtCooldown <= 0 && gp.currentHealth > 0) {
+                for (let i = this.enemyBullets.length - 1; i >= 0; i--) {
+                    const b = this.enemyBullets[i];
+                    if (!this.checkCollision(gp, b)) continue;
+                    gp.takeDamage(b.damage);
+                    gp.hurtCooldown = 0.6 + (gp.hurtCooldownBonus || 0);
+                    this.spawnHitParticles(gp.x + gp.size / 2, gp.y + gp.size / 2, '#ff9800', 8);
+                    this.enemyBullets.splice(i, 1);
+                    break;
+                }
             }
             // 死亡后复活
             if (gp.currentHealth <= 0) {
@@ -2105,8 +2156,10 @@ class Game {
             }
             case 'active': {
                 if (!this.boss) { this.bossState = 'idle'; this.bossTimer = this.bossInterval; break; }
-                this.boss.update(this.player.x, this.player.y);
+                const target = this._bossTarget();
+                this.boss.update(target.x, target.y);
                 this.bossActiveTimer += DT;
+                this._updateBossAttacks(target);
 
                 // 受击判定:魔王 vs 玩家
                 if (this.checkCollision(this.player, this.boss)) {
@@ -2181,6 +2234,154 @@ class Game {
                 break;
             }
         }
+    }
+
+    // 魔王追击/瞄准离它最近的存活玩家(联机时不再只盯房主)
+    _bossTarget() {
+        let best = this.player, bestD = Infinity;
+        const bx = this.boss.x, by = this.boss.y;
+        const consider = p => {
+            if (p.currentHealth <= 0) return;
+            const d = (p.x - bx) ** 2 + (p.y - by) ** 2;
+            if (d < bestD) { bestD = d; best = p; }
+        };
+        consider(this.player);
+        if (this.mpMode === 'host') for (const gp of this.mpGuestPlayers.values()) consider(gp);
+        return best;
+    }
+
+    // ── 魔王招式 ──
+    // 冲撞:锁定方向后高速直冲;弹幕:一圈慢速炮弹;震地:原地蓄力后范围重击。
+    // 每招都有地面预警(BlockBoss.renderTelegraph),前摇中被眩晕会被打断;
+    // 累计伤害过半或坚持过半后进入狂暴:出招更快、移速更高、弹幕变两波、震地范围更大。
+    _updateBossAttacks(target) {
+        const b = this.boss;
+        const bcx = b.x + b.size / 2, bcy = b.y + b.size / 2;
+
+        if (!b.enraged && (this.bossDamageDealt >= this.bossDamageRequired * this.difficulty * 0.5
+                || this.bossActiveTimer >= this.bossDuration * 0.5)) {
+            b.enraged = true;
+            b.speed *= 1.25;
+            this._showFloatingText('魔王狂暴!', bcx, b.y - 16, '#ff1744');
+            this.effects.push({ type: 'shockwave', x: bcx, y: bcy, radius: 10, maxRadius: 160, color: '#ff1744', ttl: 0.6, maxTtl: 0.6 });
+            this.screenShake = Math.max(this.screenShake, 0.35);
+        }
+
+        if (b.stunTimer > 0) {
+            // 前摇被控 = 打断;已经冲出去的冲撞也就地停下
+            if (b.atk) {
+                if (b.atkPhase === 0) this._showFloatingText('打断!', bcx, b.y - 16, '#80d8ff');
+                b.atk = null;
+                b.atkCD = 1.2;
+            }
+            return;
+        }
+
+        const tcx = target.x + target.size / 2, tcy = target.y + target.size / 2;
+        const speedUp = b.enraged ? 0.8 : 1;
+
+        if (!b.atk) {
+            b.atkCD -= DT;
+            if (b.atkCD > 0) return;
+            const dist = Math.hypot(tcx - bcx, tcy - bcy);
+            // 按距离加权:远了爱冲撞,贴脸爱震地;不连续用同一招
+            const w = { charge: dist > 200 ? 3 : 1, ring: 2, slam: dist < 180 ? 3 : 0.5 };
+            if (b.lastAtk) w[b.lastAtk] = 0;
+            let r = Math.random() * (w.charge + w.ring + w.slam);
+            const atk = (r -= w.charge) < 0 ? 'charge' : (r -= w.ring) < 0 ? 'ring' : 'slam';
+            b.atk = b.lastAtk = atk;
+            b.atkPhase = 0;
+            b.atkDur = b.atkTimer = { charge: 0.8, ring: 0.65, slam: 0.95 }[atk] * speedUp;
+            b.atkAngle = atk === 'ring' ? Math.random() * Math.PI * 2 : Math.atan2(tcy - bcy, tcx - bcx);
+            return;
+        }
+
+        b.atkTimer -= DT;
+        // 冲撞前摇的前 60% 持续跟踪目标,之后锁定方向留出闪避窗口
+        if (b.atk === 'charge' && b.atkPhase === 0 && b.atkTimer > b.atkDur * 0.4) {
+            b.atkAngle = Math.atan2(tcy - bcy, tcx - bcx);
+        }
+        if (b.atk === 'charge' && b.atkPhase === 1) {
+            // 朝外撞到边界就提前停下(从屏幕外冲进来的不算)
+            const m = 10, c = Math.cos(b.atkAngle), sn = Math.sin(b.atkAngle);
+            if ((b.x < -m && c < 0) || (b.y < -m && sn < 0)
+                || (b.x > this.width - b.size + m && c > 0) || (b.y > this.height - b.size + m && sn > 0)) {
+                this.screenShake = Math.max(this.screenShake, 0.3);
+                this.spawnParticles(bcx, bcy, '#ff5252', 14, 2, 5, 2, 4, 0.05);
+                b.atkTimer = 0;
+            }
+        }
+        if (b.atkTimer > 0) return;
+
+        if (b.atkPhase === 0) {
+            b.atkPhase = 1;
+            this._releaseBossAttack(b, bcx, bcy);
+            b.atkDur = b.atkTimer = { charge: BlockBoss.CHARGE_TIME, ring: 0.4, slam: 0.35 }[b.atk];
+        } else {
+            if (b.atk === 'ring' && b.enraged) this._bossRing(b, bcx, bcy, b.atkAngle + Math.PI / BlockBoss.ringCount(true));
+            b.atk = null;
+            b.atkCD = (b.enraged ? 1.5 : 2.4) + Math.random() * 0.6;
+        }
+    }
+
+    _releaseBossAttack(b, bcx, bcy) {
+        if (b.atk === 'charge') {
+            this.screenShake = Math.max(this.screenShake, 0.2);
+            this.spawnParticles(bcx, bcy, '#ff1744', 12, 2, 5, 2, 4, 0.05);
+        } else if (b.atk === 'ring') {
+            this._bossRing(b, bcx, bcy, b.atkAngle);
+        } else if (b.atk === 'slam') {
+            const r = b.slamRadius;
+            this.effects.push({ type: 'shockwave', x: bcx, y: bcy, radius: 20, maxRadius: r, color: '#ff5252', ttl: 0.4, maxTtl: 0.4 });
+            this.effects.push({ type: 'shockwave', x: bcx, y: bcy, radius: 10, maxRadius: r * 0.6, color: '#ffffff', ttl: 0.3, maxTtl: 0.3 });
+            this.spawnParticles(bcx, bcy, '#ff8a80', 24, 3, 7, 2, 5, 0.04);
+            this.screenShake = Math.max(this.screenShake, 0.4);
+            const dmg = b.attack * 0.6;
+            const hit = p => {
+                const pcx = p.x + p.size / 2, pcy = p.y + p.size / 2;
+                const d = Math.hypot(pcx - bcx, pcy - bcy);
+                if (d > r + p.size / 2) return;
+                if (!this._bossHitPlayer(p, dmg, '#ff5252')) return;
+                // 震飞
+                const k = 45 / (d || 1);
+                p.x = Math.max(0, Math.min(this.width - p.size, p.x + (pcx - bcx) * k));
+                p.y = Math.max(0, Math.min(this.height - p.size, p.y + (pcy - bcy) * k));
+            };
+            hit(this.player);
+            if (this.mpMode === 'host') for (const gp of this.mpGuestPlayers.values()) hit(gp);
+        }
+    }
+
+    _bossRing(b, bcx, bcy, start) {
+        const n = BlockBoss.ringCount(b.enraged);
+        const speed = 2.6 + this.difficulty * 0.35;
+        const dmg = b.attack * 0.3;
+        for (let k = 0; k < n; k++) {
+            const ang = start + k * Math.PI * 2 / n;
+            const c = Math.cos(ang), s = Math.sin(ang);
+            this.enemyBullets.push(new EnemyBullet(bcx + c * b.size * 0.5, bcy + s * b.size * 0.5, c * speed, s * speed, dmg));
+        }
+        this.spawnBurstRing(bcx, bcy, 30, '#ff9800', 16);
+    }
+
+    // 魔王招式命中玩家(host 本机或 guest),走与接触伤害相同的受击无敌帧;返回是否结算了伤害
+    _bossHitPlayer(p, dmg, color) {
+        if (p.hurtCooldown > 0 || p.currentHealth <= 0) return false;
+        p.takeDamage(dmg);
+        p.hurtCooldown = 0.6 + (p.hurtCooldownBonus || 0);
+        p.gainRage(15 + (p.rageOnHurtBonus || 0));
+        this.spawnHitParticles(p.x + p.size / 2, p.y + p.size / 2, color, 12);
+        // guest 的死亡/复活在 _checkGuestCollisions 里统一处理
+        if (p === this.player && p.currentHealth <= 0) {
+            this.life--;
+            if (this.life > 0) {
+                p.x = this.width / 2;
+                p.y = this.height / 2;
+                p.currentHealth = p.maxHealth;
+                p.hurtCooldown = 1.5;
+            }
+        }
+        return true;
     }
 
     _spawnBoss() {
@@ -4246,8 +4447,11 @@ class Game {
 
         this._renderEnemies(ctx, this.enemyFreezeTimer > 0);
 
-        // 渲染魔王(在敌人之上,投射物之下)
-        if (this.boss) this.boss.render(this.ctx);
+        // 渲染魔王(在敌人之上,投射物之下);招式预警铺在地面,先画
+        if (this.boss) {
+            this.boss.renderTelegraph(this.ctx);
+            this.boss.render(this.ctx);
+        }
 
         for (let item of this.items) {
             item.render(this.ctx);
@@ -4428,7 +4632,7 @@ class Game {
             ctx.font = 'bold 12px Arial';
             ctx.textAlign = 'center';
             ctx.textBaseline = 'middle';
-            ctx.fillText(`方块大魔王  ${Math.ceil(this.boss.currentHealth)}/${Math.ceil(this.boss.maxHealth)}`, bx + barW / 2, by + barH / 2);
+            ctx.fillText(`方块大魔王${this.boss.enraged ? ' · 狂暴' : ''}  ${Math.ceil(this.boss.currentHealth)}/${Math.ceil(this.boss.maxHealth)}`, bx + barW / 2, by + barH / 2);
 
             // 第二行:坚持倒计时 + 累计伤害进度
             const subBarW = barW;
@@ -5891,7 +6095,19 @@ class BlockBoss {
         // 浮动相位
         this.phase = 0;
         this.hitFlash = -1; // 受击白闪,同 Enemy
+        // 招式状态机(由 Game._updateBossAttacks 驱动):atk 为当前招式,
+        // atkPhase 0 = 前摇(地面预警,可被眩晕打断),1 = 释放/收招;atkTimer 为当前阶段剩余秒数
+        this.atk = null;          // null | 'charge' 冲撞 | 'ring' 弹幕 | 'slam' 震地
+        this.atkPhase = 0;
+        this.atkTimer = 0;
+        this.atkDur = 1;          // 当前阶段总时长,用于画预警进度
+        this.atkAngle = 0;        // 冲撞方向 / 弹幕起始角
+        this.atkCD = 2.5;         // 出场后先追一会儿再出招
+        this.lastAtk = null;
+        this.enraged = false;     // 狂暴:出招更快、移速更高、弹幕两波
     }
+
+    get slamRadius() { return this.enraged ? 160 : 140; }
 
     update(playerX, playerY) {
         this.phase += 0.04;
@@ -5905,6 +6121,12 @@ class BlockBoss {
             this.stunTimer -= DT;
             return;
         }
+        if (this.atk === 'charge' && this.atkPhase === 1) {
+            this.x += Math.cos(this.atkAngle) * BlockBoss.CHARGE_SPEED;
+            this.y += Math.sin(this.atkAngle) * BlockBoss.CHARGE_SPEED;
+            return;
+        }
+        if (this.atk) return; // 其余招式出招时站定
         const dx = playerX - this.x;
         const dy = playerY - this.y;
         const dist = Math.sqrt(dx * dx + dy * dy);
@@ -5912,6 +6134,72 @@ class BlockBoss {
             this.x += (dx / dist) * this.speed;
             this.y += (dy / dist) * this.speed;
         }
+    }
+
+    // 地面预警:画在魔王本体之下。只用纯填充/描边,不开 shadowBlur
+    renderTelegraph(ctx) {
+        if (!this.atk || this.retreating) return;
+        const cx = this.x + this.size / 2;
+        const cy = this.y + this.size / 2;
+        const t = Math.max(0, Math.min(1, 1 - this.atkTimer / this.atkDur)); // 本阶段进度
+        ctx.save();
+        if (this.atk === 'charge') {
+            const len = BlockBoss.CHARGE_SPEED * BlockBoss.CHARGE_TIME / DT + this.size / 2;
+            const half = this.size / 2;
+            ctx.translate(cx, cy);
+            ctx.rotate(this.atkAngle);
+            const a = this.atkPhase === 0 ? 0.1 + 0.25 * t : 0.25 * (1 - t);
+            ctx.fillStyle = `rgba(255, 23, 68, ${a})`;
+            ctx.fillRect(0, -half, len, half * 2);
+            if (this.atkPhase === 0) {
+                // 进度条:从魔王推向终点,填满即冲出
+                ctx.fillStyle = 'rgba(255, 82, 82, 0.35)';
+                ctx.fillRect(0, -half, len * t, half * 2);
+                ctx.strokeStyle = `rgba(255, 82, 82, ${0.5 + 0.5 * t})`;
+                ctx.lineWidth = 2;
+                ctx.beginPath();
+                ctx.moveTo(0, -half); ctx.lineTo(len, -half);
+                ctx.moveTo(0, half);  ctx.lineTo(len, half);
+                ctx.stroke();
+                // 流动箭头
+                ctx.strokeStyle = 'rgba(255, 255, 255, 0.55)';
+                ctx.lineWidth = 3;
+                const step = 46, off = (this.phase * 60) % step;
+                ctx.beginPath();
+                for (let x = half + off; x < len - 10; x += step) {
+                    ctx.moveTo(x - 10, -12); ctx.lineTo(x, 0); ctx.lineTo(x - 10, 12);
+                }
+                ctx.stroke();
+            }
+        } else if (this.atk === 'slam') {
+            const r = this.slamRadius;
+            if (this.atkPhase === 0) {
+                ctx.fillStyle = 'rgba(255, 23, 68, 0.12)';
+                ctx.beginPath(); ctx.arc(cx, cy, r, 0, Math.PI * 2); ctx.fill();
+                ctx.fillStyle = `rgba(255, 82, 82, ${0.15 + 0.2 * t})`;
+                ctx.beginPath(); ctx.arc(cx, cy, r * t, 0, Math.PI * 2); ctx.fill();
+                ctx.strokeStyle = `rgba(255, 82, 82, ${0.5 + 0.5 * t})`;
+                ctx.lineWidth = 2.5;
+                ctx.setLineDash([10, 8]);
+                ctx.lineDashOffset = -this.phase * 30;
+                ctx.beginPath(); ctx.arc(cx, cy, r, 0, Math.PI * 2); ctx.stroke();
+            }
+        } else if (this.atk === 'ring' && this.atkPhase === 0) {
+            // 每道弹道方向一根尖刺,子弹就从这些方向射出
+            const n = BlockBoss.ringCount(this.enraged);
+            const r0 = this.size * 0.6, r1 = r0 + 18 + 50 * t;
+            ctx.strokeStyle = `rgba(255, 152, 0, ${0.3 + 0.6 * t})`;
+            ctx.lineWidth = 3;
+            ctx.beginPath();
+            for (let k = 0; k < n; k++) {
+                const ang = this.atkAngle + k * Math.PI * 2 / n;
+                const c = Math.cos(ang), s = Math.sin(ang);
+                ctx.moveTo(cx + c * r0, cy + s * r0);
+                ctx.lineTo(cx + c * r1, cy + s * r1);
+            }
+            ctx.stroke();
+        }
+        ctx.restore();
     }
 
     takeDamage(damage) {
@@ -5929,6 +6217,7 @@ class BlockBoss {
     }
 
     triggerRetreat(playerX, playerY) {
+        this.atk = null;
         // 沿背离玩家方向飞走
         const dx = this.x - playerX;
         const dy = this.y - playerY;
@@ -5940,9 +6229,20 @@ class BlockBoss {
     }
 
     render(ctx) {
+        // 前摇时本体抖动,提示"要出招了"
+        const shaking = this.atk && this.atkPhase === 0 && !this.retreating;
+        if (shaking) {
+            ctx.save();
+            ctx.translate((Math.random() - 0.5) * 4, (Math.random() - 0.5) * 4);
+        }
+        this._renderBody(ctx);
+        if (shaking) ctx.restore();
+    }
+
+    _renderBody(ctx) {
         const cx = this.x + this.size / 2;
         const cy = this.y + this.size / 2;
-        const pulse = 0.8 + Math.sin(this.phase * 3) * 0.2;
+        const pulse = 0.8 + Math.sin(this.phase * (this.enraged ? 6 : 3)) * 0.2;
 
         // 外层威胁红光环
         ctx.save();
@@ -5959,9 +6259,10 @@ class BlockBoss {
         ctx.shadowColor = '#7c4dff';
 
         const grad = ctx.createLinearGradient(this.x, this.y, this.x + this.size, this.y + this.size);
-        grad.addColorStop(0, '#7c4dff');
-        grad.addColorStop(0.5, '#4a0080');
-        grad.addColorStop(1, '#1a0033');
+        const cols = this.enraged ? ['#ff5252', '#8e0038', '#2a0010'] : ['#7c4dff', '#4a0080', '#1a0033'];
+        grad.addColorStop(0, cols[0]);
+        grad.addColorStop(0.5, cols[1]);
+        grad.addColorStop(1, cols[2]);
         ctx.fillStyle = grad;
         roundRect(ctx, this.x, this.y, this.size, this.size, 14);
         ctx.fill();
@@ -5996,6 +6297,11 @@ class BlockBoss {
         ctx.restore();
     }
 }
+
+BlockBoss.CHARGE_SPEED = 10;   // 冲撞速度(px/帧)
+BlockBoss.CHARGE_TIME = 0.55;  // 冲撞持续(秒)
+BlockBoss.ringCount = enraged => enraged ? 16 : 12;
+BlockBoss.ATK_CODES = [null, 'charge', 'ring', 'slam'];
 
 class Projectile {
     constructor(x, y, dx, dy, damage = 15) {
