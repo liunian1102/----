@@ -72,6 +72,20 @@ const SpriteCache = {
     // 在 (x,y) 处按逻辑尺寸 w×h 绘制缓存精灵
     draw(ctx, c, x, y, w, h) {
         ctx.drawImage(c, x - c.pad, y - c.pad, w + c.pad * 2, h + c.pad * 2);
+    },
+    // 光晕 blur(CSS 像素)换算成精灵需要的逻辑外扩:高斯 σ = blur/2,画到 3σ 基本看不见
+    padFor(blur) { return Math.ceil(blur * 1.5 * this.dpr / this.scale) + 2; },
+    // 只画形状的光晕、不画形状本身:形状画到画布外很远处,再用 shadowOffset(设备像素,不受变换影响)把阴影移回来。
+    // 形状本体由调用方每帧用矢量画,这样 globalAlpha 下"光晕 + 本体"的叠加与原来逐帧 shadowBlur 完全一致。
+    glowOnly(g, blur, color, shape) {
+        const off = 10000;
+        g.save();
+        g.shadowColor = color;
+        g.shadowBlur = this.blur(blur);
+        g.shadowOffsetX = off * g.getTransform().a;
+        g.translate(-off, 0);
+        shape(g);
+        g.restore();
     }
 };
 
@@ -4434,6 +4448,80 @@ class Game {
         }
     }
 
+    // ── 特效光晕 ──
+    // 逐帧 shadowBlur 要对每个特效做一次高斯模糊,特效一多就是渲染大头。
+    // 形状固定的特效:光晕预渲染进 SpriteCache(只含光晕),本体每帧用矢量画;
+    // 半径随时间变化的圆环(冲击波/挥砍弧):用径向渐变画出与 shadowBlur 相同的高斯光晕。
+    _fxDotGlow(color, r) {
+        return SpriteCache.get(`fx|dot|${color}|${r}`, r * 2, r * 2, SpriteCache.padFor(30), g => {
+            SpriteCache.glowOnly(g, 30, color, g => {
+                g.fillStyle = color;
+                g.beginPath();
+                g.arc(r, r, r, 0, Math.PI * 2);
+                g.fill();
+            });
+        });
+    }
+
+    // 圣光光环:描边(blur 28)+ 内部填充(相对透明度 0.12/0.5)
+    _fxHolyGlow(color, r) {
+        return SpriteCache.get(`fx|holy|${color}|${r}`, r * 2, r * 2, SpriteCache.padFor(28), g => {
+            SpriteCache.glowOnly(g, 28, color, g => {
+                g.strokeStyle = color;
+                g.fillStyle = color;
+                g.lineWidth = 3;
+                g.beginPath();
+                g.arc(r, r, r, 0, Math.PI * 2);
+                g.stroke();
+                g.globalAlpha = 0.24;
+                g.fill();
+            });
+        });
+    }
+
+    // '#rgb' / '#rrggbb' → 'r,g,b';其它格式返回 null(调用方退回 shadowBlur)
+    _fxRgb(color) {
+        const cache = this._fxRgbCache || (this._fxRgbCache = new Map());
+        let v = cache.get(color);
+        if (v === undefined) {
+            v = null;
+            const m = /^#([0-9a-f]{3}|[0-9a-f]{6})$/i.exec(color || '');
+            if (m) {
+                let h = m[1];
+                if (h.length === 3) h = h[0] + h[0] + h[1] + h[1] + h[2] + h[2];
+                const n = parseInt(h, 16);
+                v = `${(n >> 16) & 255},${(n >> 8) & 255},${n & 255}`;
+            }
+            cache.set(color, v);
+        }
+        return v;
+    }
+
+    // 半径 r、线宽 w 的圆弧描边在 shadowBlur=blur 下的光晕:截面是 σ=blur/2 的高斯,
+    // 用径向渐变的圆环(或扇环)直接填出来,省掉逐帧模糊。返回 false 表示颜色无法解析
+    _fillArcGlow(ctx, x, y, r, w, blur, color, a0 = 0, a1 = Math.PI * 2) {
+        const rgb = this._fxRgb(color);
+        if (!rgb) return false;
+        const sigma = (blur / 2) * SpriteCache.dpr / SpriteCache.scale; // CSS 像素 → 逻辑像素
+        const peak = Math.min(1, w / (sigma * 2.5066));
+        const r0 = Math.max(0, r - 2.25 * sigma), r1 = r + 2.25 * sigma;
+        const grad = ctx.createRadialGradient(x, y, r0, x, y, r1);
+        const prof = [0, 0.325, 0.755, 1, 0.755, 0.325, 0]; // e^(-d²/2σ²),d 每步 0.75σ,±2.25σ 外忽略(<8% 峰值)
+        for (let k = 0; k < prof.length; k++) {
+            const rr = r + (k - 3) * 0.75 * sigma;
+            if (rr < r0) continue;
+            grad.addColorStop(Math.min(1, (rr - r0) / (r1 - r0)), `rgba(${rgb},${(prof[k] * peak).toFixed(4)})`);
+        }
+        ctx.fillStyle = grad;
+        ctx.beginPath();
+        ctx.arc(x, y, r1, a0, a1);
+        if (r0 > 0) ctx.arc(x, y, r0, a1, a0, true);
+        else ctx.lineTo(x, y);
+        ctx.closePath();
+        ctx.fill();
+        return true;
+    }
+
     _renderEffects() {
         const ctx = this.ctx;
         for (const fx of this.effects) {
@@ -4442,40 +4530,42 @@ class Game {
 
             if (!fx.type) {
                 ctx.globalAlpha = alpha * 0.5;
-                ctx.shadowBlur = 30;
-                ctx.shadowColor = fx.color;
+                const r = Math.max(1, Math.round(fx.radius));
+                SpriteCache.draw(ctx, this._fxDotGlow(fx.color, r), fx.x - fx.radius, fx.y - fx.radius, fx.radius * 2, fx.radius * 2);
                 ctx.fillStyle = fx.color;
                 ctx.beginPath();
                 ctx.arc(fx.x, fx.y, fx.radius, 0, Math.PI * 2);
                 ctx.fill();
             } else if (fx.type === 'ring') {
                 ctx.globalAlpha = alpha * 0.85;
-                ctx.shadowBlur = 22;
-                ctx.shadowColor = fx.color;
                 ctx.strokeStyle = fx.color;
                 ctx.lineWidth = 3;
-                ctx.save();
+                const glowed = this._fillArcGlow(ctx, fx.x, fx.y, fx.radius, 3, 22, fx.color);
                 ctx.translate(fx.x, fx.y);
                 ctx.rotate(fx.rotation || 0);
+                if (!glowed) { ctx.shadowBlur = 22; ctx.shadowColor = fx.color; }
                 ctx.beginPath();
                 ctx.arc(0, 0, fx.radius, 0, Math.PI * 2);
                 ctx.stroke();
+                // 刻度逐根描边:每根的模糊范围小,比整圈一次模糊便宜
                 ctx.shadowBlur = 8;
+                ctx.shadowColor = fx.color;
                 for (let i = 0; i < 8; i++) {
-                    const a = (i / 8) * Math.PI * 2 + (fx.rotation || 0);
+                    const a = (i / 8) * Math.PI * 2 + (fx.rotation || 0); // 与原实现一致:画布已旋转,角度里再叠一次
                     ctx.beginPath();
                     ctx.moveTo(Math.cos(a) * fx.radius * 0.8, Math.sin(a) * fx.radius * 0.8);
                     ctx.lineTo(Math.cos(a) * fx.radius, Math.sin(a) * fx.radius);
                     ctx.stroke();
                 }
-                ctx.restore();
                 if (fx.rotSpeed) fx.rotation = (fx.rotation || 0) + fx.rotSpeed * DT;
             } else if (fx.type === 'shockwave') {
                 const prog = 1 - alpha;
                 const r = fx.radius + (fx.maxRadius - fx.radius) * prog;
                 ctx.globalAlpha = alpha * 0.7;
-                ctx.shadowBlur = 18;
-                ctx.shadowColor = fx.color;
+                if (!this._fillArcGlow(ctx, fx.x, fx.y, r, 2.5, 18, fx.color)) {
+                    ctx.shadowBlur = 18;
+                    ctx.shadowColor = fx.color;
+                }
                 ctx.strokeStyle = fx.color;
                 ctx.lineWidth = 2.5;
                 ctx.beginPath();
@@ -4516,8 +4606,8 @@ class Game {
             } else if (fx.type === 'holyAura') {
                 const pulse = Math.sin(fx.ttl * 8) * 0.3 + 0.7;
                 ctx.globalAlpha = alpha * pulse * 0.5;
-                ctx.shadowBlur = 28;
-                ctx.shadowColor = fx.color;
+                const r = Math.max(1, Math.round(fx.radius));
+                SpriteCache.draw(ctx, this._fxHolyGlow(fx.color, r), fx.x - fx.radius, fx.y - fx.radius, fx.radius * 2, fx.radius * 2);
                 ctx.strokeStyle = fx.color;
                 ctx.lineWidth = 3;
                 ctx.beginPath();
@@ -4525,8 +4615,6 @@ class Game {
                 ctx.stroke();
                 ctx.globalAlpha = alpha * pulse * 0.12;
                 ctx.fillStyle = fx.color;
-                ctx.beginPath();
-                ctx.arc(fx.x, fx.y, fx.radius, 0, Math.PI * 2);
                 ctx.fill();
             } else if (fx.type === 'floatText') {
                 const prog = 1 - alpha;
@@ -4540,13 +4628,16 @@ class Game {
                 ctx.fillText(fx.text, fx.x, fx.y - prog * 24);
             } else if (fx.type === 'meleeSwing') {
                 const prog = 1 - alpha;
+                const r = fx.radius * (0.6 + prog * 0.4);
                 ctx.globalAlpha = alpha * 0.6;
-                ctx.shadowBlur = 16;
-                ctx.shadowColor = fx.color;
+                if (!this._fillArcGlow(ctx, fx.x, fx.y, r, 4, 16, fx.color, fx.startAngle, fx.endAngle)) {
+                    ctx.shadowBlur = 16;
+                    ctx.shadowColor = fx.color;
+                }
                 ctx.strokeStyle = fx.color;
                 ctx.lineWidth = 4;
                 ctx.beginPath();
-                ctx.arc(fx.x, fx.y, fx.radius * (0.6 + prog * 0.4), fx.startAngle, fx.endAngle);
+                ctx.arc(fx.x, fx.y, r, fx.startAngle, fx.endAngle);
                 ctx.stroke();
             } else if (fx.type === 'iceShard') {
                 const prog = 1 - alpha;
@@ -5479,7 +5570,9 @@ class Enemy {
 
     // ── 精灵缓存(静态部分只画一次,之后 drawImage) ──
     static bodySprite(type, size) {
-        return SpriteCache.get(`enemy|${type}|${size}`, size, size, 24, g => {
+        // 外扩按光晕实际范围算(原先固定 24,高分屏上大半是透明像素,每帧白白参与混合)
+        const pad = SpriteCache.padFor(type === 'gunner' ? 14 : type === 'giant' ? 20 : 12);
+        return SpriteCache.get(`enemy|${type}|${size}`, size, size, pad, g => {
             if (type === 'gunner') {
                 g.shadowBlur = SpriteCache.blur(14);
                 g.shadowColor = '#ff6f00';
@@ -5527,7 +5620,7 @@ class Enemy {
     }
 
     static barrelSprite(len, w) {
-        return SpriteCache.get(`enemy|barrel|${len}|${w}`, len, w, 12, g => {
+        return SpriteCache.get(`enemy|barrel|${len}|${w}`, len, w, SpriteCache.padFor(8), g => {
             g.shadowBlur = SpriteCache.blur(8);
             g.shadowColor = '#ff9800';
             const bGrad = g.createLinearGradient(0, 0, len, w);
@@ -5546,7 +5639,7 @@ class Enemy {
 
     // detailed: 普通敌人带米字纹与六角冰晶;炮手只有冰块 + ❄
     static frozenSprite(size, r, detailed) {
-        return SpriteCache.get(`enemy|frozen|${size}|${r}|${detailed ? 1 : 0}`, size, size, 20, g => {
+        return SpriteCache.get(`enemy|frozen|${size}|${r}|${detailed ? 1 : 0}`, size, size, SpriteCache.padFor(14), g => {
             g.globalAlpha = 0.55;
             const iceGrad = g.createLinearGradient(0, 0, size, size);
             iceGrad.addColorStop(0, 'rgba(160,220,255,0.9)');
