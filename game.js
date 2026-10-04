@@ -86,6 +86,69 @@ function updateBestScoreLabel() {
     el.textContent = b && (b.score > 0 || b.time > 0) ? `最高分 ${b.score} · 最长生存 ${b.time} 秒` : '';
 }
 
+// 大厅卡片上的累计进度摘要
+function updateProgressLabel() {
+    const el = document.getElementById('progressSummary');
+    if (!el) return;
+    const p = Progress.load();
+    const done = ACHIEVEMENTS.filter(a => p.achievements[a.id]).length;
+    el.textContent = p.runs > 0 ? `累计得分 ${p.totalScore} · 已玩 ${p.runs} 局 · 成就 ${done}/${ACHIEVEMENTS.length}` : '';
+}
+
+// 「成就与外观」面板:累计数据、外观选择、成就列表
+function renderProgressPanel() {
+    const p = Progress.load();
+    const cur = Progress.currentSkin();
+    const done = ACHIEVEMENTS.filter(a => p.achievements[a.id]).length;
+    const stat = (v, label) => `<div><b>${v}</b>${label}</div>`;
+    document.getElementById('progressStats').innerHTML =
+        stat(p.totalScore, '累计得分') + stat(p.runs, '游戏局数') + stat(p.bossRepels, '击退魔王');
+    document.getElementById('achCount').textContent = `${done}/${ACHIEVEMENTS.length}`;
+
+    const skinList = document.getElementById('skinList');
+    skinList.innerHTML = '';
+    for (const sk of SKINS) {
+        const unlocked = Progress.skinUnlocked(sk, p);
+        const btn = document.createElement('button');
+        btn.className = 'skin-item' + (sk.id === cur.id ? ' selected' : '') + (unlocked ? '' : ' locked');
+        const sw = document.createElement('span');
+        sw.className = 'swatch';
+        sw.style.background = sk.prism
+            ? 'linear-gradient(135deg, #ff8a80, #ffd180, #b9f6ca, #80d8ff, #ea80fc)'
+            : `linear-gradient(135deg, ${sk.c1}, ${sk.c2})`;
+        sw.style.boxShadow = `0 0 8px ${sk.glow}`;
+        const name = document.createElement('span');
+        name.textContent = sk.name;
+        btn.append(sw, name);
+        if (!unlocked) {
+            const need = document.createElement('span');
+            need.className = 'need';
+            need.textContent = '🔒 ' + Progress.skinNeedText(sk);
+            btn.append(need);
+        }
+        btn.disabled = !unlocked;
+        btn.addEventListener('click', () => {
+            const prof = Progress.load();
+            prof.skin = sk.id;
+            Progress.save(prof);
+            renderProgressPanel();
+        });
+        skinList.append(btn);
+    }
+
+    const achList = document.getElementById('achList');
+    achList.innerHTML = '';
+    for (const a of ACHIEVEMENTS) {
+        const row = document.createElement('div');
+        row.className = 'ach-item' + (p.achievements[a.id] ? ' done' : '');
+        row.innerHTML = '<span class="ach-icon"></span><div><div class="ach-name"></div><div class="ach-desc"></div></div>';
+        row.querySelector('.ach-icon').textContent = a.icon;
+        row.querySelector('.ach-name').textContent = a.name;
+        row.querySelector('.ach-desc').textContent = a.desc;
+        achList.append(row);
+    }
+}
+
 // 实体唯一 id:联机时 guest 按 id 复用对象并在两次快照之间插值
 let _entityIdSeq = 0;
 const nextEntityId = () => ++_entityIdSeq;
@@ -106,6 +169,91 @@ const Store = {
     },
     set(key, value) {
         try { localStorage.setItem(key, JSON.stringify(value)); } catch (e) { /* 忽略 */ }
+    }
+};
+
+// ── 局外成长:成就 + 外观解锁(localStorage `blockrun.profile`,与 blockrun.best 并列) ──
+// run = 本局实时数据 { score, time, level, bossRepels, cls };profile 为跨局累计
+const ACHIEVEMENTS = [
+    { id: 'firstRun',   icon: '🎮', name: '初次冒险', desc: '完成第一局游戏',            check: (r, p) => p.runs >= 1 },
+    { id: 'survive60',  icon: '⏱', name: '站稳脚跟', desc: '单局生存 60 秒',            check: r => r.time >= 60 },
+    { id: 'survive180', icon: '⌛', name: '持久战',   desc: '单局生存 180 秒',           check: r => r.time >= 180 },
+    { id: 'survive300', icon: '🛡', name: '不倒方块', desc: '单局生存 300 秒',           check: r => r.time >= 300 },
+    { id: 'pickClass',  icon: '⚔', name: '初露锋芒', desc: '达到 3 级并选择职业',        check: r => !!r.cls },
+    { id: 'level10',    icon: '⭐', name: '身经百战', desc: '单局达到 10 级',            check: r => r.level >= 10 },
+    { id: 'score1000',  icon: '★', name: '千分达人', desc: '单局得分 1000',             check: r => r.score >= 1000 },
+    { id: 'score3000',  icon: '🌟', name: '高分猎手', desc: '单局得分 3000',             check: r => r.score >= 3000 },
+    { id: 'boss1',      icon: '👑', name: '魔王克星', desc: '击退一次方块大魔王',         check: r => r.bossRepels >= 1 },
+    { id: 'boss3',      icon: '🔥', name: '屠魔者',   desc: '单局击退方块大魔王 3 次',    check: r => r.bossRepels >= 3 },
+    { id: 'allClasses', icon: '🎭', name: '全能大师', desc: '五种职业各玩过一次',         check: (r, p) => Object.keys(Object.assign({}, p.classesPlayed, r.cls ? { [r.cls]: 1 } : {})).length >= 5 },
+    { id: 'total20k',   icon: '💎', name: '积少成多', desc: '累计得分 20000',            check: (r, p) => p.totalScore + r.score >= 20000 }
+];
+
+// 玩家方块外观;need 为解锁条件:累计分数(totalScore)或某个成就(ach)
+const SKINS = [
+    { id: 'jade',    name: '翡翠', c1: '#69f0ae', c2: '#00897b', glow: '#4CAF50', stroke: 'rgba(0,230,150,0.6)' },
+    { id: 'ember',   name: '烈焰', c1: '#ffab40', c2: '#d84315', glow: '#ff6d00', stroke: 'rgba(255,140,0,0.7)',   need: { totalScore: 3000 } },
+    { id: 'frost',   name: '寒霜', c1: '#b3e5fc', c2: '#0277bd', glow: '#40c4ff', stroke: 'rgba(120,210,255,0.7)', need: { ach: 'boss1' } },
+    { id: 'amethyst',name: '紫晶', c1: '#e1bee7', c2: '#6a1b9a', glow: '#ce93d8', stroke: 'rgba(206,147,216,0.7)', need: { totalScore: 10000 } },
+    { id: 'gold',    name: '黄金', c1: '#fff59d', c2: '#c79100', glow: '#ffd600', stroke: 'rgba(255,214,0,0.75)',  need: { ach: 'survive300' } },
+    { id: 'prism',   name: '幻彩', prism: true,                                       glow: '#ffffff', stroke: 'rgba(255,255,255,0.7)', need: { ach: 'allClasses' } }
+];
+
+const Progress = {
+    KEY: 'blockrun.profile',
+    load() {
+        const p = Store.get(this.KEY, null) || {};
+        return {
+            runs: p.runs || 0,
+            totalScore: p.totalScore || 0,
+            totalTime: p.totalTime || 0,
+            bossRepels: p.bossRepels || 0,
+            classesPlayed: p.classesPlayed || {},
+            achievements: p.achievements || {},
+            skin: p.skin || 'jade'
+        };
+    },
+    save(p) { Store.set(this.KEY, p); },
+    skinUnlocked(skin, p) {
+        if (!skin.need) return true;
+        if (skin.need.totalScore != null) return p.totalScore >= skin.need.totalScore;
+        if (skin.need.ach) return !!p.achievements[skin.need.ach];
+        return false;
+    },
+    skinNeedText(skin) {
+        if (!skin.need) return '';
+        if (skin.need.totalScore != null) return `累计得分 ${skin.need.totalScore}`;
+        const a = ACHIEVEMENTS.find(x => x.id === skin.need.ach);
+        return a ? `成就「${a.name}」` : '';
+    },
+    // 当前选中的外观(若未解锁则回落到默认)
+    currentSkin() {
+        const p = this.load();
+        const s = SKINS.find(x => x.id === p.skin);
+        return s && this.skinUnlocked(s, p) ? s : SKINS[0];
+    },
+    // 检查本局数据能新解锁哪些成就,写入存档并返回新成就列表
+    checkAchievements(run) {
+        const p = this.load();
+        const fresh = [];
+        for (const a of ACHIEVEMENTS) {
+            if (p.achievements[a.id]) continue;
+            try { if (a.check(run, p)) { p.achievements[a.id] = Date.now(); fresh.push(a); } } catch (e) { /* 忽略 */ }
+        }
+        if (fresh.length) this.save(p);
+        return fresh;
+    },
+    // 一局结束:累计数据入档,返回因此新解锁的成就(首局/累计类)
+    recordRun(run) {
+        const p = this.load();
+        p.runs += 1;
+        p.totalScore += run.score;
+        p.totalTime += run.time;
+        p.bossRepels += run.bossRepels;
+        if (run.cls) p.classesPlayed[run.cls] = (p.classesPlayed[run.cls] || 0) + 1;
+        this.save(p);
+        // 本局数据已计入 profile,这里只按累计量判定,避免把本局分数加两次
+        return this.checkAchievements({ score: 0, time: 0, level: 0, bossRepels: 0, cls: null });
     }
 };
 
@@ -723,6 +871,7 @@ class Game {
         if (!this.isRunning) {
             this.isRunning = true;
             this.isPaused = false;
+            this._initRunProgress();
             this._lastFrameTime = performance.now();
             this._frameAccum = 0;
             const TICK_MS = 16;
@@ -1453,6 +1602,7 @@ class Game {
                 // 位置以 host 为准:覆盖本地移动,在快照间平滑插值
                 this._mpInterpolate();
                 this._sfxTick();
+                this._progressTick();
                 this._updateLocalResources();
                 this.updateEffects();
                 this.updateParticles();
@@ -1506,6 +1656,7 @@ class Game {
                 this._uiTimer = 0;
             }
             this._sfxTick();
+            this._progressTick();
             this.checkGameOver();
 
             // 屏幕震动衰减
@@ -1518,6 +1669,94 @@ class Game {
             this.mpFrameCount++;
             if (this.mpFrameCount % 3 === 0) this.broadcastState();
         }
+    }
+
+    // ── 局外成长:本局数据、成就检测与解锁提示 ──
+    _initRunProgress() {
+        this.runBossRepels = 0;
+        this.runUnlocked = [];
+        this.achToasts = [];
+        this._progTimer = 0;
+        this._progBossPrev = this.bossState;
+        this._runRecorded = false;
+        this._profileAtStart = Progress.load();
+        this.player.skin = Progress.currentSkin();
+    }
+
+    _runStats() {
+        return { score: this.score, time: Math.floor(this.gameTime), level: this.level,
+                 bossRepels: this.runBossRepels || 0, cls: this.player.class };
+    }
+
+    // 每 tick 调用(host/guest 都走):统计击退魔王,每 0.5s 检查一次成就,推进解锁提示
+    _progressTick() {
+        if (!this.runUnlocked) this._initRunProgress();
+        if (this.bossState !== this._progBossPrev) {
+            if (this.bossState === 'retreating') this.runBossRepels++;
+            this._progBossPrev = this.bossState;
+        }
+        this._progTimer += DT;
+        if (this._progTimer >= 0.5) {
+            this._progTimer = 0;
+            for (const a of Progress.checkAchievements(this._runStats())) this._pushAchievement(a);
+        }
+        for (const t of this.achToasts) t.t += DT;
+        this.achToasts = this.achToasts.filter(t => t.t < 3);
+    }
+
+    _pushAchievement(a) {
+        this.runUnlocked.push(a);
+        // 提示只在本地 HUD 绘制,不进 effects,避免被同步给其他联机玩家
+        this.achToasts.push({ icon: a.icon, name: a.name, desc: a.desc, t: 0 });
+        Sound.play('levelUp');
+    }
+
+    // 解锁提示:顶部居中依次下滑出现,3 秒后淡出
+    _renderAchToasts() {
+        if (!this.achToasts || !this.achToasts.length) return;
+        const ctx = this.ctx;
+        const w = Math.min(260, this.width - 40), h = 40;
+        ctx.save();
+        this.achToasts.slice(0, 3).forEach((t, i) => {
+            const inA = Math.min(1, t.t / 0.25), outA = Math.min(1, (3 - t.t) / 0.4);
+            const a = Math.max(0, Math.min(inA, outA));
+            const x = (this.width - w) / 2, y = 70 + i * (h + 6) - (1 - inA) * 12;
+            ctx.globalAlpha = a;
+            ctx.fillStyle = 'rgba(20, 16, 4, 0.88)';
+            ctx.shadowBlur = 14; ctx.shadowColor = '#ffd54f';
+            roundRect(ctx, x, y, w, h, 9);
+            ctx.fill();
+            ctx.shadowBlur = 0;
+            ctx.strokeStyle = 'rgba(255, 213, 79, 0.8)';
+            ctx.lineWidth = 1.5;
+            roundRect(ctx, x, y, w, h, 9);
+            ctx.stroke();
+            ctx.textBaseline = 'middle';
+            ctx.textAlign = 'center';
+            ctx.font = '18px Arial';
+            ctx.fillStyle = '#ffd54f';
+            ctx.fillText(t.icon, x + 22, y + h / 2);
+            ctx.textAlign = 'left';
+            ctx.font = 'bold 12px Arial';
+            ctx.fillText(`成就解锁 · ${t.name}`, x + 42, y + 14);
+            ctx.font = '10px Arial';
+            ctx.fillStyle = 'rgba(255, 240, 200, 0.75)';
+            ctx.fillText(t.desc, x + 42, y + 28);
+        });
+        ctx.restore();
+    }
+
+    // 结算:写入累计数据,返回本局新解锁的成就与外观(每局只记一次)
+    _finishRunProgress(time, score) {
+        if (!this.runUnlocked) this._initRunProgress();
+        if (this._runRecorded) return { achievements: [], skins: [] };
+        this._runRecorded = true;
+        const run = { ...this._runStats(), time, score };
+        for (const a of Progress.checkAchievements(run)) this.runUnlocked.push(a);
+        for (const a of Progress.recordRun(run)) this.runUnlocked.push(a);
+        const before = this._profileAtStart, after = Progress.load();
+        const skins = SKINS.filter(sk => !Progress.skinUnlocked(sk, before) && Progress.skinUnlocked(sk, after));
+        return { achievements: this.runUnlocked.slice(), skins };
     }
 
     // 通过状态变化触发音效:受击/死亡/升级/魔王阶段。host 与 guest 都适用(guest 状态来自快照)
@@ -3602,6 +3841,15 @@ class Game {
             bestEl.classList.toggle('new-record', newScore || newTime);
         }
         updateBestScoreLabel();
+        // 局外成长:累计入档 + 列出本局新解锁的成就/外观
+        const unlocked = this._finishRunProgress(time, score);
+        const unlockEl = document.getElementById('runUnlocks');
+        if (unlockEl) {
+            const parts = unlocked.achievements.map(a => `${a.icon} ${a.name}`)
+                .concat(unlocked.skins.map(sk => `🎨 外观「${sk.name}」`));
+            unlockEl.textContent = parts.length ? `本局解锁:${parts.join('  ·  ')}` : '';
+        }
+        updateProgressLabel();
         document.getElementById('gameOver').style.display = 'flex';
     }
     
@@ -3887,6 +4135,7 @@ class Game {
         this._renderBossHUD();
         this._renderStatsHUD();
         this._renderMuteButton();
+        this._renderAchToasts();
 
         if (this.showingClassSelection) {
             this.renderClassSelection();
@@ -4665,15 +4914,23 @@ class Player {
         ctx.shadowBlur = isInvincible ? 24 : 14;
         ctx.shadowColor = baseColor;
 
+        const skin = this.skin || SKINS[0];
+        if (!isInvincible) ctx.shadowColor = skin.glow;
+        let c1 = skin.c1, c2 = skin.c2;
+        if (skin.prism) { // 幻彩:色相随时间流转
+            const hue = (performance.now() / 12) % 360;
+            c1 = `hsl(${hue}, 90%, 72%)`; c2 = `hsl(${(hue + 120) % 360}, 80%, 42%)`;
+            ctx.shadowColor = c1;
+        }
         const grad = ctx.createLinearGradient(this.x, this.y, this.x + this.size, this.y + this.size);
-        grad.addColorStop(0, isInvincible ? '#fff176' : '#69f0ae');
-        grad.addColorStop(1, isInvincible ? '#f9a825' : '#00897b');
+        grad.addColorStop(0, isInvincible ? '#fff176' : c1);
+        grad.addColorStop(1, isInvincible ? '#f9a825' : c2);
         ctx.fillStyle = grad;
         roundRect(ctx, this.x, this.y, this.size, this.size, 7);
         ctx.fill();
 
         ctx.shadowBlur = 0;
-        ctx.strokeStyle = isInvincible ? 'rgba(255,235,59,0.8)' : 'rgba(0,230,150,0.6)';
+        ctx.strokeStyle = isInvincible ? 'rgba(255,235,59,0.8)' : skin.stroke;
         ctx.lineWidth = 2;
         roundRect(ctx, this.x, this.y, this.size, this.size, 7);
         ctx.stroke();
@@ -5648,6 +5905,25 @@ window.addEventListener('load', () => {
     const game = new Game();
     game.render();
     updateBestScoreLabel();
+    updateProgressLabel();
+
+    // ── 新手指南:首次打开自动弹出一次,之后可从大厅再次打开 ──
+    const tipsOverlay = document.getElementById('tipsOverlay');
+    const progressOverlay = document.getElementById('progressOverlay');
+    if (!Store.get('blockrun.tutorialSeen', false)) tipsOverlay.style.display = 'flex';
+    document.getElementById('openTips').addEventListener('click', () => { tipsOverlay.style.display = 'flex'; });
+    document.getElementById('closeTips').addEventListener('click', () => {
+        tipsOverlay.style.display = 'none';
+        Store.set('blockrun.tutorialSeen', true);
+    });
+    document.getElementById('openProgress').addEventListener('click', () => {
+        renderProgressPanel();
+        progressOverlay.style.display = 'flex';
+    });
+    document.getElementById('closeProgress').addEventListener('click', () => {
+        progressOverlay.style.display = 'none';
+        updateProgressLabel();
+    });
 
     // ── 联机大厅按钮逻辑 ──
     const overlay      = document.getElementById('mpOverlay');
