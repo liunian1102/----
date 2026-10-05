@@ -557,10 +557,20 @@ kbd {
     font-size: 0.85em;
 }
 .control-card { text-align: center; }
+.control-group-title {
+    color: rgba(200, 232, 255, 0.7);
+    font-size: 0.8em;
+    letter-spacing: 2px;
+    text-align: left;
+    margin: 4px 0 6px;
+}
 .control-options {
     display: flex;
-    gap: 12px;
-    margin: 6px 0 14px;
+    gap: 10px;
+    margin: 0 0 12px;
+}
+.control-confirm {
+    margin-top: 12px;
 }
 .control-opt {
     flex: 1;
@@ -568,7 +578,7 @@ kbd {
     flex-direction: column;
     align-items: center;
     gap: 6px;
-    padding: 18px 10px;
+    padding: 12px 10px;
     border-radius: 12px;
     background: rgba(0, 200, 255, 0.05);
     border: 1px solid rgba(0, 200, 255, 0.25);
@@ -579,7 +589,7 @@ kbd {
     cursor: pointer;
 }
 .control-opt b { color: #fff; font-size: 1.15em; letter-spacing: 1px; }
-.control-opt .control-icon { font-size: 2em; line-height: 1; }
+.control-opt .control-icon { font-size: 1.6em; line-height: 1; }
 .control-opt.selected {
     border-color: rgba(0, 255, 150, 0.7);
     background: rgba(0, 255, 150, 0.08);

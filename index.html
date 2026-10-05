@@ -42,7 +42,7 @@
         <div class="panel-card">
             <h3 class="panel-title">新手指南</h3>
             <ul class="tips-list">
-                <li><b>🕹 移动</b>WASD / 方向键;触屏可选「虚拟摇杆」(按住空白处拖动)或「点触移动」(点哪走哪),大厅「操控方式」可随时切换。头顶黄色箭头标出的就是你。碰到敌人会掉血,活下去就是胜利。</li>
+                <li><b>🕹 移动</b>WASD / 方向键;触屏可选「虚拟摇杆」(按住空白处拖动)或「点触移动」(点哪走哪),闪避/技能按键也可选「点按释放」或「拖拽瞄准」(按住按键拖向想打的方向再松手)。大厅「操控方式」可随时切换。头顶黄色箭头标出的就是你。碰到敌人会掉血,活下去就是胜利。</li>
                 <li><b>💨 冲刺闪避</b>按 <kbd>空格</kbd> / <kbd>Shift</kbd> 或点右下角「冲」按钮,朝移动方向冲刺一段,冲刺途中无敌。贴着攻击冲过去触发「闪避!」,冷却立刻返还一半。</li>
                 <li><b>🎯 自动攻击</b>角色会自动攻击最近的敌人,你只需专注走位和拾取道具。</li>
                 <li><b>⭐ 升级与天赋</b>击杀得经验,每次升级从 3 张天赋卡中挑一张强化自己。</li>
@@ -62,7 +62,8 @@
     <div id="controlOverlay" class="panel-overlay" style="display:none">
         <div class="panel-card control-card">
             <h3 class="panel-title">选择操控方式</h3>
-            <div class="control-options">
+            <div class="control-group-title">移动</div>
+            <div class="control-options" data-group="move">
                 <button class="control-opt" data-mode="joystick">
                     <span class="control-icon">🕹</span>
                     <b>虚拟摇杆</b>
@@ -74,8 +75,22 @@
                     <span>点哪走哪,角色自动走到目标位置</span>
                 </button>
             </div>
+            <div class="control-group-title">闪避 / 技能按键</div>
+            <div class="control-options" data-group="skill">
+                <button class="control-opt" data-mode="tap">
+                    <span class="control-icon">🎯</span>
+                    <b>点按释放</b>
+                    <span>一点就放,技能自动瞄准最近的敌人,闪避朝移动方向</span>
+                </button>
+                <button class="control-opt" data-mode="aim">
+                    <span class="control-icon">🏹</span>
+                    <b>拖拽瞄准</b>
+                    <span>按住按键拖向想要的方向,松手释放;轻点仍自动瞄准</span>
+                </button>
+            </div>
             <label class="control-remember"><input type="checkbox" id="controlRemember"> 记住选择,下次不再询问</label>
-            <div class="control-note">键盘 WASD / 方向键始终可用,之后可在大厅「操控方式」里更改</div>
+            <button id="controlConfirm" class="mp-btn mp-btn-primary control-confirm">确定</button>
+            <div class="control-note">键盘 WASD / 方向键、空格、Q / E 始终可用,之后可在大厅「操控方式」里更改</div>
         </div>
     </div>
 

@@ -510,6 +510,10 @@ class Game {
             (('ontouchstart' in window) || navigator.maxTouchPoints > 0 ? 'joystick' : 'tap');
         // 浮动摇杆状态,坐标为画布后备缓冲像素(屏幕空间,不随世界缩放)
         this.joy = { active: false, id: null, bx: 0, by: 0, x: 0, y: 0 };
+        // 技能/闪避按键:'tap' 点按释放(自动瞄准最近敌人)/ 'aim' 按住拖动瞄准,松手释放
+        this.skillMode = Store.get('blockrun.skillMode', 'tap') === 'aim' ? 'aim' : 'tap';
+        // 拖拽瞄准状态:bcx/bcy 为按钮中心(逻辑坐标),sx/sy 为按下点(CSS px)
+        this.aim = { active: false, id: null, skill: null, bcx: 0, bcy: 0, sx: 0, sy: 0, ox: 0, oy: 0, dx: 0, dy: 0, armed: false };
         this.freezeOverlay = null; // 全屏冰封特效数据
 
         this.keys = {};
@@ -1000,23 +1004,62 @@ class Game {
             this._setJoyVector(0, 0);
         };
 
+        // ── 拖拽瞄准:在技能/冲刺按钮上按下,拖向想要的方向,松手释放;轻点不拖仍自动瞄准 ──
+        const AIM_DEAD = 14;   // 拖动超过 14 CSS px 才算瞄准
+        const tryStartAim = (clientX, clientY, id) => {
+            if (this.skillMode !== 'aim' || this.aim.active) return false;
+            if (!this.isRunning || this.isPaused || this.showingPotentialMenu || this.showingClassSelection) return false;
+            const { x, y } = toCanvas(clientX, clientY);
+            const btn = this.skillButtons.find(b => x >= b.x && x <= b.x + b.w && y >= b.y && y <= b.y + b.h);
+            if (!btn) return false;
+            Object.assign(this.aim, {
+                active: true, id, skill: btn.skill, bcx: btn.x + btn.w / 2, bcy: btn.y + btn.h / 2,
+                sx: clientX, sy: clientY, ox: 0, oy: 0, dx: 0, dy: 0, armed: false
+            });
+            return true;
+        };
+        const moveAim = (clientX, clientY) => {
+            const a = this.aim;
+            a.ox = clientX - a.sx; a.oy = clientY - a.sy;
+            const d = Math.hypot(a.ox, a.oy);
+            a.armed = d > AIM_DEAD;
+            if (a.armed) { a.dx = a.ox / d; a.dy = a.oy / d; }
+        };
+        const endAim = (cancel) => {
+            const a = this.aim;
+            if (!a.active) return;
+            a.active = false;
+            a.id = null;
+            if (cancel || !this.isRunning || this.isPaused) return;
+            this._requestSkill(a.skill, a.armed ? [a.dx, a.dy] : null);
+        };
+
         this.canvas.addEventListener('click', (e) => {
+            // 鼠标拖拽瞄准已在 mouseup 时释放,吞掉随后的 click
+            if (this._aimClickGuard) { this._aimClickGuard = false; return; }
             handlePointer(e.clientX, e.clientY);
         });
         this.canvas.addEventListener('mousedown', (e) => {
-            if (e.button === 0) tryStartJoy(e.clientX, e.clientY, 'mouse');
+            if (e.button !== 0) return;
+            if (!tryStartAim(e.clientX, e.clientY, 'mouse')) tryStartJoy(e.clientX, e.clientY, 'mouse');
         });
         window.addEventListener('mousemove', (e) => {
             if (this.joy.active && this.joy.id === 'mouse') moveJoy(e.clientX, e.clientY);
+            if (this.aim.active && this.aim.id === 'mouse') moveAim(e.clientX, e.clientY);
         });
-        window.addEventListener('mouseup', () => {
+        window.addEventListener('mouseup', (e) => {
             if (this.joy.active && this.joy.id === 'mouse') endJoy();
+            if (this.aim.active && this.aim.id === 'mouse') {
+                this._aimClickGuard = e.target === this.canvas;
+                endAim(false);
+            }
         });
 
         // 多点触控:每根手指单独分派,摇杆和技能按钮可同时按
         this.canvas.addEventListener('touchstart', (e) => {
             e.preventDefault();
             for (const t of e.changedTouches) {
+                if (tryStartAim(t.clientX, t.clientY, t.identifier)) continue;
                 if (!tryStartJoy(t.clientX, t.clientY, t.identifier)) handlePointer(t.clientX, t.clientY);
             }
         }, { passive: false });
@@ -1025,12 +1068,14 @@ class Game {
             e.preventDefault();
             for (const t of e.changedTouches) {
                 if (this.joy.active && this.joy.id === t.identifier) moveJoy(t.clientX, t.clientY);
+                if (this.aim.active && this.aim.id === t.identifier) moveAim(t.clientX, t.clientY);
             }
         }, { passive: false });
 
         const touchEnd = (e) => {
             for (const t of e.changedTouches) {
                 if (this.joy.active && this.joy.id === t.identifier) endJoy();
+                if (this.aim.active && this.aim.id === t.identifier) endAim(e.type === 'touchcancel');
             }
         };
         this.canvas.addEventListener('touchend', touchEnd);
@@ -1053,13 +1098,19 @@ class Game {
             if (document.hidden && this.isRunning && !this.isPaused) this.togglePause();
         });
         // 失焦时清空按键状态,避免切回来后方向键"卡住"一直移动
-        window.addEventListener('blur', () => { this.keys = {}; endJoy(); });
+        window.addEventListener('blur', () => { this.keys = {}; endJoy(); endAim(true); });
     }
 
     // 摇杆方向写进 keys(_jx/_jy,模长 0~1),与键盘走同一条路径,联机时随输入发给主机
     _setJoyVector(x, y) {
         this.keys._jx = x;
         this.keys._jy = y;
+    }
+
+    setSkillMode(mode) {
+        this.skillMode = mode === 'aim' ? 'aim' : 'tap';
+        Store.set('blockrun.skillMode', this.skillMode);
+        this.aim.active = false;
     }
 
     setControlMode(mode) {
@@ -1131,6 +1182,7 @@ class Game {
     
     restartGame() {
         this.isRunning = false; // 让当前 rAF 循环自然结束
+        this.aim.active = false;
         this.joy.active = false;
         this._setJoyVector(0, 0);
         if (this._rafId) { cancelAnimationFrame(this._rafId); this._rafId = null; }
@@ -1265,7 +1317,7 @@ class Game {
                 }
                 break;
             case 'castSkill':
-                if (this.mpMode === 'host' && !this.isPaused) this._castGuestSkill(msg.playerId, msg.skill);
+                if (this.mpMode === 'host' && !this.isPaused) this._castGuestSkill(msg.playerId, msg.skill, msg.aim);
                 break;
             case 'talentChoose':
                 if (this.mpMode === 'host') {
@@ -2532,23 +2584,38 @@ class Game {
     }
 
     // ── Host：执行 guest 请求的技能 ──
-    _castGuestSkill(playerId, which) {
+    _castGuestSkill(playerId, which, aim) {
         const gp = this.mpGuestPlayers.get(playerId);
         if (!gp || gp.currentHealth <= 0) return;
-        if (which === 'dash') { this._runAsPlayer(gp, () => this._dash()); return; }
-        if (!gp.class) return;
-        this._runAsPlayer(gp, () => (which === 'E' ? this.castSkillE() : this.castSkillQ()));
+        if (which !== 'dash' && !gp.class) return;
+        this._runAsPlayer(gp, () => this._castWithAim(which, aim));
     }
 
-    // 本机按下 Q/E(键盘或触屏按钮):guest 发给 host 执行,其余本地执行
-    _requestSkill(which) {
+    // 本机按下 Q/E/冲刺(键盘或触屏按钮):guest 发给 host 执行,其余本地执行
+    // aim:[dx,dy] 单位向量(拖拽瞄准),null = 自动瞄准最近敌人 / 冲刺沿移动方向
+    _requestSkill(which, aim = null) {
         if (this.mpMode === 'guest') {
             if (this.mpWs && this.mpWs.readyState === WebSocket.OPEN)
-                this.mpWs.send(JSON.stringify({ type: 'castSkill', skill: which }));
+                this.mpWs.send(JSON.stringify({ type: 'castSkill', skill: which, aim: aim ? [q2(aim[0]), q2(aim[1])] : null }));
             return;
         }
-        if (which === 'dash') this._dash();
-        else if (which === 'E') this.castSkillE(); else this.castSkillQ();
+        this._castWithAim(which, aim);
+    }
+
+    // 瞄准方向只在本次释放期间生效:冲刺改朝向,技能优先锁定方向扇形内的敌人
+    _castWithAim(which, aim) {
+        const p = this.player;
+        const len = aim ? Math.hypot(aim[0], aim[1]) : 0;
+        p._aim = len > 0.01 ? [aim[0] / len, aim[1] / len] : null;
+        try {
+            if (which === 'dash') {
+                if (p._aim && p.dashCooldown <= 0 && p.dashTimer <= 0) { p.faceX = p._aim[0]; p.faceY = p._aim[1]; }
+                this._dash();
+            } else if (which === 'E') this.castSkillE();
+            else this.castSkillQ();
+        } finally {
+            p._aim = null;
+        }
     }
 
     // ── 冲刺闪避 ──
@@ -3895,6 +3962,13 @@ class Game {
         const pool = this.enemies.slice();
         if (this.boss && this.bossState === 'active') pool.push(this.boss);
         const px = this.player.x, py = this.player.y;
+        if (this.player._aim) {
+            // 拖拽瞄准:瞄准扇形内的敌人排在前面,其余按距离补位
+            const inCone = (e) => this._inAimCone(e) ? 0 : 1;
+            pool.sort((a, b) => (inCone(a) - inCone(b)) ||
+                ((a.x - px) ** 2 + (a.y - py) ** 2) - ((b.x - px) ** 2 + (b.y - py) ** 2));
+            return pool.slice(0, count);
+        }
         pool.sort((a, b) => {
             const dxa = a.x - px, dya = a.y - py;
             const dxb = b.x - px, dyb = b.y - py;
@@ -3903,7 +3977,22 @@ class Game {
         return pool.slice(0, count);
     }
 
+    // 敌人是否在本次拖拽瞄准的扇形内(±35°,520px 内)
+    _inAimCone(e) {
+        const p = this.player, a = p._aim;
+        const dx = e.x + e.size / 2 - (p.x + p.size / 2), dy = e.y + e.size / 2 - (p.y + p.size / 2);
+        const d = Math.hypot(dx, dy);
+        if (d > 520) return false;
+        if (d < 1) return true;
+        return (dx * a[0] + dy * a[1]) / d >= 0.82;
+    }
+
     _findClosestTarget() {
+        if (this.player._aim) {
+            // 拖拽瞄准:取扇形内最近的敌人,扇形内没有则退回最近敌人
+            const list = this._findClosestEnemies(2);
+            return list.length ? list[0] : null;
+        }
         // O(n) 找最近敌人(含活跃魔王),无敌人返回 null
         let closest = null;
         let bestD = Infinity;
@@ -4227,7 +4316,10 @@ class Game {
         const pcy = this.player.y + this.player.size / 2;
         const targets = this._findClosestEnemies(1);
         let angle = 0;
-        if (targets.length > 0) {
+        const aim = this.player._aim;
+        if (aim && !(targets.length && this._inAimCone(targets[0]))) {
+            angle = Math.atan2(aim[1], aim[0]);   // 穿透箭:扇形内没敌人就照瞄准方向射
+        } else if (targets.length > 0) {
             const t = targets[0];
             angle = Math.atan2(t.y + t.size / 2 - pcy, t.x + t.size / 2 - pcx);
         }
@@ -5426,6 +5518,7 @@ class Game {
         this.renderParticles();
 
         this._renderSelfMarker();
+        this._renderAimGuide();
 
         ctx.restore(); // 结束震动变换
 
@@ -5435,6 +5528,7 @@ class Game {
         this.skillButtons = [];
         this._renderSkillHUD();
         this._renderDashButton();
+        this._renderAimKnob();
         this._renderBossHUD();
         this._renderEventHUD();
         this._renderStatsHUD();
@@ -5455,6 +5549,70 @@ class Game {
         ctx.restore(); // 结束缩放变换
 
         this._renderJoystick();
+    }
+
+    // 拖拽瞄准:从玩家身上画出瞄准方向(冲刺显示实际冲刺距离,技能显示锁定扇形)
+    _renderAimGuide() {
+        const a = this.aim, p = this.player;
+        if (!a.active || !a.armed || this.isPaused || p.currentHealth <= 0) return;
+        const ctx = this.ctx;
+        const cx = p.x + p.size / 2, cy = p.y + p.size / 2;
+        const ang = Math.atan2(a.dy, a.dx);
+        const isDash = a.skill === 'dash';
+        const col = isDash ? '128,216,255' : '255,225,77';
+        ctx.save();
+        if (isDash) {
+            const len = p.dashSpeed * (p.dashDuration / DT);
+            ctx.translate(cx, cy); ctx.rotate(ang);
+            ctx.fillStyle = `rgba(${col},0.18)`;
+            ctx.fillRect(0, -p.size / 2, len, p.size);
+            ctx.strokeStyle = `rgba(${col},0.7)`;
+            ctx.lineWidth = 2;
+            ctx.setLineDash([8, 6]);
+            ctx.strokeRect(0, -p.size / 2, len, p.size);
+            ctx.setLineDash([]);
+            ctx.fillStyle = `rgba(${col},0.85)`;
+            ctx.beginPath();
+            ctx.moveTo(len + 12, 0); ctx.lineTo(len - 2, -10); ctx.lineTo(len - 2, 10);
+            ctx.closePath(); ctx.fill();
+        } else {
+            const R = 260, half = Math.acos(0.82);
+            ctx.beginPath();
+            ctx.moveTo(cx, cy);
+            ctx.arc(cx, cy, R, ang - half, ang + half);
+            ctx.closePath();
+            const g = ctx.createRadialGradient(cx, cy, 10, cx, cy, R);
+            g.addColorStop(0, `rgba(${col},0.28)`);
+            g.addColorStop(1, `rgba(${col},0.04)`);
+            ctx.fillStyle = g;
+            ctx.fill();
+            ctx.strokeStyle = `rgba(${col},0.75)`;
+            ctx.lineWidth = 2;
+            ctx.beginPath();
+            ctx.moveTo(cx, cy);
+            ctx.lineTo(cx + a.dx * R, cy + a.dy * R);
+            ctx.stroke();
+        }
+        ctx.restore();
+    }
+
+    // 拖拽瞄准时按钮上的小摇杆头,跟着手指偏移(HUD 逻辑坐标)
+    _renderAimKnob() {
+        const a = this.aim;
+        if (!a.active || this.isPaused) return;
+        const ctx = this.ctx;
+        const k = this.canvas.width / (this.canvas.getBoundingClientRect().width || this.canvas.width);
+        const perCss = k / this.gameScale;   // 1 CSS px = 多少逻辑 px
+        let ox = a.ox * perCss, oy = a.oy * perCss;
+        const d = Math.hypot(ox, oy), max = 30;
+        if (d > max) { ox *= max / d; oy *= max / d; }
+        ctx.save();
+        ctx.strokeStyle = a.armed ? 'rgba(255,225,77,0.6)' : 'rgba(255,255,255,0.35)';
+        ctx.lineWidth = 2;
+        ctx.beginPath(); ctx.arc(a.bcx, a.bcy, max + 6, 0, Math.PI * 2); ctx.stroke();
+        ctx.fillStyle = a.armed ? 'rgba(255,225,77,0.85)' : 'rgba(255,255,255,0.5)';
+        ctx.beginPath(); ctx.arc(a.bcx + ox, a.bcy + oy, 9, 0, Math.PI * 2); ctx.fill();
+        ctx.restore();
     }
 
     // 本地玩家头顶的上下浮动箭头,联机时一眼认出自己(画在敌人和特效之上)
@@ -7986,19 +8144,28 @@ window.addEventListener('load', () => {
         updateProgressLabel();
     });
 
-    // ── 操控方式:进入游戏前询问(可记住),大厅按钮随时更改 ──
+    // ── 操控方式(移动 + 技能按键):进入游戏前询问(可记住),大厅按钮随时更改 ──
     const controlOverlay = document.getElementById('controlOverlay');
     const controlRemember = document.getElementById('controlRemember');
-    const controlOpts = controlOverlay.querySelectorAll('.control-opt');
+    const moveOpts = controlOverlay.querySelectorAll('[data-group=move] .control-opt');
+    const skillOpts = controlOverlay.querySelectorAll('[data-group=skill] .control-opt');
     let controlThen = null;
+    let pickMove = game.controlMode, pickSkill = game.skillMode;
     const updateControlLabel = () => {
-        document.getElementById('controlLabel').textContent = game.controlMode === 'tap' ? '点触移动' : '虚拟摇杆';
+        document.getElementById('controlLabel').textContent =
+            (game.controlMode === 'tap' ? '点触移动' : '虚拟摇杆') + ' · ' + (game.skillMode === 'aim' ? '拖拽瞄准' : '点按释放');
     };
     updateControlLabel();
+    const syncOpts = () => {
+        moveOpts.forEach(o => o.classList.toggle('selected', o.dataset.mode === pickMove));
+        skillOpts.forEach(o => o.classList.toggle('selected', o.dataset.mode === pickSkill));
+    };
     const openControl = (then) => {
         controlThen = then;
+        pickMove = game.controlMode; pickSkill = game.skillMode;
         controlRemember.checked = !!Store.get('blockrun.controlRemember', false);
-        controlOpts.forEach(o => o.classList.toggle('selected', o.dataset.mode === game.controlMode));
+        document.getElementById('controlConfirm').textContent = then ? '开始游戏' : '确定';
+        syncOpts();
         controlOverlay.style.display = 'flex';
     };
     // 进入游戏的入口统一走这里:勾过「不再询问」就直接开始
@@ -8006,17 +8173,20 @@ window.addEventListener('load', () => {
         if (Store.get('blockrun.controlRemember', false)) then();
         else openControl(then);
     };
-    controlOpts.forEach(o => o.addEventListener('click', () => {
-        game.setControlMode(o.dataset.mode);
+    moveOpts.forEach(o => o.addEventListener('click', () => { pickMove = o.dataset.mode; syncOpts(); }));
+    skillOpts.forEach(o => o.addEventListener('click', () => { pickSkill = o.dataset.mode; syncOpts(); }));
+    document.getElementById('controlConfirm').addEventListener('click', () => {
+        game.setControlMode(pickMove);
+        game.setSkillMode(pickSkill);
         Store.set('blockrun.controlRemember', controlRemember.checked);
         updateControlLabel();
         controlOverlay.style.display = 'none';
         const then = controlThen;
         controlThen = null;
         if (then) then();
-    }));
+    });
     controlOverlay.addEventListener('click', (e) => {
-        // 点遮罩空白处关闭(仅在大厅「更改」时;进入游戏前必须选一个)
+        // 点遮罩空白处关闭(仅在大厅「更改」时;进入游戏前必须确定)
         if (e.target === controlOverlay && !controlThen) controlOverlay.style.display = 'none';
     });
     document.getElementById('openControl').addEventListener('click', () => openControl(null));
