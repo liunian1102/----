@@ -270,6 +270,153 @@ const GEARS = {
 };
 const GEAR_TYPES = Object.keys(GEARS);
 
+// ══════════════════════════════════════════════════════════════════
+//  构筑系统(类流放之路):天赋树 + 技能石。每个玩家各自一份,存在 Player 上
+//   - 天赋树:每升 1 级 / 每击退 1 次魔王得 1 个天赋点,从中心「起点」沿连线点亮相邻节点
+//     小天赋(小属性)→ 大天赋(显著强化)→ 基石(改变玩法,带代价);连接孔节点给技能多开一个镶嵌孔
+//   - 技能石:辅助宝石,镶在 普攻 / Q / E 的连接孔里,改造那个技能;重复拾取同种宝石 = 升级(最高 3 级)
+//  攻击/生命/防御/移速四项直接改玩家基础属性(_recomputeTree 记差值,可洗点);其余全部在使用处读 p.tree / _gv()
+// ══════════════════════════════════════════════════════════════════
+const TREE_COLORS = { str: '#ff5252', dex: '#69f0ae', int: '#40c4ff', mix: '#ffd740', start: '#ffffff' };
+const TREE_BRANCH_NAMES = { str: '力量', dex: '敏捷', int: '智慧' };
+// a = 角度(度,0 朝右、90 朝下),r = 离中心距离;kind: start / small / notable / socket / keystone
+const TREE_NODES = [
+    { id: 'start', br: 'start', kind: 'start', name: '起点', a: 0, r: 0, mods: {}, desc: '天赋从这里出发,只能点亮与已点亮节点相连的节点' },
+    // ── 力量(左上):攻击、生命、全伤害 ──
+    { id: 's1',  br: 'str', kind: 'small',    name: '力量',     a: -150, r: 88,  mods: { attack: 4 } },
+    { id: 's2',  br: 'str', kind: 'small',    name: '体魄',     a: -163, r: 162, mods: { maxHealth: 25 } },
+    { id: 's3',  br: 'str', kind: 'small',    name: '力量',     a: -137, r: 162, mods: { attack: 4 } },
+    { id: 'sN1', br: 'str', kind: 'notable',  name: '钢筋铁骨', a: -173, r: 243, mods: { defense: 6, maxHealth: 30 }, icon: '⛨' },
+    { id: 'sSk', br: 'str', kind: 'socket',   name: 'Q 连接孔', a: -150, r: 238, mods: { sockQ: 1 }, icon: 'Q' },
+    { id: 'sN2', br: 'str', kind: 'notable',  name: '战争狂热', a: -127, r: 243, mods: { dmg: 0.15 }, icon: '⚔' },
+    { id: 's4',  br: 'str', kind: 'small',    name: '蛮力',     a: -150, r: 318, mods: { attack: 5, maxHealth: 20 } },
+    { id: 'sK',  br: 'str', kind: 'keystone', name: '狂战之魂', a: -150, r: 398, mods: { lowLifeDmg: 0.5, healTaken: -0.4 }, icon: '☠' },
+    // ── 敏捷(下):攻速、暴击、移速 ──
+    { id: 'd1',  br: 'dex', kind: 'small',    name: '敏捷',     a: 90,  r: 88,  mods: { speed: 0.3 } },
+    { id: 'd2',  br: 'dex', kind: 'small',    name: '迅捷',     a: 77,  r: 162, mods: { atkSpd: 0.1 } },
+    { id: 'd3',  br: 'dex', kind: 'small',    name: '精准',     a: 103, r: 162, mods: { crit: 0.05 } },
+    { id: 'dN1', br: 'dex', kind: 'notable',  name: '致命精准', a: 67,  r: 243, mods: { crit: 0.08, critDmg: 0.4 }, icon: '✷' },
+    { id: 'dSk', br: 'dex', kind: 'socket',   name: '普攻连接孔', a: 90, r: 238, mods: { sockA: 1 }, icon: 'A' },
+    { id: 'dN2', br: 'dex', kind: 'notable',  name: '疾风连击', a: 113, r: 243, mods: { atkSpd: 0.15, dashCdr: 0.15 }, icon: '➹' },
+    { id: 'd4',  br: 'dex', kind: 'small',    name: '灵巧',     a: 90,  r: 318, mods: { speed: 0.3, atkSpd: 0.06 } },
+    { id: 'dK',  br: 'dex', kind: 'keystone', name: '疾风之舞', a: 90,  r: 398, mods: { evade: 0.2, defPct: -0.5 }, icon: '◌' },
+    // ── 智慧(右上):技能伤害、冷却 ──
+    { id: 'i1',  br: 'int', kind: 'small',    name: '智慧',     a: -30, r: 88,  mods: { skillDmg: 0.1 } },
+    { id: 'i2',  br: 'int', kind: 'small',    name: '专注',     a: -43, r: 162, mods: { cdr: 0.05 } },
+    { id: 'i3',  br: 'int', kind: 'small',    name: '智慧',     a: -17, r: 162, mods: { skillDmg: 0.1 } },
+    { id: 'iN1', br: 'int', kind: 'notable',  name: '奥术精通', a: -53, r: 243, mods: { skillDmg: 0.25 }, icon: '✦' },
+    { id: 'iSk', br: 'int', kind: 'socket',   name: 'E 连接孔', a: -30, r: 238, mods: { sockE: 1 }, icon: 'E' },
+    { id: 'iN2', br: 'int', kind: 'notable',  name: '时间扭曲', a: -7,  r: 243, mods: { cdr: 0.12 }, icon: '⧗' },
+    { id: 'i4',  br: 'int', kind: 'small',    name: '博学',     a: -30, r: 318, mods: { skillDmg: 0.08, cdr: 0.04 } },
+    { id: 'iK',  br: 'int', kind: 'keystone', name: '时空裂隙', a: -30, r: 398, mods: { cdr: 0.25, autoDmg: -0.3 }, icon: '⌛' },
+    // ── 三系之间的桥:混合属性 + 基石 ──
+    { id: 'b1',  br: 'mix', kind: 'small',    name: '嗜血回春', a: -90, r: 262, mods: { regen: 0.005, leech: 0.01 } },
+    { id: 'bK1', br: 'mix', kind: 'keystone', name: '不灭意志', a: -90, r: 372, mods: { dmgTaken: -0.25, dmg: -0.1 }, icon: '⛊' },
+    { id: 'b2',  br: 'mix', kind: 'small',    name: '毒理',     a: 30,  r: 262, mods: { dot: 0.3 } },
+    { id: 'bK2', br: 'mix', kind: 'keystone', name: '瘟疫使者', a: 30,  r: 372, mods: { poisonHit: 1, dmg: -0.15 }, icon: '☣' },
+    { id: 'b3',  br: 'mix', kind: 'small',    name: '广域',     a: 150, r: 262, mods: { aoe: 0.15 } },
+    { id: 'bK3', br: 'mix', kind: 'keystone', name: '玻璃大炮', a: 150, r: 372, mods: { dmg: 0.4, dmgTaken: 0.4 }, icon: '✸' }
+];
+const TREE_LINKS = [
+    ['start', 's1'], ['s1', 's2'], ['s1', 's3'], ['s2', 'sN1'], ['s2', 'sSk'], ['s3', 'sSk'], ['s3', 'sN2'],
+    ['sN1', 's4'], ['sSk', 's4'], ['sN2', 's4'], ['s4', 'sK'],
+    ['start', 'd1'], ['d1', 'd2'], ['d1', 'd3'], ['d2', 'dN1'], ['d2', 'dSk'], ['d3', 'dSk'], ['d3', 'dN2'],
+    ['dN1', 'd4'], ['dSk', 'd4'], ['dN2', 'd4'], ['d4', 'dK'],
+    ['start', 'i1'], ['i1', 'i2'], ['i1', 'i3'], ['i2', 'iN1'], ['i2', 'iSk'], ['i3', 'iSk'], ['i3', 'iN2'],
+    ['iN1', 'i4'], ['iSk', 'i4'], ['iN2', 'i4'], ['i4', 'iK'],
+    ['sN2', 'b1'], ['iN1', 'b1'], ['b1', 'bK1'],
+    ['iN2', 'b2'], ['dN1', 'b2'], ['b2', 'bK2'],
+    ['dN2', 'b3'], ['sN1', 'b3'], ['b3', 'bK3']
+];
+const TREE_BY_ID = {};
+const TREE_ADJ = {};
+TREE_NODES.forEach((n, i) => {
+    n.idx = i;
+    n.x = Math.round(Math.cos(n.a * Math.PI / 180) * n.r);
+    n.y = Math.round(Math.sin(n.a * Math.PI / 180) * n.r);
+    TREE_BY_ID[n.id] = n;
+    TREE_ADJ[n.id] = [];
+});
+for (const [a, b] of TREE_LINKS) { TREE_ADJ[a].push(b); TREE_ADJ[b].push(a); }
+
+// 天赋属性 → 文本(节点说明、属性汇总共用)
+const fmtPct = v => `${Math.round(Math.abs(v) * 1000) / 10}%`;
+const sgnPct = v => `${v < 0 ? '-' : '+'}${fmtPct(v)}`;
+const TREE_MOD_TEXT = {
+    attack:     v => `攻击 +${v}`,
+    maxHealth:  v => `最大生命 +${v}`,
+    defense:    v => `防御 +${v}`,
+    speed:      v => `移动速度 +${Math.round(v * 10) / 10}`,
+    dmg:        v => `全部伤害 ${sgnPct(v)}`,
+    skillDmg:   v => `技能伤害 ${sgnPct(v)}`,
+    autoDmg:    v => `普攻伤害 ${sgnPct(v)}`,
+    atkSpd:     v => `攻击速度 +${fmtPct(v)}`,
+    crit:       v => `暴击率 +${fmtPct(v)}`,
+    critDmg:    v => `暴击伤害 +${fmtPct(v)}`,
+    cdr:        v => `技能冷却 -${fmtPct(v)}`,
+    dashCdr:    v => `冲刺冷却 -${fmtPct(v)}`,
+    leech:      v => `伤害的 ${fmtPct(v)} 转为生命`,
+    regen:      v => `每秒回复 ${fmtPct(v)} 最大生命`,
+    aoe:        v => `范围 +${fmtPct(v)}`,
+    dot:        v => `中毒/燃烧伤害 +${fmtPct(v)}`,
+    evade:      v => `${fmtPct(v)} 几率完全闪避伤害`,
+    defPct:     v => `防御 ${sgnPct(v)}`,
+    dmgTaken:   v => `受到伤害 ${sgnPct(v)}`,
+    healTaken:  v => `受到治疗 ${sgnPct(v)}`,
+    lowLifeDmg: v => `生命低于 50% 时伤害 +${fmtPct(v)}`,
+    poisonHit:  () => '所有命中附带 1 层剧毒',
+    sockQ:      () => 'Q 技能 +1 连接孔',
+    sockE:      () => 'E 技能 +1 连接孔',
+    sockA:      () => '普攻 +1 连接孔'
+};
+function treeModLines(mods) {
+    return Object.keys(mods).filter(k => TREE_MOD_TEXT[k] && mods[k]).map(k => TREE_MOD_TEXT[k](mods[k]));
+}
+// 会直接改 Player 基础属性的天赋(guest 的这几项随输入 stats 上报,host 不再重复加)
+const TREE_BASE_STATS = ['attack', 'maxHealth', 'defense', 'speed'];
+
+// 技能石(辅助宝石):颜色 = 属性系(红力量/绿敏捷/蓝智慧);val 为 1~3 级数值;slots 可镶嵌位置 a 普攻 / q / e
+const GEMS = {
+    dmg:     { name: '附加伤害', icon: '⚔', color: '#ff5252', slots: 'aqe', val: [0.25, 0.35, 0.45], desc: v => `该技能伤害 +${fmtPct(v)}` },
+    leech:   { name: '生命偷取', icon: '❣', color: '#ff5252', slots: 'aqe', val: [0.03, 0.045, 0.06], desc: v => `该技能造成伤害的 ${fmtPct(v)} 转为生命` },
+    cull:    { name: '处决',     icon: '☠', color: '#ff5252', slots: 'aqe', val: [0.1, 0.13, 0.16], desc: v => `命中后生命低于 ${fmtPct(v)} 的敌人直接处决(精英减半,魔王无效)` },
+    aoe:     { name: '范围扩大', icon: '◎', color: '#ff5252', slots: 'aqe', val: [0.2, 0.3, 0.4], desc: v => `范围 +${fmtPct(v)}(范围技能、近战普攻、溅射)` },
+    ignite:  { name: '燃烧',     icon: '🔥', color: '#ff5252', slots: 'aqe', val: [0.3, 0.4, 0.5], desc: v => `命中点燃敌人 3 秒,每秒造成攻击力 ${fmtPct(v)} 的伤害` },
+    multi:   { name: '多重投射', icon: '🔱', color: '#69f0ae', slots: 'a',   val: [0.75, 0.8, 0.85], desc: v => `远程普攻额外 +2 发投射物,每发伤害 ×${v}` },
+    crit:    { name: '暴击强化', icon: '✷', color: '#69f0ae', slots: 'aqe', val: [0.15, 0.2, 0.25], desc: v => `该技能暴击率 +${fmtPct(v)}(暴击造成 2 倍伤害)` },
+    poison:  { name: '剧毒',     icon: '☣', color: '#69f0ae', slots: 'aqe', val: [0.5, 0.75, 1], desc: v => `命中有 ${fmtPct(v)} 几率叠 1 层剧毒(最多 5 层)` },
+    faster:  { name: '快速冷却', icon: '⏩', color: '#69f0ae', slots: 'aqe', val: [0.15, 0.2, 0.25], desc: v => `技能冷却 -${fmtPct(v)};镶在普攻上为攻速 +${fmtPct(v)}` },
+    echo:    { name: '回响',     icon: '🔁', color: '#40c4ff', slots: 'qe',  val: [0.5, 0.65, 0.8], desc: v => `释放后 0.35 秒自动再放一次,伤害 ×${v}(不耗资源)` },
+    freeze:  { name: '冰封',     icon: '❄', color: '#40c4ff', slots: 'aqe', val: [0.15, 0.2, 0.25], desc: v => `命中有 ${fmtPct(v)} 几率冻结敌人 1 秒` },
+    chain:   { name: '连锁闪电', icon: '⚡', color: '#40c4ff', slots: 'aqe', val: [0.2, 0.25, 0.3], desc: v => `命中有 ${fmtPct(v)} 几率放出闪电,弹射附近 2 个敌人(50% 伤害)` },
+    explode: { name: '尸爆',     icon: '✺', color: '#40c4ff', slots: 'aqe', val: [0.2, 0.25, 0.3], desc: v => `该技能击杀的敌人爆炸,对周围造成其最大生命 ${fmtPct(v)} 的伤害` }
+};
+const GEM_TYPES = Object.keys(GEMS);
+MP_ITEM_TYPES.push(...GEM_TYPES.map(t => 'gem_' + t));
+const GEM_SLOTS = ['a', 'q', 'e'];
+const SKILL_NAMES = {
+    warrior:  { q: '旋风斩',   e: '盾击' },
+    mage:     { q: '魔力涌注', e: '斥力波' },
+    assassin: { q: '闪现斩',   e: '连刺' },
+    archer:   { q: '穿透箭',   e: '箭雨' },
+    paladin:  { q: '圣光打击', e: '神圣光环' }
+};
+// 能否镶进该位置。法师的 Q「魔力涌注」是开关:它的孔放普攻宝石,开启时作用于普攻
+function gemCanPlace(id, slot, cls) {
+    const g = GEMS[id];
+    return !!g && (g.slots.includes(slot) || (cls === 'mage' && slot === 'q' && g.slots.includes('a')));
+}
+// 宝石在该位置是否生效;不生效返回原因(面板上提示)
+function gemMisfit(id, slot, cls) {
+    const g = GEMS[id];
+    if (!g) return '无效';
+    if (cls === 'mage' && slot === 'q') return g.slots.includes('a') ? '' : '对开关技能无效';
+    if (!g.slots.includes(slot)) return slot === 'a' ? '只能镶在技能上' : '只能镶在普攻上';
+    if (id === 'multi' && (cls === 'warrior' || cls === 'paladin')) return '近战普攻无效';
+    if (id === 'echo' && ((cls === 'mage' && slot === 'q') || (cls === 'paladin' && slot === 'e'))) return '对该技能无效';
+    return '';
+}
+
 // localStorage 读写(隐私模式/禁用存储时静默失败)
 const Store = {
     get(key, fallback) {
@@ -539,6 +686,8 @@ class Game {
     static JOY_RADIUS = 56;   // 摇杆半径(CSS px)
     static ORB_SPIN = 4.2;    // 烈焰法球转速(弧度/秒)
     static ORB_RADIUS = 58;   // 烈焰法球环绕半径
+    // 技能位上下文(见 _withCtx):普攻 / Q / E
+    static CTX = { a: { slot: 'a', mult: 1 }, q: { slot: 'q', mult: 1 }, e: { slot: 'e', mult: 1 } };
     constructor() {
         this.canvas = document.getElementById('gameCanvas');
         this.ctx = this.canvas.getContext('2d');
@@ -591,6 +740,7 @@ class Game {
 
         this.enemyFreezeTimer = 0;
         this.gearTimer = 20;          // 距离下一件限时装备掉落的秒数
+        this.gemTimer = 30;           // 距离下一颗技能石掉落的秒数
         this._resetEvents();
 
         // 方块大魔王调度
@@ -944,6 +1094,13 @@ class Game {
 
             // 在房间码输入框里打字时不触发静音
             if ((e.key === 'm' || e.key === 'M') && e.target.tagName !== 'INPUT') Sound.toggleMute();
+            // 构筑面板:B / T 开关,Esc 关闭;打开期间不响应其它游戏按键
+            const buildKey = e.key === 'b' || e.key === 'B' || e.key === 't' || e.key === 'T';
+            if (this.showingBuild) {
+                if ((buildKey || e.key === 'Escape') && !e.repeat) this.closeBuild();
+                return;
+            }
+            if (buildKey && !e.repeat && e.target.tagName !== 'INPUT') { this.openBuild(); return; }
             if (e.key === 'p' || e.key === 'P' || e.key === 'Escape') {
                 if (this.isRunning) this.togglePause();
             }
@@ -1004,7 +1161,8 @@ class Game {
             // 检查是否点在技能按钮上
             for (const btn of this.skillButtons) {
                 if (x >= btn.x && x <= btn.x + btn.w && y >= btn.y && y <= btn.y + btn.h) {
-                    this._requestSkill(btn.skill);
+                    if (btn.skill === 'build') this.openBuild();
+                    else this._requestSkill(btn.skill);
                     return; // 不触发移动
                 }
             }
@@ -1066,7 +1224,7 @@ class Game {
             if (!this.isRunning || this.isPaused || this.showingPotentialMenu || this.showingClassSelection) return false;
             const { x, y } = toCanvas(clientX, clientY);
             const btn = this.skillButtons.find(b => x >= b.x && x <= b.x + b.w && y >= b.y && y <= b.y + b.h);
-            if (!btn) return false;
+            if (!btn || btn.skill === 'build') return false;
             Object.assign(this.aim, {
                 active: true, id, skill: btn.skill, hcx: btn.hcx, hcy: btn.hcy,
                 sx: clientX, sy: clientY, ox: 0, oy: 0, dx: 0, dy: 0, armed: false
@@ -1237,6 +1395,7 @@ class Game {
     
     restartGame() {
         this.isRunning = false; // 让当前 rAF 循环自然结束
+        this.closeBuild();
         this.aim.active = false;
         this.joy.active = false;
         this._setJoyVector(0, 0);
@@ -1260,6 +1419,7 @@ class Game {
         this.difficulty = 1;
         this.enemyFreezeTimer = 0;
         this.gearTimer = 20;
+        this.gemTimer = 30;
         this._resetEvents();
         this.showingPotentialMenu = false;
         this.showingClassSelection = false;
@@ -1461,7 +1621,7 @@ class Game {
     //   e: [id, 类型序号, x, y, hp, maxHp, 眩晕(0/1), (炮手) aimAngle, shootTimer, shootInterval]
     //     冲锋者/自爆者额外 [状态, 状态剩余, 状态总长, 冲刺角度, 冲刺距离/爆炸半径]
     //   i: [id, 类型序号, 落点x, 落点y, 剩余时长]
-    //     e 的标志位:1 眩晕 / 2 受击闪白 / 4 精英 / 8 中毒
+    //     e 的标志位:1 眩晕 / 2 受击闪白 / 4 精英 / 8 中毒 / 16 燃烧
     //   p: [id, 种类(0 普通弹/1 穿透箭/2 装备弹/3 奥术弹/4 爆裂火球), x, y, 角度]
     //   ev: [事件序号(EVENT_TYPES), 剩余, 总时长, 剩余精英数] 或 0;mt: [id, x, y, 半径, 落地倒计时, 总时长]
     //   b: [id, x, y, 角度]
@@ -1474,7 +1634,7 @@ class Game {
         return {
             e: this.enemies.map(e => {
                 const row = [e.id, MP_ENEMY_TYPES.indexOf(e.type), q1(e.x), q1(e.y),
-                    Math.ceil(e.currentHealth), Math.ceil(e.maxHealth), (e.stunTimer > 0 ? 1 : 0) | (e._mpHit ? 2 : 0) | (e.elite ? 4 : 0) | (e.poison > 0 ? 8 : 0)];
+                    Math.ceil(e.currentHealth), Math.ceil(e.maxHealth), (e.stunTimer > 0 ? 1 : 0) | (e._mpHit ? 2 : 0) | (e.elite ? 4 : 0) | (e.poison > 0 ? 8 : 0) | (e.burnT > 0 ? 16 : 0)];
                 e._mpHit = false;
                 if (e.type === 'gunner') row.push(q2(e.aimAngle || 0), q2(e.shootTimer || 0), q2(e.shootInterval || 1));
                 else if (e.type === 'dasher' || e.type === 'bomber') row.push(e.state, q2(e.stateTimer), q2(e.stateDur), q2(e.dashAngle), q1(e.type === 'dasher' ? e.dashDist : e.blastRadius));
@@ -1535,6 +1695,8 @@ class Game {
             dc: q2(p.dashCooldown), dt: q2(p.dashTimer), dg: p.dodgeCount || 0,
             // 限时装备 [种类序号, 剩余, 总时长, 法球角度]
             g: p.gear ? [GEAR_TYPES.indexOf(p.gear.type), q1(p.gear.timer), p.gear.max, q2(p.gear.angle || 0)] : 0,
+            // 拾取过的技能石(host 判定拾取,guest 据此得到宝石;镶嵌以 guest 本地为准)
+            gl: p.gemLog || undefined,
             skillQ: { cooldown: q2(p.skillQ.cooldown), maxCooldown: q2(p.skillQ.maxCooldown), level: p.skillQ.level },
             skillE: { cooldown: q2(p.skillE.cooldown), maxCooldown: q2(p.skillE.maxCooldown), level: p.skillE.level }
         };
@@ -1608,6 +1770,7 @@ class Game {
                 e.currentHealth = r[4]; e.maxHealth = r[5];
                 e.stunTimer = r[6] & 1 ? 1 : 0;
                 e.poison = r[6] & 8 ? 1 : 0;
+                e.burnT = r[6] & 16 ? 1 : 0;
                 if (r[6] & 2) e.flash();
                 if (r.length > 7) {
                     if (e.type === 'gunner') { e.aimAngle = r[7]; e.shootTimer = r[8]; e.shootInterval = r[9]; }
@@ -1689,6 +1852,22 @@ class Game {
             this.player.dashTimer = myData.dt || 0;
             this.player.dodgeCount = myData.dg || 0;
             this.player.gear = this._mpGear(myData.g);
+            // 新捡到的技能石:追加到本地背包并自动镶嵌
+            const gl = myData.gl || '';
+            const mine = this.player.gemLog;
+            if (gl !== mine) {
+                this.player.gemLog = gl;
+                this.player._buildVer++;
+                if (gl.length > mine.length && gl.startsWith(mine)) {
+                    for (const ch of gl.slice(mine.length)) {
+                        const id = GEM_TYPES[parseInt(ch, 36)];
+                        if (!id) continue;
+                        this._onGemGained(this.player, id);
+                        this._showFloatingText(`技能石 ${GEMS[id].name} Lv${this._gemLv(this.player, id)}`,
+                            this.player.x + this.player.size / 2, this.player.y - 26, GEMS[id].color);
+                    }
+                }
+            }
             // 同步资源（用于 HUD 显示）
             if (myData.mana !== undefined)    this.player.mana   = myData.mana;
             if (myData.maxMana !== undefined) this.player.maxMana = myData.maxMana;
@@ -1808,7 +1987,8 @@ class Game {
                 qMaxCd: p.skillQ.maxCooldown, eMaxCd: p.skillE.maxCooldown,
                 dashMaxCd: p.dashMaxCooldown,
                 spec: p.spec || undefined, awk: p.awakened ? 1 : undefined,
-                menu: (this.showingClassSelection || this.showingPotentialMenu) ? 1 : undefined
+                tr: this._encodeTree(p), sk: this._encodeSockets(p),
+                menu: (this.showingClassSelection || this.showingPotentialMenu || this.showingBuild) ? 1 : undefined
             }
         });
         // 输入没变化时不必每帧发送(host 会沿用上一次输入),仅保留 250ms 心跳
@@ -1848,6 +2028,7 @@ class Game {
                 if (s.qMaxCd)  gp.skillQ.maxCooldown = s.qMaxCd;
                 if (s.eMaxCd)  gp.skillE.maxCooldown = s.eMaxCd;
                 if (s.dashMaxCd) gp.dashMaxCooldown = s.dashMaxCd;
+                this._applyGuestBuild(gp, s.tr, s.sk);
                 // guest 在选天赋/职业时世界不会为他暂停:期间给保护,免得站着挨打
                 gp.menuGuard = !!s.menu;
             }
@@ -1900,6 +2081,9 @@ class Game {
         if (adj.manaRegen) p.manaRegen += adj.manaRegen;
         if (adj.maxMana)   { p.maxMana += adj.maxMana; p.mana = p.maxMana; }
         if (adj.autoAttackDmgMult) p.autoAttackDmgMult = (p.autoAttackDmgMult || 1) * adj.autoAttackDmgMult;
+        // 选职业前点的冷却天赋 / 镶好的 Q、E 宝石立即生效
+        p._buildVer++;
+        this._refreshSkillCds(p);
     }
 
     // ── Guest：更新本地资源（保持 HUD 流畅） ──
@@ -2479,8 +2663,8 @@ class Game {
         const p = this.player;
         p.autoAttackTimer -= DT;
         if (p.autoAttackTimer <= 0 && (this.enemies.length > 0 || (this.boss && this.bossState === 'active'))) {
-            this.shoot();
-            p.autoAttackTimer = p.autoAttackInterval * this._focusMult(p);
+            this._withCtx(Game.CTX.a, () => this.shoot());
+            p.autoAttackTimer = p.autoAttackInterval * this._focusMult(p) / this._atkSpeedMult(p);
         }
     }
 
@@ -2493,6 +2677,9 @@ class Game {
     // 技能冷却 + 职业资源回复/衰减 + 圣光光环,作用于 this.player(guest 通过 _runAsPlayer 复用)
     _tickPlayerResources() {
         this._tickGear();
+        // 天赋「嗜血回春」:每秒回复最大生命的一部分
+        const regen = this.player.tree && this.player.tree.regen;
+        if (regen && this.player.currentHealth > 0) this.player.heal(this.player.maxHealth * regen * DT);
         if (this.player.skillQ.cooldown > 0) this.player.skillQ.cooldown -= DT;
         if (this.player.skillE.cooldown > 0) this.player.skillE.cooldown -= DT;
 
@@ -2548,20 +2735,26 @@ class Game {
                     }
                     // 守护者:光环额外按最大生命灼烧(每秒 12%)
                     const auraDmgTick = (this._computeAttackDamage(this.player.attack) * 0.5 * (this.player.paladinSkillDmgMult || 1)
-                        + (this.player.spec === 'protector' ? this.player.maxHealth * 0.12 : 0)) * DT;
+                        + (this.player.spec === 'protector' ? this.player.maxHealth * 0.12 : 0)) * DT
+                        * this._buildDmgMult(this.player, 'e');
+                    let auraHits = 0;
                     for (let i = this.enemies.length - 1; i >= 0; i--) {
                         const e = this.enemies[i];
                         const dx = e.x + e.size / 2 - pcx;
                         const dy = e.y + e.size / 2 - pcy;
                         if (Math.sqrt(dx * dx + dy * dy) <= auraR) {
                             e.takeDamage(auraDmgTick);
+                            auraHits++;
                             if (e.currentHealth <= 0) {
                                 this.spawnHitParticles(e.x + e.size / 2, e.y + e.size / 2, e.color, 10);
-                                this._onEnemyKilled(e);
+                                this._withCtx(Game.CTX.e, () => this._onEnemyKilled(e));
                                 this.enemies.splice(i, 1);
                             }
                         }
                     }
+                    // 生命偷取(天赋 + E 位宝石)按光环总伤害结算
+                    const auraLeech = ((this.player.tree && this.player.tree.leech) || 0) + this._gv(this.player, 'e', 'leech');
+                    if (auraLeech && auraHits) this.player.heal(auraDmgTick * auraHits * auraLeech);
                     // 圣光光环对魔王也持续造伤
                     if (this.boss && this.bossState === 'active') {
                         const bx = this.boss.x + this.boss.size / 2;
@@ -2577,7 +2770,7 @@ class Game {
         }
     }
 
-    _auraRadius(p) { return p.spec === 'protector' ? 130 : 80; }
+    _auraRadius(p) { return (p.spec === 'protector' ? 130 : 80) * (1 + ((p.tree && p.tree.aoe) || 0) + this._gv(p, 'e', 'aoe')); }
 
     // 职业被动里需要 Game 参与的部分(作用于 this.player,guest 由 host 在 _runAsPlayer 里推进)
     _tickClassPassives() {
@@ -2603,6 +2796,11 @@ class Game {
                 this.effects.push({ type: 'shockwave', x: pcx, y: pcy, radius: 8, maxRadius: 100, color: '#ffe082', ttl: 0.3, maxTtl: 0.3 });
                 this._showFloatingText('反击', pcx, p.y - 22, '#ffe082');
             }
+        }
+        // 天赋「疾风之舞」闪避提示
+        if (p._evadeFx) {
+            p._evadeFx = false;
+            this._showFloatingText('闪避', pcx, p.y - 22, '#b9f6ca');
         }
         // 铁卫觉醒「不屈」触发提示
         if (p._undyingFx) {
@@ -2720,18 +2918,7 @@ class Game {
         }
         if (nodes.length < 2) return false;
         for (const t of hit) this._gearHit(t, dmg, '#fff59d');
-        // 锯齿折线:每段切 4 小段,中间点沿法线随机偏移
-        const pts = [q1(pcx), q1(pcy)];
-        for (let i = 1; i < nodes.length; i++) {
-            const [ax, ay] = nodes[i - 1], [bx, by] = nodes[i];
-            const len = Math.hypot(bx - ax, by - ay) || 1;
-            const nx = -(by - ay) / len, ny = (bx - ax) / len;
-            for (let k = 1; k <= 4; k++) {
-                const f = k / 4, off = k < 4 ? (Math.random() - 0.5) * 18 : 0;
-                pts.push(q1(ax + (bx - ax) * f + nx * off), q1(ay + (by - ay) * f + ny * off));
-            }
-        }
-        this.effects.push({ type: 'lightning', pts, color: '#ffe14d', ttl: 0.2, maxTtl: 0.2 });
+        this.effects.push({ type: 'lightning', pts: this._lightningPts(nodes), color: '#ffe14d', ttl: 0.2, maxTtl: 0.2 });
         return true;
     }
 
@@ -2791,6 +2978,374 @@ class Game {
             this.projectiles.push(proj);
         }
         return true;
+    }
+
+    // ══════════════════════════════════════════════════════════════════
+    //  构筑:天赋树 / 技能石 —— 规则与战斗钩子(面板见 openBuild)
+    // ══════════════════════════════════════════════════════════════════
+
+    // 以技能位(a 普攻 / q / e)为上下文执行 fn,命中/击杀时据此读取该位置的技能石。
+    // fn 内新排入的延迟动作和投射物会记住上下文,之后结算时同样生效;显式写了 ctx(含 null)的不覆盖
+    _withCtx(ctx, fn) {
+        const prev = this._ctx;
+        const nA = this.pendingActions.length, nP = this.projectiles.length;
+        this._ctx = ctx;
+        try {
+            return fn();
+        } finally {
+            if (ctx) {
+                for (let i = nA; i < this.pendingActions.length; i++) {
+                    if (!('ctx' in this.pendingActions[i])) this.pendingActions[i].ctx = ctx;
+                }
+                for (let i = nP; i < this.projectiles.length; i++) {
+                    if (!('ctx' in this.projectiles[i])) this.projectiles[i].ctx = ctx;
+                }
+            }
+            this._ctx = prev;
+        }
+    }
+
+    // 各技能位上生效的宝石 { 宝石id: 等级 }:只算已开的孔、且对当前职业有效的;按 _buildVer 缓存
+    _gemMap(p) {
+        const mageOn = p.class === 'mage' && p.qToggleActive;
+        const key = `${p._buildVer}|${p.class}|${p.gemLog.length}|${mageOn ? 1 : 0}`;
+        if (p._gemKey === key) return p._gemCache;
+        const counts = {};
+        for (const ch of p.gemLog) {
+            const id = GEM_TYPES[parseInt(ch, 36)];
+            if (id) counts[id] = Math.min(3, (counts[id] || 0) + 1);
+        }
+        const map = { a: {}, q: {}, e: {}, counts };
+        for (const slot of GEM_SLOTS) {
+            const n = this._socketCount(p, slot);
+            for (let i = 0; i < n; i++) {
+                const id = p.sockets[slot][i];
+                if (id && counts[id] && !gemMisfit(id, slot, p.class)) map[slot][id] = counts[id];
+            }
+        }
+        // 法师魔力涌注开启时,Q 位宝石并入普攻(同种取高等级)
+        if (mageOn) for (const id in map.q) map.a[id] = Math.max(map.a[id] || 0, map.q[id]);
+        p._gemKey = key;
+        p._gemCache = map;
+        return map;
+    }
+
+    // 每个技能位 2 个孔,天赋树的连接孔节点 +1
+    _socketCount(p, slot) {
+        const t = p.tree || {};
+        return 2 + ((slot === 'a' ? t.sockA : slot === 'q' ? t.sockQ : t.sockE) || 0);
+    }
+
+    // 技能位 slot 上宝石 id 的当前数值(没镶或不生效 = 0)
+    _gv(p, slot, id) {
+        if (!slot || !p || p.gemLog === undefined) return 0;
+        const lv = this._gemMap(p)[slot][id];
+        return lv ? GEMS[id].val[lv - 1] : 0;
+    }
+
+    // 伤害倍率:天赋(全伤害 / 技能 / 普攻 / 低血)× 宝石「附加伤害」
+    _buildDmgMult(p, slot) {
+        const t = p.tree || {};
+        let m = 1 + (t.dmg || 0) + (slot === 'a' ? (t.autoDmg || 0) : slot ? (t.skillDmg || 0) : 0);
+        if (t.lowLifeDmg && p.currentHealth < p.maxHealth * 0.5) m += t.lowLifeDmg;
+        return Math.max(0.1, m) * (1 + this._gv(p, slot, 'dmg'));
+    }
+
+    // 范围半径:天赋「广域」+ 当前技能位的「范围扩大」(作用于 this.player)
+    _aoe(r, slot) {
+        const p = this.player;
+        if (slot === undefined) slot = this._ctx ? this._ctx.slot : null;
+        return r * (1 + ((p.tree && p.tree.aoe) || 0) + this._gv(p, slot, 'aoe'));
+    }
+
+    // 普攻速度倍率:天赋攻速 + 普攻位「快速冷却」
+    _atkSpeedMult(p) {
+        return 1 + ((p.tree && p.tree.atkSpd) || 0) + this._gv(p, 'a', 'faster');
+    }
+
+    // 命中之后:生命偷取 + 当前技能位宝石的命中效果。在 takeDamage 之后、死亡判定之前调用
+    _afterHit(p, target, dmg) {
+        if (!p || !target || !(dmg > 0)) return;
+        const slot = this._ctx ? this._ctx.slot : null;
+        const leech = ((p.tree && p.tree.leech) || 0) + this._gv(p, slot, 'leech');
+        if (leech > 0 && p.currentHealth > 0) p.heal(dmg * leech);
+        if (!slot || target.currentHealth <= 0) return;
+        const g = this._gemMap(p)[slot];
+        const isBoss = target === this.boss;
+        const tx = target.x + target.size / 2, ty = target.y + target.size / 2;
+        if (g.ignite) this._applyBurn(target, p, p.attack * GEMS.ignite.val[g.ignite - 1]);
+        if (g.poison && Math.random() < GEMS.poison.val[g.poison - 1]) this._applyPoison(target, p, 1);
+        if (g.freeze && Math.random() < GEMS.freeze.val[g.freeze - 1]) {
+            target.stunTimer = Math.max(target.stunTimer || 0, isBoss ? 0.3 : 1);
+            this.spawnParticles(tx, ty, '#b3e5fc', 4, 1, 3, 1, 3, 0.05);
+        }
+        // 连锁闪电晚几帧再放:调用方可能正按下标遍历 enemies,不能在这里打死别的敌人
+        if (g.chain && Math.random() < GEMS.chain.val[g.chain - 1]) {
+            const cd = dmg * 0.5;
+            this.pendingActions.push({ delay: 0.05, ctx: null, player: p, fn: () => this._gemChain(target, tx, ty, cd) });
+        }
+        if (g.cull && !isBoss && target.currentHealth < target.maxHealth * GEMS.cull.val[g.cull - 1] * (target.elite ? 0.5 : 1)) {
+            target.currentHealth = 0;
+            this._showFloatingText('处决', tx, target.y - 10, '#ff8a80');
+        }
+    }
+
+    // 技能石「连锁闪电」:从 (x,y) 弹向附近 2 个敌人(不再触发宝石效果,避免连锁套连锁)
+    _gemChain(from, x, y, dmg) {
+        const hit = [];
+        const nodes = [[x, y]];
+        for (let hop = 0; hop < 2; hop++) {
+            let best = null, bestD = 160 * 160;
+            for (const t of this._gearTargets()) {
+                if (t === from || hit.includes(t) || t.currentHealth <= 0) continue;
+                const d = (t.x + t.size / 2 - x) ** 2 + (t.y + t.size / 2 - y) ** 2;
+                if (d < bestD) { bestD = d; best = t; }
+            }
+            if (!best) break;
+            hit.push(best);
+            x = best.x + best.size / 2; y = best.y + best.size / 2;
+            nodes.push([x, y]);
+        }
+        if (!hit.length) return;
+        for (const t of hit) this._gearHit(t, dmg, '#b388ff');
+        this.effects.push({ type: 'lightning', pts: this._lightningPts(nodes), color: '#b388ff', ttl: 0.18, maxTtl: 0.18 });
+    }
+
+    // 闪电折线:每段切 4 小段,中间点沿法线随机偏移;返回量化后的扁平坐标
+    _lightningPts(nodes) {
+        const pts = [q1(nodes[0][0]), q1(nodes[0][1])];
+        for (let i = 1; i < nodes.length; i++) {
+            const [ax, ay] = nodes[i - 1], [bx, by] = nodes[i];
+            const len = Math.hypot(bx - ax, by - ay) || 1;
+            const nx = -(by - ay) / len, ny = (bx - ax) / len;
+            for (let k = 1; k <= 4; k++) {
+                const f = k / 4, off = k < 4 ? (Math.random() - 0.5) * 18 : 0;
+                pts.push(q1(ax + (bx - ax) * f + nx * off), q1(ay + (by - ay) * f + ny * off));
+            }
+        }
+        return pts;
+    }
+
+    // 技能石「燃烧」:3 秒持续伤害(取较高的一份,刷新时长),击杀记在点火者名下
+    _applyBurn(t, owner, dps) {
+        if (t.type === 'treasure') return;
+        t.burn = Math.max(t.burnT > 0 ? t.burn : 0, dps);
+        t.burnT = 3;
+        t.burnOwner = owner;
+    }
+
+    // 每帧结算燃烧(直接扣血,不白闪);返回 true 表示烧死了(击杀由调用方结算)
+    _tickBurn(t) {
+        if (!(t.burnT > 0)) return false;
+        t.burnT -= DT;
+        const o = t.burnOwner;
+        const dmg = t.burn * DT * (1 + ((o && o.tree && o.tree.dot) || 0));
+        t.currentHealth = Math.max(0, t.currentHealth - dmg);
+        if (t === this.boss) this.bossDamageDealt += dmg;
+        if (t.burnT <= 0) t.burn = 0;
+        return t !== this.boss && t.currentHealth <= 0;
+    }
+
+    // 释放 Q/E(本机与 host 替 guest 共用):在技能位上下文中派发到职业技能;
+    // 成功释放(进入冷却)且镶了「回响」时,0.35 秒后自动再放一次
+    _castSlot(slot) {
+        const p = this.player;
+        if (!p.class) return;
+        const skill = slot === 'q' ? p.skillQ : p.skillE;
+        if (skill.cooldown > 0) return;
+        this._withCtx(Game.CTX[slot], () => this._dispatchSkill(slot, skill));
+        const echo = skill.cooldown > 0 && this._gv(p, slot, 'echo');
+        if (echo) this.pendingActions.push({ delay: 0.35, ctx: null, fn: () => this._echoCast(slot, echo) });
+    }
+
+    _dispatchSkill(slot, skill) {
+        const cls = this.player.class;
+        const fn = { warrior: ['_warriorQ', '_warriorE'], mage: ['_mageQ', '_mageE'], assassin: ['_assassinQ', '_assassinE'],
+                     archer: ['_archerQ', '_archerE'], paladin: ['_paladinQ', '_paladinE'] }[cls];
+        if (fn) this[fn[slot === 'q' ? 0 : 1]](skill);
+    }
+
+    // 回响:不看冷却、不耗资源地再放一次(伤害 ×mult),之后把冷却和资源恢复成原样
+    _echoCast(slot, mult) {
+        const p = this.player;
+        if (!p.class || p.currentHealth <= 0) return;
+        const skill = slot === 'q' ? p.skillQ : p.skillE;
+        const keep = { cd: skill.cooldown, rage: p.rage, mana: p.mana, faith: p.faith, arrows: p.arrows,
+                       reloadTimer: p.reloadTimer, assassinCharge: p.assassinCharge };
+        skill.cooldown = 0;
+        this._withCtx({ slot, mult }, () => this._dispatchSkill(slot, skill));
+        if (skill.cooldown > 0) this._showFloatingText('回响', p.x + p.size / 2, p.y - 24, '#80d8ff');
+        skill.cooldown = keep.cd;
+        p.rage = keep.rage; p.mana = keep.mana; p.faith = keep.faith; p.arrows = keep.arrows;
+        p.reloadTimer = keep.reloadTimer; p.assassinCharge = keep.assassinCharge;
+    }
+
+    // ── 天赋树:点数 / 点亮 / 取消 / 属性汇总 ──
+    // 天赋点 = (等级 - 1) + 本局击退魔王次数;起点不占点
+    _treePoints(p = this.player) {
+        const total = Math.max(0, this.level - 1) + (this.runBossRepels || 0);
+        const used = p.treeNodes.size - 1;
+        return { total, used, free: total - used };
+    }
+
+    _treeCanAlloc(p, id) {
+        return !p.treeNodes.has(id) && TREE_ADJ[id].some(n => p.treeNodes.has(n)) && this._treePoints(p).free > 0;
+    }
+
+    // 取消点亮后剩下的节点必须仍然连回起点
+    _treeCanRefund(p, id) {
+        if (id === 'start' || !p.treeNodes.has(id)) return false;
+        const seen = new Set(['start']);
+        const stack = ['start'];
+        while (stack.length) {
+            for (const n of TREE_ADJ[stack.pop()]) {
+                if (n === id || seen.has(n) || !p.treeNodes.has(n)) continue;
+                seen.add(n);
+                stack.push(n);
+            }
+        }
+        return seen.size === p.treeNodes.size - 1;
+    }
+
+    _treeAllocate(id) {
+        const p = this.player;
+        if (!this._treeCanAlloc(p, id)) return false;
+        p.treeNodes.add(id);
+        this._recomputeTree(p, true);
+        Sound.play('pickup', TREE_BY_ID[id].kind === 'keystone' ? 'epic' : 'rare');
+        return true;
+    }
+
+    _treeRefund(id) {
+        const p = this.player;
+        if (!this._treeCanRefund(p, id)) return false;
+        p.treeNodes.delete(id);
+        this._recomputeTree(p, true);
+        return true;
+    }
+
+    _treeReset() {
+        const p = this.player;
+        p.treeNodes = new Set(['start']);
+        this._recomputeTree(p, true);
+    }
+
+    // 重算天赋汇总。applyBase:把攻击/生命/防御/移速的变化量加到基础属性上(本机玩家);
+    // host 替 guest 重算时为 false,这几项已包含在 guest 上报的 stats 里
+    _recomputeTree(p, applyBase) {
+        const t = {};
+        for (const id of p.treeNodes) {
+            const n = TREE_BY_ID[id];
+            if (!n) continue;
+            for (const k in n.mods) t[k] = (t[k] || 0) + n.mods[k];
+        }
+        p.tree = t;
+        p._buildVer++;
+        if (!applyBase) return;
+        const old = p._treeBase;
+        const nb = {};
+        for (const k of TREE_BASE_STATS) nb[k] = t[k] || 0;
+        p.attack += nb.attack - old.attack;
+        p.defense += nb.defense - old.defense;
+        p.speed += nb.speed - old.speed;
+        const dh = nb.maxHealth - old.maxHealth;
+        p.maxHealth += dh;
+        p.currentHealth = dh > 0 ? p.currentHealth + dh : Math.min(p.currentHealth, p.maxHealth);
+        p._treeBase = nb;
+        this._refreshSkillCds(p);
+    }
+
+    // 冷却缩减(天赋/「快速冷却」)变了以后,按当前技能等级重算 Q/E 冷却上限
+    _refreshSkillCds(p) {
+        if (!CLASS_BASE_CD[p.class]) return;
+        p.skillQ.maxCooldown = this._skillMaxCd(p, 'q');
+        p.skillE.maxCooldown = this._skillMaxCd(p, 'e');
+    }
+
+    // 联机编码:天赋树 = 已点亮节点下标(36 进制),镶嵌 = 3 个技能位 × 3 孔,'-' 为空
+    _encodeTree(p) {
+        return [...p.treeNodes].map(id => TREE_BY_ID[id].idx.toString(36)).sort().join('');
+    }
+
+    _encodeSockets(p) {
+        return GEM_SLOTS.map(s => p.sockets[s].map(id => id ? GEM_TYPES.indexOf(id).toString(36) : '-').join('')).join('');
+    }
+
+    // host:按 guest 上报的编码更新它的天赋/镶嵌(基础属性来自 stats,不再加一遍)
+    _applyGuestBuild(gp, tr, sk) {
+        if (typeof tr === 'string' && tr !== gp._trKey) {
+            gp._trKey = tr;
+            gp.treeNodes = new Set(['start']);
+            for (const ch of tr) {
+                const n = TREE_NODES[parseInt(ch, 36)];
+                if (n) gp.treeNodes.add(n.id);
+            }
+            this._recomputeTree(gp, false);
+        }
+        if (typeof sk === 'string' && sk !== gp._skKey && sk.length === 9) {
+            gp._skKey = sk;
+            GEM_SLOTS.forEach((s, si) => {
+                for (let i = 0; i < 3; i++) {
+                    const ch = sk[si * 3 + i];
+                    gp.sockets[s][i] = ch === '-' ? null : (GEM_TYPES[parseInt(ch, 36)] || null);
+                }
+            });
+            gp._buildVer++;
+        }
+    }
+
+    // ── 技能石:掉落 / 拾取 / 自动镶嵌 ──
+    _dropGem(x, y, id) {
+        id = id || GEM_TYPES[Math.floor(Math.random() * GEM_TYPES.length)];
+        x = Math.max(10, Math.min(this.width - 40, x));
+        y = Math.max(40, Math.min(this.height - 40, y));
+        this.items.push(new Item(x, y, 'gem_' + id));
+    }
+
+    // 给 this.player 一颗宝石(同种第 2/3 颗 = 升级,满级再捡折算分数);返回飘字
+    _grantGem(id) {
+        const p = this.player;
+        const def = GEMS[id];
+        if (!def) return '';
+        if (this._gemLv(p, id) >= 3) {
+            this.score += 50 * (this.scoreMult || 1);
+            return `${def.name} 已满级  +50 分`;
+        }
+        p.gemLog += GEM_TYPES.indexOf(id).toString(36);
+        p._buildVer++;
+        // guest 的宝石由 guest 自己在收到快照时提示/自动镶嵌(镶嵌以 guest 本地为准)
+        if (!this._actingAs) this._onGemGained(p, id);
+        return `技能石 ${def.name} Lv${this._gemLv(p, id)}`;
+    }
+
+    _gemLv(p, id) { return this._gemMap(p).counts[id] || 0; }
+
+    // 本机玩家得到新宝石:没镶的话自动镶进第一个能生效的空孔,HUD 构筑按钮亮起提示
+    _onGemGained(p, id) {
+        p._newGem = true;
+        if (GEM_SLOTS.some(s => p.sockets[s].includes(id))) return;
+        const order = !p.class ? ['a'] : p.class === 'mage' ? ['a', 'e', 'q'] : ['q', 'e', 'a'];
+        for (const s of order) {
+            if (!gemCanPlace(id, s, p.class) || gemMisfit(id, s, p.class)) continue;
+            const n = this._socketCount(p, s);
+            const i = p.sockets[s].slice(0, n).indexOf(null);
+            if (i < 0) continue;
+            p.sockets[s][i] = id;
+            p._buildVer++;
+            this._refreshSkillCds(p);
+            const where = s === 'a' ? '普攻' : `${s.toUpperCase()} 技能`;
+            this._showFloatingText(`已镶嵌到${where},可在「构筑」里调整`, p.x + p.size / 2, p.y - 44, GEMS[id].color);
+            return;
+        }
+    }
+
+    // 镶嵌/取下(面板操作,本机玩家)。同一颗宝石只能在一个孔里
+    _socketGem(slot, i, id) {
+        const p = this.player;
+        if (id) for (const s of GEM_SLOTS) p.sockets[s] = p.sockets[s].map(g => g === id ? null : g);
+        p.sockets[slot][i] = id || null;
+        p._buildVer++;
+        this._refreshSkillCds(p);
     }
 
     // 以指定玩家身份执行 fn:技能/资源代码统一读写 this.player,host 替 guest 施法时临时替换。
@@ -2890,7 +3445,7 @@ class Game {
         if (p.dashDodged) return;
         p.dashDodged = true;
         p.dodgeCount = (p.dodgeCount || 0) + 1;
-        p.dashCooldown = Math.max(0, p.dashCooldown - p.dashMaxCooldown * 0.5);
+        p.dashCooldown = Math.max(0, p.dashCooldown - p.dashCdTotal() * 0.5);
         const cx = p.x + p.size / 2, cy = p.y + p.size / 2;
         this._showFloatingText('闪避!', cx, p.y - 18, '#80d8ff');
         this.spawnBurstRing(cx, cy, 22, '#80d8ff', 12);
@@ -2965,7 +3520,7 @@ class Game {
                 try {
                     // 施法者已离开房间则丢弃
                     if (a.player && a.player !== this.player && ![...this.mpGuestPlayers.values()].includes(a.player)) continue;
-                    this._runAsPlayer(a.player, a.fn);
+                    this._runAsPlayer(a.player, () => this._withCtx(a.ctx || null, a.fn));
                 } catch (e) { console.error(e); }
             }
         }
@@ -3030,9 +3585,13 @@ class Game {
                     if (proj.isPiercing && !proj.pierceRemaining) continue; // PiercingArrow 自处理
                     if (this.checkCollision(proj, this.boss)) {
                         if (proj.hitEnemies && proj.hitEnemies.has(this.boss)) continue;
+                        const prevCtx = this._ctx;
+                        this._ctx = proj.ctx || null;
                         const dmg = this._applyHitMods(proj.owner, this.boss, proj.damage != null ? proj.damage : 15);
                         this.boss.takeDamage(dmg);
+                        this._afterHit(proj.owner, this.boss, dmg);
                         if (proj.splash) this._projSplash(proj, this.boss);
+                        this._ctx = prevCtx;
                         this.bossDamageDealt += dmg;
                         if (proj.hitEnemies) proj.hitEnemies.add(this.boss);
                         this.spawnHitParticles(this.boss.x + this.boss.size / 2, this.boss.y + this.boss.size / 2, '#ff1744', 6);
@@ -3257,13 +3816,14 @@ class Game {
         // 击退动画
         // 击退必掉一件限时装备(落在魔王原位)
         this._dropGear(this.boss.x + this.boss.size / 2 - 12, this.boss.y + this.boss.size / 2 - 12);
+        this._dropGem(this.boss.x + this.boss.size / 2 + 24, this.boss.y + this.boss.size / 2 - 12);
         this.boss.triggerRetreat(this.player.x, this.player.y);
         this.bossState = 'retreating';
         // 视效:闪白 + 大粒子爆发
         this.effects.push({ type: 'shockwave', x: this.boss.x + 40, y: this.boss.y + 40, radius: 10, maxRadius: 250, color: '#ffffff', ttl: 0.7, maxTtl: 0.7 });
         this.spawnParticles(this.boss.x + 40, this.boss.y + 40, '#ffeb3b', 40, 2, 7, 3, 6, 0.03);
         this.spawnParticles(this.boss.x + 40, this.boss.y + 40, '#ffffff', 20, 3, 8, 2, 5, 0.04);
-        this._showFloatingText('击退魔王!  +1 命  +1 潜能  +100 分  掉落装备', this.width / 2, this.height * 0.4, '#ffeb3b');
+        this._showFloatingText('击退魔王!  +1 命  +1 潜能  +1 天赋点  掉落装备与技能石', this.width / 2, this.height * 0.4, '#ffeb3b');
         this.screenShake = 0.5;
         // 立即弹天赋菜单(奖励的潜能点)
         this.showPotentialMenu();
@@ -3455,6 +4015,7 @@ class Game {
     _treasureReward(e) {
         const cx = e.x + e.size / 2, cy = e.y + e.size / 2;
         this._dropGear(cx - 12, cy - 12);
+        this._dropGem(cx + 30, cy - 30);
         for (let i = 0; i < 3; i++) {
             const a = (i / 3) * Math.PI * 2 + Math.random();
             this._dropRandomItem(cx - 12 + Math.cos(a) * 55, cy - 12 + Math.sin(a) * 55);
@@ -3472,6 +4033,7 @@ class Game {
     _eliteReward(e) {
         const cx = e.x + e.size / 2, cy = e.y + e.size / 2;
         this._dropRandomItem(cx - 12, cy - 12);
+        if (Math.random() < 0.35) this._dropGem(cx + 14, cy - 20);
         this.score += 30 * (this.scoreMult || 1);
         this.exp += 20;
         this.eliteKills++;
@@ -3599,14 +4161,16 @@ class Game {
                 this.spawnParticles(s.x, s.y, '#ff9800', 5, 2, 4, 1, 3, 0.07);
                 e.pendingShot = null;
             }
-            // 毒死的敌人记在施毒者名下
-            if (this._tickPoison(e) || e.currentHealth <= 0) {
+            // 毒死/烧死的敌人记在施加者名下
+            const poisoned = this._tickPoison(e), burned = this._tickBurn(e);
+            if (poisoned || burned || e.currentHealth <= 0) {
                 this.spawnHitParticles(e.x + e.size / 2, e.y + e.size / 2, e.color, 10);
-                this._runAsPlayer(e.poison > 0 && e.poisonOwner || this.player, () => this._onEnemyKilled(e));
+                const owner = (e.poison > 0 && e.poisonOwner) || (burned && e.burnOwner) || this.player;
+                this._runAsPlayer(owner, () => this._onEnemyKilled(e));
                 this.enemies.splice(i, 1);
             }
         }
-        if (this.boss && this.bossState === 'active') this._tickPoison(this.boss);
+        if (this.boss && this.bossState === 'active') { this._tickPoison(this.boss); this._tickBurn(this.boss); }
     }
 
     // 离 (x,y) 最近的存活玩家(单人/guest 恒为本机玩家)
@@ -3763,12 +4327,15 @@ class Game {
             if (proj.isPiercing && !proj.pierceRemaining) continue;
             let hit = false;
             let splashAt = null;
+            const prevCtx = this._ctx;
+            this._ctx = proj.ctx || null;   // 命中按发射时的技能位结算宝石效果
             for (let j = this.enemies.length - 1; j >= 0; j--) {
                 if (this.checkCollision(proj, this.enemies[j])) {
                     // 有限穿透:已命中过的同一敌人跳过
                     if (proj.hitEnemies && proj.hitEnemies.has(this.enemies[j])) continue;
                     const dmg = this._applyHitMods(proj.owner, this.enemies[j], proj.damage != null ? proj.damage : 15);
                     this.enemies[j].takeDamage(dmg);
+                    this._afterHit(proj.owner, this.enemies[j], dmg);
                     if (proj.freeze) this.enemies[j].stunTimer = Math.max(this.enemies[j].stunTimer, proj.freeze);
                     if (proj.splash) splashAt = this.enemies[j];
                     this._knockbackDir(this.enemies[j], proj.dx, proj.dy, 2.5);
@@ -3797,6 +4364,7 @@ class Game {
             }
             if (hit) this.projectiles.splice(i, 1);
             if (splashAt) this._projSplash(proj, splashAt);
+            this._ctx = prevCtx;
         }
     }
 
@@ -3884,6 +4452,12 @@ class Game {
         if (this.gearTimer <= 0) {
             this.gearTimer = 25 + Math.random() * 10;
             this._dropGear(60 + Math.random() * (this.width - 150), 60 + Math.random() * (this.height - 150));
+        }
+        // 技能石:开局 30 秒后第一颗,之后每 35~50 秒一颗(击杀/精英/宝藏/魔王另有掉落)
+        this.gemTimer -= DT;
+        if (this.gemTimer <= 0) {
+            this.gemTimer = 35 + Math.random() * 15;
+            this._dropGem(60 + Math.random() * (this.width - 150), 60 + Math.random() * (this.height - 150));
         }
         // 降低道具刷新频率以提高难度(原 0.015)
         if (Math.random() < 0.008) {
@@ -3975,6 +4549,8 @@ class Game {
                     const kind = item.type.slice(5);
                     this._equipGear(kind);
                     label = `${GEARS[kind].name}  ${GEARS[kind].desc}`;
+                } else if (item.gem) {
+                    label = this._grantGem(item.gem);
                 }
         }
         if (label) this._showFloatingText(label, cx, cy - 12, item.color);
@@ -4190,7 +4766,9 @@ class Game {
         const base = (CLASS_BASE_CD[p.class] || { q: 3, e: 5 })[key];
         const sk = key === 'q' ? p.skillQ : p.skillE;
         const flat = key === 'q' ? (p.qCdFlat || 0) : 0;
-        const cd = base * this._getCDMultiplier(sk.level);
+        // 冷却缩减:天赋 + 该技能位的「快速冷却」,合计最多 -60%
+        const red = Math.min(0.6, ((p.tree && p.tree.cdr) || 0) + this._gv(p, key, 'faster'));
+        const cd = base * this._getCDMultiplier(sk.level) * (1 - red);
         return flat ? Math.max(1, cd - flat) : cd;
     }
 
@@ -4259,17 +4837,21 @@ class Game {
     }
 
     // 职业命中修正(技能、普攻、箭矢共用):刺客暴击、冰霜觉醒碎冰、毒刃上毒。p = 出手的玩家
+    // 另含构筑:天赋/宝石伤害倍率、回响倍率、通用暴击、瘟疫使者
     _applyHitMods(p, target, dmg) {
         if (!p || !target) return dmg;
-        if (p.class === 'assassin') {
-            const crit = 0.2 + (p.spec === 'shadow' ? 0.15 : 0);
-            if (Math.random() < crit) {
-                dmg *= 2;
-                this._showFloatingText('暴击', target.x + target.size / 2, target.y - 8, '#ff80ab');
-            }
+        const ctx = this._ctx, slot = ctx ? ctx.slot : null;
+        const t = p.tree || {};
+        dmg *= this._buildDmgMult(p, slot) * (ctx ? ctx.mult : 1);
+        let crit = (t.crit || 0) + this._gv(p, slot, 'crit');
+        if (p.class === 'assassin') crit += 0.2 + (p.spec === 'shadow' ? 0.15 : 0);
+        if (crit > 0 && Math.random() < crit) {
+            dmg *= 2 + (t.critDmg || 0);
+            this._showFloatingText('暴击', target.x + target.size / 2, target.y - 8, '#ff80ab');
         }
         if (p.spec === 'frost' && p.awakened && target.stunTimer > 0) dmg *= 1.6;
         if (p.spec === 'venom') this._applyPoison(target, p, 1);
+        if (t.poisonHit) this._applyPoison(target, p, 1);
         return dmg;
     }
 
@@ -4290,7 +4872,7 @@ class Game {
         if (t.poisonTick <= 0) {
             t.poisonTick += 0.5;
             const owner = t.poisonOwner || this.player;
-            const dmg = t.poison * 0.2 * owner.attack * 0.5;
+            const dmg = t.poison * 0.2 * owner.attack * 0.5 * (1 + ((owner.tree && owner.tree.dot) || 0));
             t.currentHealth = Math.max(0, t.currentHealth - dmg);
             if (t === this.boss) this.bossDamageDealt += dmg;
             this.spawnParticles(t.x + t.size / 2, t.y + t.size / 2, '#76ff03', 3, 0.5, 1.5, 1, 3, 0.03);
@@ -4328,6 +4910,7 @@ class Game {
     _dealDamage(target, dmg) {
         dmg = this._applyHitMods(this.player, target, dmg);
         target.takeDamage(dmg);
+        this._afterHit(this.player, target, dmg);
         this._knockbackFrom(target, this.player.x + this.player.size / 2, this.player.y + this.player.size / 2, 3.5);
         this.player.gainRage(10);
         // 魔王特殊处理:不死亡,只累计伤害
@@ -4384,36 +4967,16 @@ class Game {
         this.effects.push({ type: 'floatText', text, x, y, color, ttl: 0.8, maxTtl: 0.8 });
     }
 
-    castSkillQ() {
-        if (!this.player.class) return;
-        const skill = this.player.skillQ;
-        if (skill.cooldown > 0) return;
-        const cls = this.player.class;
-        if (cls === 'warrior') this._warriorQ(skill);
-        else if (cls === 'mage') this._mageQ(skill);
-        else if (cls === 'assassin') this._assassinQ(skill);
-        else if (cls === 'archer') this._archerQ(skill);
-        else if (cls === 'paladin') this._paladinQ(skill);
-    }
+    castSkillQ() { this._castSlot('q'); }
 
-    castSkillE() {
-        if (!this.player.class) return;
-        const skill = this.player.skillE;
-        if (skill.cooldown > 0) return;
-        const cls = this.player.class;
-        if (cls === 'warrior') this._warriorE(skill);
-        else if (cls === 'mage') this._mageE(skill);
-        else if (cls === 'assassin') this._assassinE(skill);
-        else if (cls === 'archer') this._archerE(skill);
-        else if (cls === 'paladin') this._paladinE(skill);
-    }
+    castSkillE() { this._castSlot('e'); }
 
     _warriorQ(skill) {
         if (this.player.rage < 30) return;
         this.player.rage -= 30;
         const dmg = this._computeAttackDamage(this.player.attack) * 1.5 * this._getSkillMultiplier(skill.level) * (this.player.warriorSkillDmgMult || 1);
         if (this.player.spec === 'berserker') { this._warriorWhirl(skill, dmg); skill.cooldown = skill.maxCooldown; return; }
-        const range = skill.level >= 3 ? 150 : 120;
+        const range = this._aoe(skill.level >= 3 ? 150 : 120);
         const pcx = this.player.x + this.player.size / 2;
         const pcy = this.player.y + this.player.size / 2;
         const particleCount = skill.level >= 3 ? 24 : 16;
@@ -4441,7 +5004,7 @@ class Game {
     _warriorWhirl(skill, dmg) {
         const aw = this.player.awakened;
         const ticks = aw ? 10 : 6;
-        const range = (skill.level >= 3 ? 130 : 110) * (aw ? 1.3 : 1);
+        const range = this._aoe((skill.level >= 3 ? 130 : 110) * (aw ? 1.3 : 1));
         for (let i = 0; i < ticks; i++) {
             this.pendingActions.push({ delay: i * 0.25, fn: () => {
                 const p = this.player;
@@ -4556,7 +5119,7 @@ class Game {
     _mageFrostNova(skill) {
         const p = this.player;
         const pcx = p.x + p.size / 2, pcy = p.y + p.size / 2;
-        const range = skill.level >= 3 ? 210 : 170;
+        const range = this._aoe(skill.level >= 3 ? 210 : 170);
         const dmg = this._computeAttackDamage(p.attack) * 1.0 * this._getSkillMultiplier(skill.level) * (1 + (p.magePenetration || 0));
         // 先冻住再结算伤害,让觉醒「碎冰」对这一下也生效
         this._hitAround(pcx, pcy, range, dmg, e => { e.stunTimer = Math.max(e.stunTimer || 0, e === this.boss ? 0.6 : 2); });
@@ -4574,7 +5137,7 @@ class Game {
     _mageFlameNova(skill) {
         const p = this.player;
         const pcx = p.x + p.size / 2, pcy = p.y + p.size / 2;
-        const range = skill.level >= 3 ? 200 : 160;
+        const range = this._aoe(skill.level >= 3 ? 200 : 160);
         const base = this._computeAttackDamage(p.attack) * this._getSkillMultiplier(skill.level) * (1 + (p.magePenetration || 0));
         this._hitAround(pcx, pcy, range, base * 1.6);
         this.effects.push({ type: 'shockwave', x: pcx, y: pcy, radius: 14, maxRadius: range, color: '#ff7043', ttl: 0.45, maxTtl: 0.45 });
@@ -4598,7 +5161,7 @@ class Game {
     _mageRepulseEffect(skill) {
         const pcx = this.player.x + this.player.size / 2;
         const pcy = this.player.y + this.player.size / 2;
-        const range      = skill.level >= 3 ? 210 : 160;
+        const range      = this._aoe(skill.level >= 3 ? 210 : 160);
         // 击退力度:3级更强
         const pushForce  = skill.level >= 3 ? 220 : skill.level === 2 ? 180 : 140;
         const dmg        = this._computeAttackDamage(this.player.attack) * 1.0
@@ -4709,8 +5272,9 @@ class Game {
         const newPcy = this.player.y + this.player.size / 2;
         // 影舞者觉醒:落点范围斩击
         if (p.spec === 'shadow' && p.awakened) {
-            this._hitAround(newPcx, newPcy, 75, dmg * 0.6);
-            this.effects.push({ type: 'meleeSwing', x: newPcx, y: newPcy, radius: 75, startAngle: 0, endAngle: Math.PI * 2, color: '#b388ff', ttl: 0.25, maxTtl: 0.25 });
+            const r = this._aoe(75);
+            this._hitAround(newPcx, newPcy, r, dmg * 0.6);
+            this.effects.push({ type: 'meleeSwing', x: newPcx, y: newPcy, radius: r, startAngle: 0, endAngle: Math.PI * 2, color: '#b388ff', ttl: 0.25, maxTtl: 0.25 });
         }
         // 刺客被动「收割」:Q 击杀返还一半冷却;影舞者直接刷新
         if ((p.killCount || 0) > kills0) {
@@ -4818,7 +5382,7 @@ class Game {
                         fn: () => {
                             this.spawnHitParticles(tx, ty, '#aaff44', 6);
                             this.effects.push({ type: 'shockwave', x: tx, y: ty, radius: 5, maxRadius: 30, color: '#aaff44', ttl: 0.2, maxTtl: 0.2 });
-                            this._hitAround(tx, ty, 25, dmg);
+                            this._hitAround(tx, ty, this._aoe(25), dmg);
                         }
                     });
                 }
@@ -4838,8 +5402,9 @@ class Game {
         const tcy = target.y + target.size / 2;
         if (this.player.spec === 'crusader') {
             // 审判之锤:目标周围 90 内全部晕眩
-            this._hitAround(tcx, tcy, 90, dmg, e => { e.stunTimer = Math.max(e.stunTimer || 0, e === this.boss ? 0.8 : 1.5); });
-            this.effects.push({ type: 'ring', x: tcx, y: tcy, radius: 90, color: '#ffe082', ttl: 0.5, maxTtl: 0.5, rotation: 0, rotSpeed: 3 });
+            const r = this._aoe(90);
+            this._hitAround(tcx, tcy, r, dmg, e => { e.stunTimer = Math.max(e.stunTimer || 0, e === this.boss ? 0.8 : 1.5); });
+            this.effects.push({ type: 'ring', x: tcx, y: tcy, radius: r, color: '#ffe082', ttl: 0.5, maxTtl: 0.5, rotation: 0, rotSpeed: 3 });
             this._showFloatingText('审判!', tcx, tcy - 40, '#ffd700');
         } else {
             this._dealDamage(target, dmg);
@@ -4908,15 +5473,17 @@ class Game {
         if (cls === 'mage') {
             const p = this.player;
             p.arcaneCount = (p.arcaneCount || 0) + 1;
-            if (p.spec === 'pyro') { kind = 4; splash = 50; }
+            if (p.spec === 'pyro') { kind = 4; splash = this._aoe(50); }
             if (p.arcaneCount % 4 === 0) {
-                kind = 3; splash = 60; orbMult = 1.3;
+                kind = 3; splash = this._aoe(60); orbMult = 1.3;
                 if (p.spec === 'frost') freeze = 1;
             }
             if (p.spec === 'pyro' && mageBonusDmg) mageBonusDmg *= 1.3;
         }
 
-        const fanCount = cls === 'archer' ? (this.player.archerMultiShot || 1) : 1;
+        // 技能石「多重投射」:额外 +2 发,每发伤害打折
+        const multi = this._gv(this.player, 'a', 'multi');
+        const fanCount = (cls === 'archer' ? (this.player.archerMultiShot || 1) : 1) + (multi ? 2 : 0);
         const pierce = cls === 'archer' ? (this.player.archerPiercing || 0) : 0;
         // 扇形角度散布
         const spread = fanCount > 1 ? (Math.min(30, 7.5 * (fanCount - 1)) * Math.PI / 180) : 0; // 2 发 ±7.5°,最多 ±30°
@@ -4927,7 +5494,7 @@ class Game {
             const ang = baseAngle + offset;
             const vx = Math.cos(ang) * speed;
             const vy = Math.sin(ang) * speed;
-            const proj = new Projectile(cx - 5, cy - 5, vx, vy, (dmg + mageBonusDmg) * orbMult);
+            const proj = new Projectile(cx - 5, cy - 5, vx, vy, (dmg + mageBonusDmg) * orbMult * (multi || 1));
             proj.owner = this.player;
             proj.bonusMagicDmg = mageBonusDmg;
             if (kind) proj.setKind(kind);
@@ -4946,7 +5513,7 @@ class Game {
     _paladinHammer() {
         const p = this.player;
         const pcx = p.x + p.size / 2, pcy = p.y + p.size / 2;
-        const range = 75;
+        const range = this._aoe(75);
         const near = this._findClosestTarget();
         if (!near || Math.hypot(near.x + near.size / 2 - pcx, near.y + near.size / 2 - pcy) > range + near.size / 2) return;
         let dmg = this._computeAttackDamage(p.attack) * 0.9 * (p.autoAttackDmgMult || 1) * (p.spec === 'crusader' ? 1.5 : 1);
@@ -4974,7 +5541,7 @@ class Game {
     _warriorMeleeAttack() {
         const pcx = this.player.x + this.player.size / 2;
         const pcy = this.player.y + this.player.size / 2;
-        const range = 80;
+        const range = this._aoe(80);
         const baseDmg = this._computeAttackDamage(this.player.attack) * (this.player.autoAttackDmgMult || 1);
         let hit = false, hitCount = 0;
         for (let i = this.enemies.length - 1; i >= 0; i--) {
@@ -4996,9 +5563,7 @@ class Game {
             const bcy = this.boss.y + this.boss.size / 2;
             const dx = bcx - pcx, dy = bcy - pcy;
             if (Math.sqrt(dx * dx + dy * dy) <= range + this.boss.size / 2) {
-                this.boss.takeDamage(baseDmg);
-                this.bossDamageDealt += baseDmg;
-                this.spawnHitParticles(bcx, bcy, '#ff1744', 6);
+                this._dealDamage(this.boss, baseDmg);
                 hit = true;
             }
         }
@@ -5051,6 +5616,7 @@ class Game {
         this.score += 10 * (this.scoreMult || 1) * horde;
         this.exp += 5 * horde;
         if (e && e.type === 'treasure') this._treasureReward(e);
+        else if (e && !e.elite && Math.random() < 0.006) this._dropGem(e.x, e.y);
         // 毒刃觉醒:中毒的敌人死亡时毒雾爆发
         const vo = e && e.poison > 0 && e.poisonOwner;
         if (vo && vo.spec === 'venom' && vo.awakened) {
@@ -5061,6 +5627,16 @@ class Game {
             this.effects.push({ type: 'shockwave', x: cx, y: cy, radius: 6, maxRadius: 90, color: '#76ff03', ttl: 0.35, maxTtl: 0.35 });
         }
         if (e && e.elite) this._eliteReward(e);
+        // 技能石「尸爆」:当前技能位打死的敌人原地爆炸(爆炸本身不再带宝石效果)
+        const boom = e && this._ctx && this._gv(this.player, this._ctx.slot, 'explode');
+        if (boom) {
+            const cx = e.x + e.size / 2, cy = e.y + e.size / 2, dmg = e.maxHealth * boom, r = this._aoe(70);
+            this.pendingActions.push({ delay: 0.08, ctx: null, fn: () => {
+                this._hitAround(cx, cy, r, dmg);
+                this.effects.push({ type: 'shockwave', x: cx, y: cy, radius: 6, maxRadius: r, color: '#b388ff', ttl: 0.3, maxTtl: 0.3 });
+                this.spawnParticles(cx, cy, '#d1c4e9', 10, 1.5, 4, 2, 4, 0.05);
+            } });
+        }
         if (this.player.lifeStealPerKill) {
             this.player.heal(this.player.lifeStealPerKill);
         }
@@ -5900,6 +6476,7 @@ class Game {
 
     // 结算弹窗 + 最高纪录(分数与生存时间分别记录,存 localStorage)
     _showGameOver(time, score) {
+        this.closeBuild();
         Sound.play('gameOver');
         const best = Store.get('blockrun.best', { score: 0, time: 0 });
         const newScore = score > best.score;
@@ -6223,6 +6800,7 @@ class Game {
         this._withHud(() => {
             this._renderSkillHUD();
             this._renderDashButton();
+            this._renderBuildButton();
             this._renderAimKnob();
         });
         this._renderBossHUD();
@@ -6238,7 +6816,7 @@ class Game {
             this._withMenu(() => this.renderPotentialMenu());
         }
 
-        if (this.isPaused && !this.showingClassSelection && !this.showingPotentialMenu) {
+        if (this.isPaused && !this.showingClassSelection && !this.showingPotentialMenu && !this.showingBuild) {
             this._renderPauseOverlay();
         }
 
@@ -6864,6 +7442,374 @@ class Game {
     }
 
     // 冲刺按钮:圆形,位于 E 技能槽正上方(未选职业时也显示);触屏点它冲刺,键盘为空格/Shift
+    // ══════════════════════════════════════════════════════════════════
+    //  构筑面板(DOM):天赋树(SVG,可拖动/缩放)+ 技能石镶嵌。
+    //  打开时暂停(联机房主暂停全场,与升级菜单一致;guest 只停自己并受保护)
+    // ══════════════════════════════════════════════════════════════════
+    openBuild(tab) {
+        if (!this.isRunning || this.showingBuild || this.showingClassSelection || this.showingPotentialMenu) return;
+        if (!this._buildInited) this._initBuildPanel();
+        this.showingBuild = true;
+        this._buildPaused = !this.isPaused;
+        this.isPaused = true;
+        this.keys = {};
+        this.joy.active = false;
+        this._setJoyVector(0, 0);
+        this.aim.active = false;
+        document.getElementById('buildOverlay').style.display = 'flex';
+        const p = this.player;
+        this._treeSel = this._treeSel && p.treeNodes ? this._treeSel : null;
+        this._gemSel = null;
+        this._gemMsg = '';
+        this._buildShowTab(tab || (this._treePoints().free > 0 ? 'tree' : p._newGem ? 'gems' : (this._buildTab || 'tree')));
+        this._treeFit();
+    }
+
+    closeBuild() {
+        if (!this.showingBuild) return;
+        this.showingBuild = false;
+        document.getElementById('buildOverlay').style.display = 'none';
+        if (this._buildPaused) this.isPaused = false;
+        this._buildPaused = false;
+    }
+
+    _buildShowTab(tab) {
+        this._buildTab = tab;
+        document.querySelectorAll('.build-tab').forEach(b => b.classList.toggle('active', b.dataset.tab === tab));
+        document.getElementById('buildTree').style.display = tab === 'tree' ? 'flex' : 'none';
+        document.getElementById('buildGems').style.display = tab === 'gems' ? 'block' : 'none';
+        if (tab === 'gems') this.player._newGem = false;
+        this._buildRefresh();
+    }
+
+    _buildRefresh() {
+        const free = this._treePoints().free;
+        document.getElementById('treePts').textContent = free > 0 ? free : '';
+        document.getElementById('gemNew').textContent = this.player._newGem ? '新' : '';
+        if (this._buildTab === 'tree') this._treeRefresh();
+        else this._gemRefresh();
+    }
+
+    _initBuildPanel() {
+        this._buildInited = true;
+        const NS = 'http://www.w3.org/2000/svg';
+        const svg = document.getElementById('treeSvg');
+        const mk = (tag, attrs, parent) => {
+            const el = document.createElementNS(NS, tag);
+            for (const k in attrs) el.setAttribute(k, attrs[k]);
+            if (parent) parent.appendChild(el);
+            return el;
+        };
+        const deco = mk('g', {}, svg);
+        for (const r of [88, 162, 243, 318, 398]) mk('circle', { class: 'orbit', r }, deco);
+        const links = mk('g', {}, svg);
+        this._treeLinkEls = TREE_LINKS.map(([a, b]) => {
+            const A = TREE_BY_ID[a], B = TREE_BY_ID[b];
+            return { a, b, el: mk('line', { class: 'tl', x1: A.x, y1: A.y, x2: B.x, y2: B.y }, links) };
+        });
+        const nodes = mk('g', {}, svg);
+        const R = { start: 22, small: 14, notable: 22, socket: 19, keystone: 28 };
+        this._treeNodeEls = {};
+        for (const n of TREE_NODES) {
+            const g = mk('g', { class: `tn k-${n.kind}`, transform: `translate(${n.x} ${n.y})` }, nodes);
+            g.dataset.id = n.id;
+            g.style.setProperty('--c', TREE_COLORS[n.br]);
+            mk('circle', { class: 'hit', r: 34 }, g);
+            if (n.kind === 'keystone') mk('circle', { class: 'ring', r: R.keystone + 7 }, g);
+            if (n.kind === 'socket') mk('rect', { class: 'body', x: -R.socket, y: -R.socket, width: R.socket * 2, height: R.socket * 2, rx: 7 }, g);
+            else mk('circle', { class: 'body', r: R[n.kind] }, g);
+            if (n.icon || n.kind === 'start') {
+                const t = mk('text', { class: 'icon', 'font-size': n.kind === 'keystone' ? 24 : 18 }, g);
+                t.textContent = n.icon || '✦';
+            }
+            if (n.kind !== 'small' && n.kind !== 'start') {
+                const t = mk('text', { class: 'lbl', y: R[n.kind] + (n.kind === 'keystone' ? 24 : 17) }, g);
+                t.textContent = n.name;
+            }
+            this._treeNodeEls[n.id] = g;
+        }
+
+        // 拖动平移 / 双指或滚轮缩放 / 轻点选择(再点一次已选中的可点亮节点 = 点亮)
+        const ptrs = new Map();
+        let drag = null;
+        const toSvg = (cx, cy) => {
+            const pt = svg.createSVGPoint();
+            pt.x = cx; pt.y = cy;
+            return pt.matrixTransform(svg.getScreenCTM().inverse());
+        };
+        const unitsPerPx = () => {
+            const r = svg.getBoundingClientRect(), v = this._treeView;
+            return Math.max(v.w / (r.width || 1), v.h / (r.height || 1));
+        };
+        svg.addEventListener('pointerdown', (e) => {
+            svg.setPointerCapture(e.pointerId);
+            ptrs.set(e.pointerId, { x: e.clientX, y: e.clientY });
+            if (ptrs.size === 1) {
+                const node = e.target.closest && e.target.closest('.tn');
+                drag = { moved: 0, node: node ? node.dataset.id : null };
+            } else if (drag) {
+                drag.moved = 99;
+            }
+        });
+        svg.addEventListener('pointermove', (e) => {
+            const prev = ptrs.get(e.pointerId);
+            if (!prev || !drag) return;
+            const cur = { x: e.clientX, y: e.clientY };
+            if (ptrs.size === 1) {
+                const dx = cur.x - prev.x, dy = cur.y - prev.y;
+                drag.moved += Math.abs(dx) + Math.abs(dy);
+                if (drag.moved > 6) {
+                    const k = unitsPerPx();
+                    this._treeView.x -= dx * k;
+                    this._treeView.y -= dy * k;
+                    this._treeApplyView();
+                }
+            } else if (ptrs.size === 2) {
+                const [a, b] = [...ptrs.entries()].map(([id, p]) => id === e.pointerId ? cur : p);
+                const [a0, b0] = [...ptrs.values()];
+                const d0 = Math.hypot(a0.x - b0.x, a0.y - b0.y), d1 = Math.hypot(a.x - b.x, a.y - b.y);
+                if (d0 > 0 && d1 > 0) {
+                    const mid = toSvg((a.x + b.x) / 2, (a.y + b.y) / 2);
+                    this._treeZoom(d0 / d1, mid.x, mid.y);
+                }
+            }
+            ptrs.set(e.pointerId, cur);
+        });
+        const up = (e) => {
+            if (!ptrs.has(e.pointerId)) return;
+            ptrs.delete(e.pointerId);
+            if (ptrs.size === 0 && drag) {
+                if (drag.moved <= 6 && e.type === 'pointerup') this._treeTap(drag.node);
+                drag = null;
+            }
+        };
+        svg.addEventListener('pointerup', up);
+        svg.addEventListener('pointercancel', up);
+        svg.addEventListener('wheel', (e) => {
+            e.preventDefault();
+            const m = toSvg(e.clientX, e.clientY);
+            this._treeZoom(e.deltaY > 0 ? 1.15 : 1 / 1.15, m.x, m.y);
+        }, { passive: false });
+        document.querySelectorAll('.tree-zoom button').forEach(b => b.addEventListener('click', () => {
+            const v = this._treeView;
+            if (b.dataset.zoom === 'fit') this._treeFit();
+            else this._treeZoom(b.dataset.zoom === 'in' ? 1 / 1.3 : 1.3, v.x + v.w / 2, v.y + v.h / 2);
+        }));
+
+        document.querySelectorAll('.build-tab').forEach(b => b.addEventListener('click', () => this._buildShowTab(b.dataset.tab)));
+        document.getElementById('buildClose').addEventListener('click', () => this.closeBuild());
+        document.getElementById('buildOverlay').addEventListener('click', (e) => {
+            if (e.target.id === 'buildOverlay') this.closeBuild();
+        });
+        document.getElementById('treeReset').addEventListener('click', () => {
+            if (this.player.treeNodes.size <= 1) return;
+            this._treeReset();
+            this._buildRefresh();
+        });
+        document.getElementById('treeInfo').addEventListener('click', (e) => {
+            if (!e.target.closest('.ti-act') || !this._treeSel) return;
+            const id = this._treeSel;
+            if (this.player.treeNodes.has(id)) this._treeRefund(id);
+            else this._treeAllocate(id);
+            this._buildRefresh();
+        });
+        document.getElementById('buildGems').addEventListener('click', (e) => this._gemClick(e));
+    }
+
+    _treeApplyView() {
+        const v = this._treeView;
+        document.getElementById('treeSvg').setAttribute('viewBox', `${v.x} ${v.y} ${v.w} ${v.h}`);
+    }
+
+    _treeFit() {
+        this._treeView = { x: -440, y: -470, w: 880, h: 910 };   // 上方多留一点,别让图例压住顶端的基石
+        this._treeApplyView();
+    }
+
+    // 以 (cx,cy)(SVG 坐标)为中心缩放;f > 1 拉远
+    _treeZoom(f, cx, cy) {
+        const v = this._treeView;
+        const nw = Math.max(240, Math.min(1100, v.w * f));
+        const k = nw / v.w;
+        v.x = cx - (cx - v.x) * k;
+        v.y = cy - (cy - v.y) * k;
+        v.w = nw;
+        v.h = v.h * k;
+        this._treeApplyView();
+    }
+
+    _treeTap(id) {
+        if (!id) return;
+        const p = this.player;
+        if (this._treeSel === id && !p.treeNodes.has(id) && this._treeCanAlloc(p, id)) this._treeAllocate(id);
+        this._treeSel = id;
+        this._buildRefresh();
+    }
+
+    _treeRefresh() {
+        const p = this.player;
+        const pts = this._treePoints();
+        const can = id => !p.treeNodes.has(id) && TREE_ADJ[id].some(n => p.treeNodes.has(n)) && pts.free > 0;
+        for (const n of TREE_NODES) {
+            const g = this._treeNodeEls[n.id];
+            g.classList.toggle('on', p.treeNodes.has(n.id));
+            g.classList.toggle('can', can(n.id));
+            g.classList.toggle('sel', this._treeSel === n.id);
+        }
+        for (const l of this._treeLinkEls) {
+            const ia = p.treeNodes.has(l.a), ib = p.treeNodes.has(l.b);
+            l.el.classList.toggle('on', ia && ib);
+            l.el.classList.toggle('can', (ia && can(l.b)) || (ib && can(l.a)));
+        }
+        // 选中节点详情
+        const info = document.getElementById('treeInfo');
+        const n = this._treeSel && TREE_BY_ID[this._treeSel];
+        if (!n) {
+            info.style.removeProperty('--c');
+            info.innerHTML = `<div class="ti-name">天赋点 ${pts.free} / ${pts.total}</div>
+                <div class="ti-hint">每升 1 级、每击退 1 次魔王获得 1 点。点选节点查看效果,再点一次(或按下方按钮)点亮。只能点亮与已点亮节点相连的节点;尽头的「基石」会改变玩法,但有代价。拖动平移,双指或滚轮缩放。</div>`;
+        } else {
+            const kindName = { start: '起点', small: '小天赋', notable: '大天赋', socket: '连接孔', keystone: '基石' }[n.kind];
+            const brName = TREE_BRANCH_NAMES[n.br] || (n.br === 'mix' ? '混合' : '');
+            const lines = n.kind === 'start' ? [n.desc] : treeModLines(n.mods);
+            const on = p.treeNodes.has(n.id);
+            let btn;
+            if (n.kind === 'start') btn = '';
+            else if (on) btn = this._treeCanRefund(p, n.id)
+                ? `<button class="mp-btn mp-btn-ghost ti-act">取消点亮(返还 1 点)</button>`
+                : `<button class="mp-btn mp-btn-ghost ti-act" disabled>需先取消更外侧的节点</button>`;
+            else if (!TREE_ADJ[n.id].some(x => p.treeNodes.has(x))) btn = `<button class="mp-btn mp-btn-primary ti-act" disabled>需要先点亮相连的节点</button>`;
+            else if (pts.free <= 0) btn = `<button class="mp-btn mp-btn-primary ti-act" disabled>没有天赋点(升级/击退魔王获得)</button>`;
+            else btn = `<button class="mp-btn mp-btn-primary ti-act">点亮(剩余 ${pts.free} 点)</button>`;
+            info.style.setProperty('--c', TREE_COLORS[n.br]);
+            info.innerHTML = `<div><span class="ti-name" style="color:${TREE_COLORS[n.br]}">${n.name}</span><span class="ti-kind">${kindName}${brName ? ' · ' + brName : ''}${on && n.kind !== 'start' ? ' · 已点亮' : ''}</span></div>
+                <ul>${lines.map(l => `<li>${l}</li>`).join('')}</ul>${btn}`;
+        }
+        const sum = treeModLines(p.tree);
+        document.getElementById('treeSummary').innerHTML = `<b>已点亮 ${pts.used} 个节点</b>${sum.length ? '<br>' + sum.join('<br>') : '<br>还没有点亮任何天赋'}`;
+    }
+
+    _gemRefresh() {
+        const p = this.player;
+        const map = this._gemMap(p);
+        const counts = map.counts;
+        const sel = this._gemSel;
+        const rows = GEM_SLOTS.map(slot => {
+            const title = slot === 'a' ? '普攻' : `${slot.toUpperCase()} 技能`;
+            const sub = slot === 'a' ? (p.class === 'warrior' || p.class === 'paladin' ? '近战' : '远程')
+                : !p.class ? '选择职业后生效'
+                : p.class === 'mage' && slot === 'q' ? '魔力涌注 · 开启时作用于普攻'
+                : SKILL_NAMES[p.class][slot];
+            const n = this._socketCount(p, slot);
+            const socks = [];
+            for (let i = 0; i < 3; i++) {
+                if (i > 0) socks.push('<span class="gem-link"></span>');
+                const id = p.sockets[slot][i];
+                if (i >= n) { socks.push(`<button class="sock locked" title="天赋树连接孔节点解锁">🔒<small>天赋树</small></button>`); continue; }
+                if (id && counts[id]) {
+                    const bad = gemMisfit(id, slot, p.class);
+                    socks.push(`<button class="sock filled${bad ? ' bad' : ''}" style="--c:${GEMS[id].color}" data-slot="${slot}" data-i="${i}" title="${GEMS[id].name}">${GEMS[id].icon}<small>Lv${counts[id]}</small></button>`);
+                } else {
+                    const fit = sel && gemCanPlace(sel, slot, p.class) && !gemMisfit(sel, slot, p.class);
+                    socks.push(`<button class="sock${fit ? ' target' : ''}" data-slot="${slot}" data-i="${i}">+</button>`);
+                }
+            }
+            return `<div class="gem-row"><div class="gem-row-title">${title}<small>${sub}</small></div><div class="gem-socks">${socks.join('')}</div></div>`;
+        });
+        document.getElementById('gemSlots').innerHTML = rows.join('');
+
+        const owned = GEM_TYPES.filter(id => counts[id]);
+        const where = id => GEM_SLOTS.find(s => p.sockets[s].slice(0, this._socketCount(p, s)).includes(id));
+        document.getElementById('gemBag').innerHTML = owned.length ? owned.map(id => {
+            const w = where(id);
+            const tag = w ? `已镶:${w === 'a' ? '普攻' : w.toUpperCase()}` : '未镶嵌';
+            return `<button class="gem-card${sel === id ? ' sel' : ''}" style="--c:${GEMS[id].color}" data-gem="${id}">
+                <span class="gc-icon">${GEMS[id].icon}</span><span><b>${GEMS[id].name} Lv${counts[id]}</b><small>${tag}</small></span></button>`;
+        }).join('') : '<div class="gem-empty">还没有技能石。地上发光的宝石就是技能石:定时掉落,精英、宝藏方块和魔王也会掉。</div>';
+
+        const info = document.getElementById('gemInfo');
+        const msg = this._gemMsg ? `<div class="gi-warn">${this._gemMsg}</div>` : '';
+        if (sel && GEMS[sel]) {
+            const g = GEMS[sel], lv = counts[sel];
+            const next = lv < 3 ? `<span class="gi-hint">(Lv${lv + 1}:${g.desc(g.val[lv])})</span>` : '<span class="gi-hint">(已满级)</span>';
+            const slots = g.slots.split('').map(s => s === 'a' ? '普攻' : s.toUpperCase()).join(' / ');
+            info.innerHTML = `<div class="gi-name" style="color:${g.color}">${g.icon} ${g.name} Lv${lv}</div>
+                <div>${g.desc(g.val[lv - 1])} ${next}</div>
+                <div class="gi-hint">可镶嵌:${slots} · 点击上方空孔镶嵌,已镶在别处会移过来</div>${msg}`;
+        } else {
+            info.innerHTML = `<div class="gi-hint">在背包里选一颗技能石,再点上方的孔把它镶进去;点已镶的宝石可以取下。
+                同种技能石再捡到会升级(最高 Lv3)。灰色表示对当前职业的该技能无效。</div>${msg}`;
+        }
+    }
+
+    _gemClick(e) {
+        const card = e.target.closest('.gem-card');
+        const sock = e.target.closest('.sock');
+        this._gemMsg = '';
+        if (card) {
+            this._gemSel = this._gemSel === card.dataset.gem ? null : card.dataset.gem;
+        } else if (sock && sock.dataset.slot) {
+            const slot = sock.dataset.slot, i = +sock.dataset.i;
+            const cur = this.player.sockets[slot][i];
+            if (this._gemSel) {
+                const bad = gemMisfit(this._gemSel, slot, this.player.class);
+                if (!gemCanPlace(this._gemSel, slot, this.player.class)) {
+                    this._gemMsg = `「${GEMS[this._gemSel].name}」${bad || '不能镶在这里'}`;
+                } else {
+                    this._socketGem(slot, i, this._gemSel);
+                    if (bad) this._gemMsg = `已镶嵌,但${bad}`;
+                    this._gemSel = null;
+                }
+            } else if (cur) {
+                this._socketGem(slot, i, null);
+                this._gemSel = cur;
+            } else {
+                this._gemMsg = '先在下方背包里选一颗技能石';
+            }
+        } else {
+            return;
+        }
+        this._buildRefresh();
+    }
+
+    // HUD「构筑」按钮(冲刺键左侧);有未用天赋点 / 新宝石时角标提醒
+    _renderBuildButton() {
+        if (!this.isRunning) return;
+        const ctx = this.ctx;
+        const s = 40;
+        const x = this._hud.w - 48 - 24 - 14 - s, y = this._hud.h - 82 - 12 - 24 - 12 - s / 2;
+        this._hudButton(x - 2, y - 2, s + 4, s + 4, 'build');
+        const free = this._treePoints().free;
+        const alert = free > 0 || this.player._newGem;
+        ctx.save();
+        ctx.fillStyle = alert ? 'rgba(255,215,64,0.16)' : 'rgba(0,0,0,0.55)';
+        roundRect(ctx, x, y, s, s, 9);
+        ctx.fill();
+        ctx.lineWidth = 2;
+        ctx.strokeStyle = alert ? `rgba(255,215,64,${0.55 + 0.4 * Math.abs(Math.sin(this.bgTime * 3))})` : 'rgba(0,200,255,0.45)';
+        roundRect(ctx, x, y, s, s, 9);
+        ctx.stroke();
+        ctx.fillStyle = alert ? '#ffd740' : '#c8e8ff';
+        ctx.font = 'bold 13px Arial';
+        ctx.textAlign = 'center';
+        ctx.textBaseline = 'middle';
+        ctx.fillText('构筑', x + s / 2, y + s / 2 - 4);
+        ctx.fillStyle = '#9fb3c8';
+        ctx.font = '9px Arial';
+        ctx.fillText('B', x + s / 2, y + s / 2 + 11);
+        if (alert) {
+            const bx = x + s - 2, by = y + 2;
+            ctx.fillStyle = '#ff5252';
+            ctx.beginPath();
+            ctx.arc(bx, by, 8, 0, Math.PI * 2);
+            ctx.fill();
+            ctx.fillStyle = '#ffffff';
+            ctx.font = 'bold 10px Arial';
+            ctx.fillText(free > 0 ? String(free) : '!', bx, by + 0.5);
+        }
+        ctx.restore();
+    }
+
     _renderDashButton() {
         if (!this.isRunning) return;
         const p = this.player;
@@ -6871,7 +7817,8 @@ class Game {
         const r = 24;
         const cx = this._hud.w - 48, cy = this._hud.h - 82 - 12 - r - 12;
         this._hudButton(cx - r - 4, cy - r - 4, r * 2 + 8, r * 2 + 8, 'dash');
-        const ratio = p.dashMaxCooldown > 0 ? Math.max(0, Math.min(1, p.dashCooldown / p.dashMaxCooldown)) : 0;
+        const dashMax = p.dashCdTotal();
+        const ratio = dashMax > 0 ? Math.max(0, Math.min(1, p.dashCooldown / dashMax)) : 0;
         const ready = ratio <= 0;
         const col = '#80d8ff';
         ctx.save();
@@ -6929,8 +7876,8 @@ class Game {
 
         const sp = specDef(this.player);
         const slots = [
-            { skill: this.player.skillQ, label: 'Q', icon: (sp && sp.q) || qNames[cls] || 'Q', color: qColors[cls] || '#fff', x: baseX },
-            { skill: this.player.skillE, label: 'E', icon: (sp && sp.e) || eNames[cls] || 'E', color: eColors[cls] || '#fff', x: baseX + slotW + margin }
+            { skill: this.player.skillQ, key: 'q', label: 'Q', icon: (sp && sp.q) || qNames[cls] || 'Q', color: qColors[cls] || '#fff', x: baseX },
+            { skill: this.player.skillE, key: 'e', label: 'E', icon: (sp && sp.e) || eNames[cls] || 'E', color: eColors[cls] || '#fff', x: baseX + slotW + margin }
         ];
         // 职业 / 专精名牌(技能槽上方)
         {
@@ -6971,6 +7918,17 @@ class Game {
             ctx.fillStyle = '#cccccc';
             ctx.font = `11px Arial`;
             ctx.fillText(s.label, s.x + slotW / 2, baseY + slotH / 2 + 14);
+
+            // 已镶嵌且生效的技能石:槽顶一排小宝石点
+            const gems = Object.keys(this._gemMap(this.player)[s.key]);
+            gems.forEach((id, gi) => {
+                const gx = s.x + slotW / 2 + (gi - (gems.length - 1) / 2) * 10, gy = baseY + 7;
+                ctx.fillStyle = GEMS[id].color;
+                ctx.beginPath();
+                ctx.moveTo(gx, gy - 4); ctx.lineTo(gx + 3.5, gy); ctx.lineTo(gx, gy + 4); ctx.lineTo(gx - 3.5, gy);
+                ctx.closePath();
+                ctx.fill();
+            });
 
             if (cdRatio > 0) {
                 ctx.fillStyle = 'rgba(0,0,0,0.55)';
@@ -7268,6 +8226,19 @@ class Player {
         this.undyingCd = 0;             // 铁卫觉醒「不屈」冷却
         this.auraGuard = 0;             // 守护者觉醒:处于减伤光环内的剩余时长
         this._pendingIframes = 0;       // 下一帧补上的无敌时长(调用方会在 takeDamage 后覆盖 hurtCooldown)
+
+        // 构筑:天赋树 + 技能石(见 TREE_NODES / GEMS、Game._recomputeTree / _gemMap)
+        this.treeNodes = new Set(['start']);
+        this.tree = {};                 // 已点亮节点的属性汇总,使用处读取
+        this._treeBase = { attack: 0, maxHealth: 0, defense: 0, speed: 0 }; // 已加到基础属性上的部分(洗点时扣回)
+        this.gemLog = '';               // 拾取过的技能石(每字符 = GEM_TYPES 下标的 36 进制),同种出现次数 = 等级
+        this.sockets = { a: [null, null, null], q: [null, null, null], e: [null, null, null] };
+        this._buildVer = 0;             // 天赋/宝石/镶嵌变化计数,_gemMap 缓存据此失效
+    }
+
+    // 冲刺实际冷却(天赋「疾风连击」减免)
+    dashCdTotal() {
+        return this.dashMaxCooldown * (1 - ((this.tree && this.tree.dashCdr) || 0));
     }
     
     update(keys, width, height) {
@@ -7320,7 +8291,7 @@ class Player {
         this.dashVX = this.faceX * this.dashSpeed;
         this.dashVY = this.faceY * this.dashSpeed;
         this.dashTimer = this.dashDuration;
-        this.dashCooldown = this.dashMaxCooldown;
+        this.dashCooldown = this.dashCdTotal();
         this.dashDodged = false;
         this._dashHits = null;
         return true;
@@ -7407,10 +8378,15 @@ class Player {
     }
 
     takeDamage(damage) {
+        const t = this.tree || {};
+        // 天赋「疾风之舞」:几率完全闪避
+        if (t.evade && Math.random() < t.evade) { this._evadeFx = true; return 0; }
         const flatReduction = this.flatDamageReduction || 0;
         const gear = this.gear && GEARS[this.gear.type];
         const gearDef = gear && gear.defBonus || 0;
-        let actualDamage = Math.max(1, damage - this.defense - gearDef - flatReduction);
+        const def = this.defense * Math.max(0, 1 + (t.defPct || 0));
+        let actualDamage = Math.max(1, damage - def - gearDef - flatReduction);
+        if (t.dmgTaken) actualDamage *= Math.max(0.1, 1 + t.dmgTaken);
         // 战士被动「战意」:怒气越高越抗揍(满怒 -30%)
         if (this.class === 'warrior') actualDamage *= 1 - 0.3 * Math.min(1, this.rage / this.maxRage);
         // 守护者觉醒:神圣光环内减伤 50%;记下原始伤害,交给 Game 反弹
@@ -7438,6 +8414,8 @@ class Player {
     }
 
     heal(amount) {
+        const ht = this.tree && this.tree.healTaken;
+        if (ht) amount *= Math.max(0, 1 + ht);
         this.currentHealth = Math.min(this.maxHealth, this.currentHealth + amount);
     }
     
@@ -8128,6 +9106,21 @@ class Enemy {
             }
             ctx.fill();
         }
+        // 燃烧(技能石):橙色火苗在身上窜动
+        if (this.burnT > 0) {
+            const t = performance.now() / 1000;
+            ctx.fillStyle = 'rgba(255,145,0,0.8)';
+            ctx.beginPath();
+            for (let i = 0; i < 3; i++) {
+                const k = (t * 1.6 + i / 3 + (this.id % 5) * 0.17) % 1;
+                const fx = this.x + this.size * (0.2 + 0.3 * i) + Math.sin(t * 9 + i) * 2;
+                const fy = this.y + this.size * (0.9 - k * 0.9);
+                const r = 3.2 * (1 - k) + 0.6;
+                ctx.moveTo(fx + r, fy);
+                ctx.arc(fx, fy, r, 0, Math.PI * 2);
+            }
+            ctx.fill();
+        }
         if (this.elite) SpriteCache.drawPx(ctx, Enemy.eliteSprite(this.size, this.type === 'giant' ? 10 : 6), this.x, this.y, snap);
         if (this.stunTimer > 0 && this.type !== 'gunner') {
             const cx = this.x + this.size / 2;
@@ -8342,7 +9335,12 @@ class Item {
         // 限时装备:按 GEARS 配色,地上停留 12 秒
         this.gear = type.startsWith('gear_') ? type.slice(5) : null;
         const gd = this.gear && GEARS[this.gear];
-        const c = gd ? { color: gd.color, icon: gd.icon, rarity: 'epic', duration: 12 } : (cfg[type] || cfg.potion);
+        // 技能石:按属性系配色,地上停留 15 秒
+        this.gem = type.startsWith('gem_') && GEMS[type.slice(4)] ? type.slice(4) : null;
+        const gm = this.gem && GEMS[this.gem];
+        const c = gd ? { color: gd.color, icon: gd.icon, rarity: 'epic', duration: 12 }
+            : gm ? { color: gm.color, icon: gm.icon, rarity: 'rare', duration: 15 }
+            : (cfg[type] || cfg.potion);
         this.color = c.color;
         this.icon = c.icon;
         this.rarity = c.rarity;
@@ -8373,7 +9371,62 @@ class Item {
         this.bobPhase += 0.08;
     }
 
+    // 技能石:悬浮旋转的切面宝石 + 名字(只用渐变填充,不用 shadowBlur)
+    _renderGem(ctx) {
+        const time = performance.now() / 1000;
+        const def = GEMS[this.gem];
+        const c = def.color;
+        const cx = this.x + this.size / 2;
+        const cy = this.y + this.size / 2 + (this.landTimer > 0 ? 0 : Math.sin(this.bobPhase) * 2.5);
+        const lifePct = this.duration / this.maxDuration;
+        const alpha = lifePct < 0.3 ? 0.4 + 0.6 * Math.abs(Math.sin(time * (lifePct < 0.15 ? 18 : 10))) : 1;
+        const r = 12;
+        const w = r * (0.5 + 0.5 * Math.abs(Math.cos(this.spinPhase * 1.5)));   // 绕竖轴旋转:宽度随相位变化
+        ctx.save();
+        ctx.globalAlpha = alpha;
+        const pulse = 0.8 + 0.2 * Math.sin(time * 4 + this.spinPhase);
+        const glow = ctx.createRadialGradient(cx, cy, 2, cx, cy, r * 2.6 * pulse);
+        glow.addColorStop(0, c + '99');
+        glow.addColorStop(1, c + '00');
+        ctx.fillStyle = glow;
+        ctx.beginPath();
+        ctx.arc(cx, cy, r * 2.6 * pulse, 0, Math.PI * 2);
+        ctx.fill();
+        // 八面体剪影:上尖下尖,腰线偏上
+        const top = cy - r * 1.25, mid = cy - r * 0.25, bot = cy + r * 1.25;
+        ctx.beginPath();
+        ctx.moveTo(cx, top);
+        ctx.lineTo(cx + w, mid);
+        ctx.lineTo(cx, bot);
+        ctx.lineTo(cx - w, mid);
+        ctx.closePath();
+        const grad = ctx.createLinearGradient(cx - w, top, cx + w, bot);
+        grad.addColorStop(0, '#ffffff');
+        grad.addColorStop(0.35, c);
+        grad.addColorStop(1, '#0d1620');
+        ctx.fillStyle = grad;
+        ctx.fill();
+        ctx.strokeStyle = 'rgba(255,255,255,0.85)';
+        ctx.lineWidth = 1.2;
+        ctx.stroke();
+        ctx.beginPath();
+        ctx.moveTo(cx - w, mid); ctx.lineTo(cx + w, mid);
+        ctx.moveTo(cx, top); ctx.lineTo(cx + w * 0.3, mid); ctx.lineTo(cx, bot);
+        ctx.strokeStyle = 'rgba(255,255,255,0.4)';
+        ctx.lineWidth = 1;
+        ctx.stroke();
+        ctx.font = 'bold 10px Arial';
+        ctx.textAlign = 'center';
+        ctx.textBaseline = 'top';
+        ctx.fillStyle = 'rgba(0,0,0,0.6)';
+        ctx.fillText(def.name, cx + 1, bot + 5);
+        ctx.fillStyle = c;
+        ctx.fillText(def.name, cx, bot + 4);
+        ctx.restore();
+    }
+
     render(ctx) {
+        if (this.gem) { this._renderGem(ctx); return; }
         const time = Date.now() * 0.001;
         const cx = this.x + this.size / 2;
         const cy = this.y + this.size / 2;
@@ -8818,6 +9871,7 @@ class PiercingArrow {
 
         const ax = this.x + this.size / 2;
         const ay = this.y + this.size / 2;
+        const g = this.game;
 
         for (let j = this.game.enemies.length - 1; j >= 0; j--) {
             const e = this.game.enemies[j];
@@ -8826,7 +9880,11 @@ class PiercingArrow {
             const ey = e.y + e.size / 2;
             if (Math.abs(ax - ex) < (e.size / 2 + this.size / 2) && Math.abs(ay - ey) < (e.size / 2 + this.size / 2)) {
                 this.hitEnemies.add(e);
-                e.takeDamage(this.game._applyHitMods(this.owner, e, this.damage * (e.elite ? this.eliteMult || 1 : 1)));
+                const prevCtx = g._ctx;
+                g._ctx = this.ctx || null;
+                const dmg = g._applyHitMods(this.owner, e, this.damage * (e.elite ? this.eliteMult || 1 : 1));
+                e.takeDamage(dmg);
+                g._afterHit(this.owner, e, dmg);
                 this.game._knockbackDir(e, this.dx, this.dy, 4);
                 this.game.spawnHitParticles(ex, ey, '#aaff44', 6);
                 if (e.currentHealth <= 0) {
@@ -8834,6 +9892,7 @@ class PiercingArrow {
                     this.game._runAsPlayer(this.owner, () => this.game._onEnemyKilled(e));
                     this.game.enemies.splice(j, 1);
                 }
+                g._ctx = prevCtx;
             }
         }
         // 命中魔王
@@ -8843,8 +9902,12 @@ class PiercingArrow {
             const by = boss.y + boss.size / 2;
             if (Math.abs(ax - bx) < (boss.size / 2 + this.size / 2) && Math.abs(ay - by) < (boss.size / 2 + this.size / 2)) {
                 this.hitEnemies.add(boss);
-                const bdmg = this.game._applyHitMods(this.owner, boss, this.damage * (this.eliteMult || 1));
+                const prevCtx = g._ctx;
+                g._ctx = this.ctx || null;
+                const bdmg = g._applyHitMods(this.owner, boss, this.damage * (this.eliteMult || 1));
                 boss.takeDamage(bdmg);
+                g._afterHit(this.owner, boss, bdmg);
+                g._ctx = prevCtx;
                 this.game.bossDamageDealt += bdmg;
                 this.game.spawnHitParticles(bx, by, '#ff1744', 8);
             }
