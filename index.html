@@ -25,6 +25,7 @@
                     <button id="openTips" class="mp-btn mp-btn-ghost">玩法说明</button>
                     <button id="openProgress" class="mp-btn mp-btn-ghost">成就与外观</button>
                 </div>
+                <button id="openControl" class="mp-btn mp-btn-ghost mp-control-btn">操控方式:<span id="controlLabel">摇杆</span></button>
             </div>
             <div id="mpStatus" class="mp-status"></div>
             <div id="mpLobby" class="mp-lobby" style="display:none">
@@ -41,7 +42,7 @@
         <div class="panel-card">
             <h3 class="panel-title">新手指南</h3>
             <ul class="tips-list">
-                <li><b>🕹 移动</b>WASD / 方向键,或点击、触摸屏幕上的目标位置。碰到敌人会掉血,活下去就是胜利。</li>
+                <li><b>🕹 移动</b>WASD / 方向键;触屏可选「虚拟摇杆」(按住空白处拖动)或「点触移动」(点哪走哪),大厅「操控方式」可随时切换。头顶黄色箭头标出的就是你。碰到敌人会掉血,活下去就是胜利。</li>
                 <li><b>💨 冲刺闪避</b>按 <kbd>空格</kbd> / <kbd>Shift</kbd> 或点右下角「冲」按钮,朝移动方向冲刺一段,冲刺途中无敌。贴着攻击冲过去触发「闪避!」,冷却立刻返还一半。</li>
                 <li><b>🎯 自动攻击</b>角色会自动攻击最近的敌人,你只需专注走位和拾取道具。</li>
                 <li><b>⭐ 升级与天赋</b>击杀得经验,每次升级从 3 张天赋卡中挑一张强化自己。</li>
@@ -52,6 +53,27 @@
                 <li><b>⏸ 其他</b><kbd>P</kbd> / <kbd>Esc</kbd> 暂停,<kbd>M</kbd> 静音。累计分数和成就可以解锁新的方块外观。</li>
             </ul>
             <button id="closeTips" class="mp-btn mp-btn-primary">知道了,开始冒险</button>
+        </div>
+    </div>
+
+    <!-- 操控方式选择:进入游戏前弹出(可勾选不再询问),大厅「操控方式」随时更改 -->
+    <div id="controlOverlay" class="panel-overlay" style="display:none">
+        <div class="panel-card control-card">
+            <h3 class="panel-title">选择操控方式</h3>
+            <div class="control-options">
+                <button class="control-opt" data-mode="joystick">
+                    <span class="control-icon">🕹</span>
+                    <b>虚拟摇杆</b>
+                    <span>按住屏幕任意空白处拖动,松手停下</span>
+                </button>
+                <button class="control-opt" data-mode="tap">
+                    <span class="control-icon">👆</span>
+                    <b>点触移动</b>
+                    <span>点哪走哪,角色自动走到目标位置</span>
+                </button>
+            </div>
+            <label class="control-remember"><input type="checkbox" id="controlRemember"> 记住选择,下次不再询问</label>
+            <div class="control-note">键盘 WASD / 方向键始终可用,之后可在大厅「操控方式」里更改</div>
         </div>
     </div>
 

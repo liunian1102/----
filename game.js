@@ -434,6 +434,7 @@ const Sound = {
 };
 
 class Game {
+    static JOY_RADIUS = 56;   // 摇杆半径(CSS px)
     constructor() {
         this.canvas = document.getElementById('gameCanvas');
         this.ctx = this.canvas.getContext('2d');
@@ -459,6 +460,11 @@ class Game {
         this._uiTimer = 0;        // updateUI 降频累计
         this.buttons = [];        // 菜单命中区,每帧 render 时重置
         this.skillButtons = [];   // Q/E 技能按钮命中区,每帧 _renderSkillHUD 时重置
+        // 操控方式:'joystick' 虚拟摇杆 / 'tap' 点触移动(键盘始终可用),存 localStorage
+        this.controlMode = Store.get('blockrun.control', null) ||
+            (('ontouchstart' in window) || navigator.maxTouchPoints > 0 ? 'joystick' : 'tap');
+        // 浮动摇杆状态,坐标为画布后备缓冲像素(屏幕空间,不随世界缩放)
+        this.joy = { active: false, id: null, bx: 0, by: 0, x: 0, y: 0 };
         this.freezeOverlay = null; // 全屏冰封特效数据
 
         this.keys = {};
@@ -897,22 +903,91 @@ class Game {
                 }
             }
 
-            // 否则移动
-            this.setPlayerTarget(x, y);
+            // 否则移动(摇杆模式下空白处由摇杆接管,不设点击目标)
+            if (this.controlMode !== 'joystick') this.setPlayerTarget(x, y);
+        };
+
+        // ── 虚拟摇杆:按下空白处生成底座,拖动方向即移动方向,松手停下 ──
+        const toBacking = (clientX, clientY) => {
+            const rect = this.canvas.getBoundingClientRect();
+            return {
+                x: (clientX - rect.left) * (this.canvas.width / rect.width),
+                y: (clientY - rect.top)  * (this.canvas.height / rect.height),
+                k: this.canvas.width / rect.width   // CSS px → 后备像素
+            };
+        };
+        const tryStartJoy = (clientX, clientY, id) => {
+            if (this.controlMode !== 'joystick' || this.joy.active) return false;
+            if (!this.isRunning || this.isPaused || this.showingPotentialMenu || this.showingClassSelection) return false;
+            const { x, y } = toCanvas(clientX, clientY);
+            const hit = (b) => b && x >= b.x && x <= b.x + b.w && y >= b.y && y <= b.y + b.h;
+            if (hit(this.muteButton) || this.skillButtons.some(hit)) return false;
+            const b = toBacking(clientX, clientY);
+            Object.assign(this.joy, { active: true, id, bx: b.x, by: b.y, x: b.x, y: b.y, k: b.k });
+            this._setJoyVector(0, 0);
+            return true;
+        };
+        const moveJoy = (clientX, clientY) => {
+            const j = this.joy;
+            const b = toBacking(clientX, clientY);
+            const R = Game.JOY_RADIUS * j.k;
+            let dx = b.x - j.bx, dy = b.y - j.by;
+            const d = Math.hypot(dx, dy);
+            // 手指拖出半径时底座跟随,反向拖动不用先拖回原点
+            if (d > R * 1.6) {
+                const pull = d - R * 1.6;
+                j.bx += dx / d * pull; j.by += dy / d * pull;
+                dx = b.x - j.bx; dy = b.y - j.by;
+            }
+            j.x = b.x; j.y = b.y;
+            const dd = Math.hypot(dx, dy);
+            const mag = Math.min(1, dd / R);
+            if (mag < 0.18) { this._setJoyVector(0, 0); return; }   // 死区
+            // 推到 60% 以上即满速,轻推慢走
+            const v = Math.min(1, (mag - 0.18) / 0.42);
+            this._setJoyVector(dx / dd * v, dy / dd * v);
+        };
+        const endJoy = () => {
+            this.joy.active = false;
+            this.joy.id = null;
+            this._setJoyVector(0, 0);
         };
 
         this.canvas.addEventListener('click', (e) => {
             handlePointer(e.clientX, e.clientY);
         });
+        this.canvas.addEventListener('mousedown', (e) => {
+            if (e.button === 0) tryStartJoy(e.clientX, e.clientY, 'mouse');
+        });
+        window.addEventListener('mousemove', (e) => {
+            if (this.joy.active && this.joy.id === 'mouse') moveJoy(e.clientX, e.clientY);
+        });
+        window.addEventListener('mouseup', () => {
+            if (this.joy.active && this.joy.id === 'mouse') endJoy();
+        });
 
+        // 多点触控:每根手指单独分派,摇杆和技能按钮可同时按
         this.canvas.addEventListener('touchstart', (e) => {
             e.preventDefault();
-            handlePointer(e.touches[0].clientX, e.touches[0].clientY);
+            for (const t of e.changedTouches) {
+                if (!tryStartJoy(t.clientX, t.clientY, t.identifier)) handlePointer(t.clientX, t.clientY);
+            }
         }, { passive: false });
 
         this.canvas.addEventListener('touchmove', (e) => {
             e.preventDefault();
+            for (const t of e.changedTouches) {
+                if (this.joy.active && this.joy.id === t.identifier) moveJoy(t.clientX, t.clientY);
+            }
         }, { passive: false });
+
+        const touchEnd = (e) => {
+            for (const t of e.changedTouches) {
+                if (this.joy.active && this.joy.id === t.identifier) endJoy();
+            }
+        };
+        this.canvas.addEventListener('touchend', touchEnd);
+        this.canvas.addEventListener('touchcancel', touchEnd);
 
         // 窗口尺寸变化时重新计算缩放
         window.addEventListener('resize', () => {
@@ -931,7 +1006,22 @@ class Game {
             if (document.hidden && this.isRunning && !this.isPaused) this.togglePause();
         });
         // 失焦时清空按键状态,避免切回来后方向键"卡住"一直移动
-        window.addEventListener('blur', () => { this.keys = {}; });
+        window.addEventListener('blur', () => { this.keys = {}; endJoy(); });
+    }
+
+    // 摇杆方向写进 keys(_jx/_jy,模长 0~1),与键盘走同一条路径,联机时随输入发给主机
+    _setJoyVector(x, y) {
+        this.keys._jx = x;
+        this.keys._jy = y;
+    }
+
+    setControlMode(mode) {
+        this.controlMode = mode === 'tap' ? 'tap' : 'joystick';
+        Store.set('blockrun.control', this.controlMode);
+        this.joy.active = false;
+        this._setJoyVector(0, 0);
+        this.player.moving = false;
+        this.player.targetX = this.player.targetY = null;
     }
     
     setPlayerTarget(x, y) {
@@ -994,6 +1084,8 @@ class Game {
     
     restartGame() {
         this.isRunning = false; // 让当前 rAF 循环自然结束
+        this.joy.active = false;
+        this._setJoyVector(0, 0);
         if (this._rafId) { cancelAnimationFrame(this._rafId); this._rafId = null; }
         this.player = new Player(this.width / 2, this.height / 2);
         this.enemies = [];
@@ -1514,7 +1606,8 @@ class Game {
                 ArrowUp:    !!this.keys['ArrowUp'],   ArrowDown:  !!this.keys['ArrowDown'],
                 ArrowLeft:  !!this.keys['ArrowLeft'],  ArrowRight: !!this.keys['ArrowRight'],
                 w: !!this.keys['w'], a: !!this.keys['a'],
-                s: !!this.keys['s'], d: !!this.keys['d']
+                s: !!this.keys['s'], d: !!this.keys['d'],
+                _jx: q2(this.keys._jx || 0), _jy: q2(this.keys._jy || 0)
             },
             targetX: hasTarget ? p.targetX : null,
             targetY: hasTarget ? p.targetY : null,
@@ -4644,6 +4737,8 @@ class Game {
 
         this.renderParticles();
 
+        this._renderSelfMarker();
+
         ctx.restore(); // 结束震动变换
 
         // HUD 与菜单（在缩放坐标系内，无震动）
@@ -4668,6 +4763,96 @@ class Game {
         }
 
         ctx.restore(); // 结束缩放变换
+
+        this._renderJoystick();
+    }
+
+    // 本地玩家头顶的上下浮动箭头,联机时一眼认出自己(画在敌人和特效之上)
+    _renderSelfMarker() {
+        const p = this.player;
+        if (!p || p.currentHealth <= 0) return;
+        const ctx = this.ctx;
+        const bob = Math.sin(performance.now() / 180) * 3;
+        const cx = p.x + p.size / 2;
+        const tipY = p.y - (p.shield > 0 ? 22 : 16) + bob;   // 避开血条/护盾条
+        const w = 11, h = 12;
+        ctx.save();
+        ctx.beginPath();
+        ctx.moveTo(cx, tipY);
+        ctx.lineTo(cx - w, tipY - h);
+        ctx.lineTo(cx - w * 0.35, tipY - h);
+        ctx.lineTo(cx - w * 0.35, tipY - h - 7);
+        ctx.lineTo(cx + w * 0.35, tipY - h - 7);
+        ctx.lineTo(cx + w * 0.35, tipY - h);
+        ctx.lineTo(cx + w, tipY - h);
+        ctx.closePath();
+        ctx.shadowBlur = 8;
+        ctx.shadowColor = '#ffe14d';
+        ctx.fillStyle = '#ffe14d';
+        ctx.fill();
+        ctx.shadowBlur = 0;
+        ctx.lineWidth = 1.5;
+        ctx.strokeStyle = 'rgba(40,25,0,0.85)';
+        ctx.stroke();
+        ctx.restore();
+    }
+
+    // 虚拟摇杆:屏幕空间绘制(后备像素),按下时在手指处,空闲时左下角给出淡色提示
+    _renderJoystick() {
+        if (this.controlMode !== 'joystick' || this.isPaused ||
+            this.showingPotentialMenu || this.showingClassSelection) return;
+        const ctx = this.ctx;
+        const j = this.joy;
+        const k = this.canvas.width / (this.canvas.getBoundingClientRect().width || this.canvas.width);
+        const R = Game.JOY_RADIUS * k;
+        let bx, by, kx, ky, alpha;
+        if (j.active) {
+            bx = j.bx; by = j.by;
+            const dx = j.x - bx, dy = j.y - by, d = Math.hypot(dx, dy);
+            const m = d > R ? R / d : 1;
+            kx = bx + dx * m; ky = by + dy * m;
+            alpha = 1;
+        } else {
+            // 只在触屏设备上显示空闲提示,桌面端靠键盘为主
+            if (!(('ontouchstart' in window) || navigator.maxTouchPoints > 0)) return;
+            bx = R + 34 * k; by = this.canvas.height - R - 34 * k;
+            kx = bx; ky = by;
+            alpha = 0.45;
+        }
+        ctx.save();
+        ctx.globalAlpha = alpha;
+        ctx.fillStyle = 'rgba(0, 20, 35, 0.35)';
+        ctx.beginPath(); ctx.arc(bx, by, R, 0, Math.PI * 2); ctx.fill();
+        ctx.lineWidth = 2 * k;
+        ctx.strokeStyle = 'rgba(0, 200, 255, 0.55)';
+        ctx.stroke();
+        // 方向刻度
+        ctx.fillStyle = 'rgba(0, 200, 255, 0.5)';
+        for (let i = 0; i < 4; i++) {
+            const a = i * Math.PI / 2;
+            const tx = bx + Math.cos(a) * (R - 9 * k), ty = by + Math.sin(a) * (R - 9 * k);
+            ctx.beginPath();
+            ctx.moveTo(tx + Math.cos(a) * 5 * k, ty + Math.sin(a) * 5 * k);
+            ctx.lineTo(tx + Math.cos(a + 2.2) * 5 * k, ty + Math.sin(a + 2.2) * 5 * k);
+            ctx.lineTo(tx + Math.cos(a - 2.2) * 5 * k, ty + Math.sin(a - 2.2) * 5 * k);
+            ctx.closePath(); ctx.fill();
+        }
+        const kr = R * 0.45;
+        const g = ctx.createRadialGradient(kx - kr * 0.3, ky - kr * 0.3, kr * 0.1, kx, ky, kr);
+        g.addColorStop(0, 'rgba(160, 235, 255, 0.95)');
+        g.addColorStop(1, 'rgba(0, 150, 220, 0.85)');
+        ctx.fillStyle = g;
+        ctx.beginPath(); ctx.arc(kx, ky, kr, 0, Math.PI * 2); ctx.fill();
+        ctx.strokeStyle = 'rgba(255,255,255,0.6)';
+        ctx.lineWidth = 1.5 * k;
+        ctx.stroke();
+        if (!j.active) {
+            ctx.fillStyle = 'rgba(200, 232, 255, 0.9)';
+            ctx.font = `${12 * k}px Arial`;
+            ctx.textAlign = 'center'; ctx.textBaseline = 'top';
+            ctx.fillText('按住拖动移动', bx, by + R + 6 * k);
+        }
+        ctx.restore();
     }
 
     // 左上角状态面板:命数 / 等级 / 经验 / 分数 / 时间(宽 100,不与顶部魔王血条重叠)
@@ -5503,6 +5688,15 @@ class Player {
     }
 
     _move(keys, width, height) {
+        // 虚拟摇杆(模拟量方向)
+        const jx = keys._jx || 0, jy = keys._jy || 0;
+        if (jx || jy) {
+            this.x = Math.max(0, Math.min(width - this.size, this.x + jx * this.speed));
+            this.y = Math.max(0, Math.min(height - this.size, this.y + jy * this.speed));
+            this.moving = false;
+            this.targetX = null;
+            this.targetY = null;
+        }
         // 键盘控制
         if (keys['ArrowUp'] || keys['w']) {
             this.y = Math.max(0, this.y - this.speed);
@@ -6970,6 +7164,41 @@ window.addEventListener('load', () => {
         updateProgressLabel();
     });
 
+    // ── 操控方式:进入游戏前询问(可记住),大厅按钮随时更改 ──
+    const controlOverlay = document.getElementById('controlOverlay');
+    const controlRemember = document.getElementById('controlRemember');
+    const controlOpts = controlOverlay.querySelectorAll('.control-opt');
+    let controlThen = null;
+    const updateControlLabel = () => {
+        document.getElementById('controlLabel').textContent = game.controlMode === 'tap' ? '点触移动' : '虚拟摇杆';
+    };
+    updateControlLabel();
+    const openControl = (then) => {
+        controlThen = then;
+        controlRemember.checked = !!Store.get('blockrun.controlRemember', false);
+        controlOpts.forEach(o => o.classList.toggle('selected', o.dataset.mode === game.controlMode));
+        controlOverlay.style.display = 'flex';
+    };
+    // 进入游戏的入口统一走这里:勾过「不再询问」就直接开始
+    const withControlChoice = (then) => {
+        if (Store.get('blockrun.controlRemember', false)) then();
+        else openControl(then);
+    };
+    controlOpts.forEach(o => o.addEventListener('click', () => {
+        game.setControlMode(o.dataset.mode);
+        Store.set('blockrun.controlRemember', controlRemember.checked);
+        updateControlLabel();
+        controlOverlay.style.display = 'none';
+        const then = controlThen;
+        controlThen = null;
+        if (then) then();
+    }));
+    controlOverlay.addEventListener('click', (e) => {
+        // 点遮罩空白处关闭(仅在大厅「更改」时;进入游戏前必须选一个)
+        if (e.target === controlOverlay && !controlThen) controlOverlay.style.display = 'none';
+    });
+    document.getElementById('openControl').addEventListener('click', () => openControl(null));
+
     // ── 联机大厅按钮逻辑 ──
     const overlay      = document.getElementById('mpOverlay');
     const statusEl     = document.getElementById('mpStatus');
@@ -6986,7 +7215,7 @@ window.addEventListener('load', () => {
     game.mpServerUrl = serverUrl;
 
     // 创建房间
-    document.getElementById('mpCreate').addEventListener('click', async () => {
+    document.getElementById('mpCreate').addEventListener('click', () => withControlChoice(async () => {
         setStatus('连接服务器中...');
         try {
             await game.connectToServer(serverUrl);
@@ -6994,12 +7223,15 @@ window.addEventListener('load', () => {
         } catch (e) {
             setStatus('连接失败：' + e.message, true);
         }
-    });
+    }));
 
     // 加入房间
-    document.getElementById('mpJoin').addEventListener('click', async () => {
+    document.getElementById('mpJoin').addEventListener('click', () => {
         const code = (mpCodeInput.value || '').toUpperCase().trim();
         if (code.length !== 4) { setStatus('请输入4位房间码', true); return; }
+        withControlChoice(() => joinRoom(code));
+    });
+    const joinRoom = async (code) => {
         setStatus('连接服务器中...');
         try {
             await game.connectToServer(serverUrl);
@@ -7007,7 +7239,7 @@ window.addEventListener('load', () => {
         } catch (e) {
             setStatus('连接失败：' + e.message, true);
         }
-    });
+    };
 
     // 房主：开始游戏
     document.getElementById('mpStart').addEventListener('click', () => {
@@ -7017,10 +7249,10 @@ window.addEventListener('load', () => {
     });
 
     // 单人游戏
-    document.getElementById('mpSingle').addEventListener('click', () => {
+    document.getElementById('mpSingle').addEventListener('click', () => withControlChoice(() => {
         overlay.style.display = 'none';
         game.startGame();
-    });
+    }));
 
     // 重启时回到大厅或重新开始
     document.getElementById('restartBtn').addEventListener('click', () => {
