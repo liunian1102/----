@@ -612,3 +612,285 @@ kbd {
 @media (max-width: 380px) {
     .control-options { flex-direction: column; }
 }
+
+/* ── 构筑面板:天赋树 + 技能石 ── */
+.build-overlay { padding: 10px; }
+.build-card {
+    background: linear-gradient(160deg, #0d1f35 0%, #091624 100%);
+    border: 1px solid rgba(0, 200, 255, 0.3);
+    border-radius: 16px;
+    width: min(980px, 100%);
+    height: min(680px, 100%);
+    display: flex;
+    flex-direction: column;
+    color: #c8e8ff;
+    box-shadow: 0 0 50px rgba(0, 200, 255, 0.12), 0 20px 60px rgba(0, 0, 0, 0.6);
+    overflow: hidden;
+}
+.build-head {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    padding: 8px 10px;
+    border-bottom: 1px solid rgba(0, 200, 255, 0.15);
+    flex: none;
+}
+.build-tabs { display: flex; gap: 6px; }
+.build-card .build-close, .build-card .tree-zoom button, .build-card .sock, .build-card .gem-card, .build-card .build-tab {
+    box-shadow: none;
+    text-shadow: none;
+    transition: none;
+    padding: 0;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    font-weight: 700;
+}
+.build-card .build-close:hover, .build-card .tree-zoom button:hover, .build-card .build-tab:hover,
+.build-card .sock:hover, .build-card .gem-card:hover { transform: none; filter: brightness(1.2); }
+.build-card .build-tab {
+    padding: 8px 16px;
+    border-radius: 10px;
+    border: 1px solid rgba(0, 200, 255, 0.25);
+    background: rgba(0, 200, 255, 0.05);
+    color: rgba(200, 232, 255, 0.75);
+    font-size: 0.95em;
+    font-weight: 700;
+    letter-spacing: 1px;
+    cursor: pointer;
+}
+.build-card .build-tab.active {
+    color: #fff;
+    border-color: rgba(0, 229, 255, 0.8);
+    background: rgba(0, 229, 255, 0.14);
+    box-shadow: 0 0 12px rgba(0, 229, 255, 0.25);
+}
+.build-badge {
+    display: inline-block;
+    min-width: 18px;
+    padding: 0 5px;
+    margin-left: 2px;
+    border-radius: 9px;
+    background: #ffd740;
+    color: #1a1200;
+    font-size: 0.75em;
+    line-height: 18px;
+    text-align: center;
+}
+.build-badge:empty { display: none; }
+.build-card .build-close {
+    width: 36px;
+    height: 36px;
+    border-radius: 10px;
+    border: 1px solid rgba(255, 255, 255, 0.2);
+    background: rgba(255, 255, 255, 0.05);
+    color: #fff;
+    font-size: 1.1em;
+    cursor: pointer;
+}
+.build-pane { flex: 1; min-height: 0; }
+
+.tree-pane { display: flex; }
+.tree-view { position: relative; flex: 1; min-width: 0; }
+#treeSvg {
+    width: 100%;
+    height: 100%;
+    display: block;
+    touch-action: none;
+    cursor: grab;
+    user-select: none;
+    -webkit-user-select: none;
+}
+.tree-legend {
+    position: absolute;
+    left: 10px;
+    top: 8px;
+    font-size: 0.75em;
+    color: rgba(200, 232, 255, 0.6);
+    pointer-events: none;
+}
+.tree-legend i {
+    display: inline-block;
+    width: 9px;
+    height: 9px;
+    border-radius: 50%;
+    background: var(--c);
+    margin: 0 3px 0 8px;
+}
+.tree-legend i:first-child { margin-left: 0; }
+.tree-zoom {
+    position: absolute;
+    right: 8px;
+    bottom: 8px;
+    display: flex;
+    flex-direction: column;
+    gap: 6px;
+}
+.build-card .tree-zoom button {
+    width: 34px;
+    height: 34px;
+    border-radius: 9px;
+    border: 1px solid rgba(0, 200, 255, 0.3);
+    background: rgba(5, 15, 28, 0.85);
+    color: #c8e8ff;
+    font-size: 1.05em;
+    cursor: pointer;
+}
+.tree-side {
+    width: 280px;
+    flex: none;
+    padding: 12px;
+    border-left: 1px solid rgba(0, 200, 255, 0.12);
+    display: flex;
+    flex-direction: column;
+    gap: 10px;
+    overflow-y: auto;
+}
+.tree-info {
+    background: rgba(0, 200, 255, 0.05);
+    border: 1px solid rgba(0, 200, 255, 0.15);
+    border-radius: 10px;
+    padding: 10px 12px;
+    font-size: 0.88em;
+    line-height: 1.55;
+    min-height: 120px;
+}
+.tree-info .ti-name { font-size: 1.15em; font-weight: 700; }
+.tree-info .ti-kind { font-size: 0.8em; color: rgba(200, 232, 255, 0.55); margin-left: 6px; }
+.tree-info ul { list-style: none; margin: 6px 0 10px; }
+.tree-info li::before { content: '◆ '; color: var(--c, #00e5ff); font-size: 0.8em; }
+.tree-info .ti-hint { color: rgba(200, 232, 255, 0.55); font-size: 0.85em; }
+.tree-info .ti-act { width: 100%; padding: 10px; font-size: 0.95em; }
+.tree-info .ti-act:disabled { opacity: 0.45; cursor: not-allowed; }
+.tree-summary { font-size: 0.8em; line-height: 1.6; color: rgba(200, 232, 255, 0.75); }
+.tree-summary b { color: #00e5ff; }
+.tree-reset { padding: 8px; font-size: 0.85em; margin-top: auto; }
+
+/* 天赋树 SVG:节点状态 locked / can(可点亮,呼吸)/ on(已点亮)/ sel(选中) */
+#treeSvg .orbit { fill: none; stroke: rgba(0, 200, 255, 0.06); stroke-width: 1.5; }
+#treeSvg .tl { stroke: rgba(160, 190, 220, 0.18); stroke-width: 5; stroke-linecap: round; }
+#treeSvg .tl.can { stroke: rgba(255, 215, 64, 0.45); stroke-dasharray: 10 8; }
+#treeSvg .tl.on { stroke: rgba(255, 230, 150, 0.9); stroke-width: 6; }
+#treeSvg .tn { cursor: pointer; }
+#treeSvg .tn .hit { fill: transparent; }
+#treeSvg .tn .body { fill: #0b1624; stroke: rgba(160, 190, 220, 0.35); stroke-width: 3; }
+#treeSvg .tn .ring { fill: none; stroke: rgba(160, 190, 220, 0.25); stroke-width: 2; }
+#treeSvg .tn text { fill: rgba(200, 232, 255, 0.45); font-weight: 700; text-anchor: middle; dominant-baseline: central; pointer-events: none; }
+#treeSvg .tn .lbl { font-size: 15px; font-weight: 400; }
+#treeSvg .tn.can .body { stroke: var(--c); animation: treePulse 1.4s ease-in-out infinite; }
+#treeSvg .tn.can text { fill: rgba(255, 255, 255, 0.8); }
+#treeSvg .tn.on .body { fill: var(--c); stroke: #fff; }
+#treeSvg .tn.on .ring { stroke: var(--c); }
+#treeSvg .tn.on text { fill: #fff; }
+#treeSvg .tn.on .icon { fill: #0b1624; }
+#treeSvg .tn.on .lbl { fill: var(--c); }
+#treeSvg .tn.sel .body { stroke: #fff; stroke-width: 5; }
+#treeSvg .tn.sel .ring { stroke: #fff; }
+@keyframes treePulse { 50% { stroke-opacity: 0.35; } }
+
+.gem-pane { overflow-y: auto; padding: 12px 14px 16px; }
+.gem-slots { display: flex; flex-direction: column; gap: 8px; }
+.gem-row {
+    display: flex;
+    align-items: center;
+    gap: 12px;
+    padding: 8px 12px;
+    border-radius: 12px;
+    background: rgba(0, 200, 255, 0.04);
+    border: 1px solid rgba(0, 200, 255, 0.12);
+}
+.gem-row-title { width: 110px; flex: none; font-weight: 700; font-size: 0.9em; color: #fff; }
+.gem-row-title small { display: block; font-weight: 400; color: rgba(200, 232, 255, 0.5); font-size: 0.8em; }
+.gem-socks { display: flex; align-items: center; }
+.gem-link { width: 16px; height: 6px; background: rgba(255, 215, 64, 0.55); border-radius: 3px; }
+.build-card .sock {
+    width: 52px;
+    height: 52px;
+    border-radius: 50%;
+    border: 2px dashed rgba(200, 232, 255, 0.35);
+    background: rgba(0, 0, 0, 0.35);
+    color: rgba(200, 232, 255, 0.5);
+    font-size: 1.2em;
+    cursor: pointer;
+    display: flex;
+    flex-direction: column;
+    align-items: center;
+    justify-content: center;
+    line-height: 1.1;
+}
+.sock small { font-size: 0.55em; }
+.build-card .sock.filled {
+    border: 2px solid var(--c);
+    background: radial-gradient(circle at 35% 30%, #ffffff55, var(--c) 45%, #0d1620 100%);
+    color: #fff;
+    box-shadow: 0 0 12px var(--c);
+}
+.build-card .sock.filled.bad { filter: grayscale(0.9); opacity: 0.6; box-shadow: none; }
+.build-card .sock.locked { border-style: solid; border-color: rgba(255, 255, 255, 0.1); cursor: default; opacity: 0.55; }
+.build-card .sock.target { border-color: #ffd740; box-shadow: 0 0 10px rgba(255, 215, 64, 0.5); }
+.gem-info {
+    margin-top: 10px;
+    min-height: 54px;
+    padding: 8px 12px;
+    border-radius: 10px;
+    background: rgba(255, 255, 255, 0.03);
+    border: 1px solid rgba(255, 255, 255, 0.07);
+    font-size: 0.85em;
+    line-height: 1.5;
+}
+.gem-info .gi-name { font-weight: 700; font-size: 1.1em; }
+.gem-info .gi-hint { color: rgba(200, 232, 255, 0.55); }
+.gem-info .gi-warn { color: #ff8a80; }
+.gem-bag {
+    display: grid;
+    grid-template-columns: repeat(auto-fill, minmax(130px, 1fr));
+    gap: 8px;
+}
+.build-card .gem-card {
+    justify-content: flex-start;
+    display: flex;
+    align-items: center;
+    gap: 8px;
+    padding: 8px 10px;
+    border-radius: 10px;
+    border: 1px solid rgba(255, 255, 255, 0.1);
+    background: rgba(255, 255, 255, 0.03);
+    color: #c8e8ff;
+    cursor: pointer;
+    text-align: left;
+    font-size: 0.85em;
+}
+.gem-card .gc-icon {
+    width: 30px;
+    height: 30px;
+    flex: none;
+    border-radius: 50%;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    background: radial-gradient(circle at 35% 30%, #ffffff55, var(--c) 45%, #0d1620 100%);
+    color: #fff;
+}
+.gem-card b { display: block; color: var(--c); }
+.gem-card small { color: rgba(200, 232, 255, 0.5); }
+.build-card .gem-card.sel { border-color: #ffd740; box-shadow: 0 0 12px rgba(255, 215, 64, 0.4); background: rgba(255, 215, 64, 0.07); }
+.gem-empty { color: rgba(200, 232, 255, 0.5); font-size: 0.85em; grid-column: 1 / -1; }
+
+@media (max-width: 720px) {
+    .tree-pane { flex-direction: column; }
+    .tree-side { width: auto; border-left: none; border-top: 1px solid rgba(0, 200, 255, 0.12); max-height: 42%; padding: 8px 10px; gap: 6px; }
+    .tree-info { min-height: 0; padding: 8px 10px; }
+    .tree-reset { margin-top: 0; }
+    .gem-row { flex-wrap: wrap; gap: 6px 12px; }
+    .gem-row-title { width: 100%; }
+}
+@media (max-height: 500px) and (min-width: 721px) {
+    .tree-side { width: 240px; }
+}
+@media (max-height: 500px) {
+    .build-overlay { padding: 4px; }
+    .build-head { padding: 4px 8px; }
+    .build-card .build-tab { padding: 5px 12px; }
+    .build-card .build-close { width: 30px; height: 30px; }
+    .build-card .sock { width: 44px; height: 44px; }
+}

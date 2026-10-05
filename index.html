@@ -51,6 +51,7 @@
                 <li><b>👑 方块大魔王</b>每隔约 60 秒,红色边框预警后魔王降临。打出足够伤害或坚持 30 秒即可击退,奖励 +1 命、+1 天赋和分数。</li>
                 <li><b>🎲 随机事件</b>两次魔王之间会随机发生事件,顶部横幅显示剩余时间:🌠流星雨(躲开地面红圈,陨石也砸敌人)、💰宝藏方块(追上打爆它,掉装备和一堆道具)、♛精英来袭(金框皇冠的精英怪,击破有额外掉落)、🌊怪潮(敌人涌来,击杀经验分数翻倍)。</li>
                 <li><b>🎁 道具</b>药水回血、雪花冻结敌人、炸弹清场、爱心加命;越稀有的道具消失越快。</li>
+                <li><b>🌳 天赋树与技能石</b>按 <kbd>B</kbd> 或点右下角「构筑」打开。每升 1 级、每击退 1 次魔王得 1 个天赋点,从中心沿连线点亮力量 / 敏捷 / 智慧三系天赋,尽头的「基石」会改变玩法但有代价,可随时取消重点。地上掉落的发光宝石是技能石,镶进普攻 / Q / E 的连接孔里改造该技能(附加伤害、多重投射、回响、连锁闪电、尸爆……),同种宝石再捡到会升级。</li>
                 <li><b>🗡 限时装备</b>带金色旋转菱框的掉落物,约每 30 秒出现一件,击退魔王必掉。捡起后 12 秒内强化属性并获得特殊攻击:⚡雷霆之刃(连锁闪电)、🔥烈焰法球(环绕火球)、🛡寒霜战甲(冰霜新星冻住敌人)、🏹风暴连弩(扇形连射)。左上角显示剩余时间。</li>
                 <li><b>⏸ 其他</b><kbd>P</kbd> / <kbd>Esc</kbd> 暂停,<kbd>M</kbd> 静音。累计分数和成就可以解锁新的方块外观。</li>
             </ul>
@@ -104,6 +105,39 @@
             <div class="panel-subtitle">成就 <span id="achCount"></span></div>
             <div id="achList" class="ach-list"></div>
             <button id="closeProgress" class="mp-btn mp-btn-primary">返回</button>
+        </div>
+    </div>
+
+    <!-- 构筑面板:天赋树 + 技能石(局内按 B 或右下角「构筑」按钮打开,打开时暂停) -->
+    <div id="buildOverlay" class="panel-overlay build-overlay" style="display:none">
+        <div class="build-card">
+            <div class="build-head">
+                <div class="build-tabs">
+                    <button class="build-tab" data-tab="tree">天赋树 <span id="treePts" class="build-badge"></span></button>
+                    <button class="build-tab" data-tab="gems">技能石 <span id="gemNew" class="build-badge"></span></button>
+                </div>
+                <button id="buildClose" class="build-close" aria-label="关闭">✕</button>
+            </div>
+            <div id="buildTree" class="build-pane tree-pane">
+                <div class="tree-view">
+                    <svg id="treeSvg" viewBox="-430 -430 860 860" preserveAspectRatio="xMidYMid meet"></svg>
+                    <div class="tree-legend"><i style="--c:#ff5252"></i>力量 <i style="--c:#69f0ae"></i>敏捷 <i style="--c:#40c4ff"></i>智慧 <i style="--c:#ffd740"></i>混合</div>
+                    <div class="tree-zoom">
+                        <button data-zoom="in">＋</button><button data-zoom="out">－</button><button data-zoom="fit">⤢</button>
+                    </div>
+                </div>
+                <div class="tree-side">
+                    <div id="treeInfo" class="tree-info"></div>
+                    <div id="treeSummary" class="tree-summary"></div>
+                    <button id="treeReset" class="mp-btn mp-btn-ghost tree-reset">全部重置</button>
+                </div>
+            </div>
+            <div id="buildGems" class="build-pane gem-pane" style="display:none">
+                <div id="gemSlots" class="gem-slots"></div>
+                <div id="gemInfo" class="gem-info"></div>
+                <div class="panel-subtitle">背包</div>
+                <div id="gemBag" class="gem-bag"></div>
+            </div>
         </div>
     </div>
 
