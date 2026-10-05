@@ -85,6 +85,8 @@ Boss HP = `2000 × difficulty`; contact attack = `max(50, playerMaxHealth×0.5)`
 
 ### Combat & survival
 
+- **Dash (冲刺闪避).** Space/Shift or the round 「冲」 touch button above the E slot (`_renderDashButton`, registered in `skillButtons` as `skill: 'dash'`, available before picking a class) → `_requestSkill('dash')` → `_dash()` → `Player.tryDash()`. The dash travels along `faceX/faceY` (last movement direction) for `dashDuration` 0.18s at `dashSpeed` px/tick; cooldown `dashMaxCooldown` (2.2s, 疾影 talent ×0.8). While `dashTimer > 0` the player is immune and passes through enemies/bullets/boss. **Every player damage site gates on `_canHurt(p)`** (hurt i-frames + dash); a hit blocked by a dash calls `_onPerfectDodge` once per dash: 「闪避!」, `dodgeCount++`, half the cooldown refunded. 幻影冲锋 (`dashStrike`) damages enemies crossed via `_tickDashStrike` (run per guest under `_runAsPlayer`). Snapshot carries `dc`/`dt`/`dg`; guests send `dashMaxCd` in `stats`. Sounds (`whoosh`, `dodge`) are edge-detected in `_sfxTick`. New damage sources must go through `_canHurt`.
+
 Several mechanics exist specifically to keep the game survivable; preserve their intent when editing combat:
 
 - **Hurt i-frames.** On contact damage the player takes a hit then gets `hurtCooldown = 0.6s + hurtCooldownBonus` of invulnerability (renders as a flicker), so overlapping enemies can't drain HP in a single frame.

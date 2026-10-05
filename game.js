@@ -211,6 +211,7 @@ const ACHIEVEMENTS = [
     { id: 'level10',    icon: '⭐', name: '身经百战', desc: '单局达到 10 级',            check: r => r.level >= 10 },
     { id: 'score1000',  icon: '★', name: '千分达人', desc: '单局得分 1000',             check: r => r.score >= 1000 },
     { id: 'score3000',  icon: '🌟', name: '高分猎手', desc: '单局得分 3000',             check: r => r.score >= 3000 },
+    { id: 'dodge20',    icon: '💨', name: '身轻如燕', desc: '单局完美闪避 20 次',         check: r => (r.dodges || 0) >= 20 },
     { id: 'boss1',      icon: '👑', name: '魔王克星', desc: '击退一次方块大魔王',         check: r => r.bossRepels >= 1 },
     { id: 'boss3',      icon: '🔥', name: '屠魔者',   desc: '单局击退方块大魔王 3 次',    check: r => r.bossRepels >= 3 },
     { id: 'allClasses', icon: '🎭', name: '全能大师', desc: '五种职业各玩过一次',         check: (r, p) => Object.keys(Object.assign({}, p.classesPlayed, r.cls ? { [r.cls]: 1 } : {})).length >= 5 },
@@ -375,6 +376,13 @@ const Sound = {
             case 'dash':
                 this._noise(0.25, 0.14, 'bandpass', 1200);
                 this._tone(240, 0.2, 'sawtooth', 0.08, 2);
+                break;
+            case 'whoosh':
+                this._noise(0.16, 0.13, 'highpass', 1500);
+                this._tone(520, 0.12, 'sine', 0.05, 1.8);
+                break;
+            case 'dodge':
+                [1046, 1568].forEach((f, i) => this._tone(f, 0.1, 'triangle', 0.12, 1, i * 0.05));
                 break;
             case 'fuse':
                 [0, 0.25, 0.45, 0.6].forEach(d => this._tone(1200, 0.05, 'square', 0.06, 1, d));
@@ -564,6 +572,13 @@ class Game {
             { id: 'blink',       name: '瞬步',       icon: '⚡', color: '#ffee58', rarity: 'rare',
               desc: '速度 +0.5,自动攻击伤害 +10%', stackable: true, maxStacks: 5,
               apply: g => { g.player.speed += 0.5; g.player.autoAttackDmgMult = (g.player.autoAttackDmgMult || 1) * 1.1; } },
+
+            { id: 'dashCD',      name: '疾影',       icon: '💨', color: '#80d8ff', rarity: 'common',
+              desc: '冲刺冷却 ×0.8', stackable: true, maxStacks: 3,
+              apply: g => { g.player.dashMaxCooldown = Math.max(0.6, g.player.dashMaxCooldown * 0.8); } },
+            { id: 'phantomDash', name: '幻影冲锋',   icon: '⇶', color: '#b388ff', rarity: 'rare',
+              desc: '冲刺穿过的敌人受到 150% 攻击力伤害', stackable: true, maxStacks: 2,
+              apply: g => { g.player.dashStrike = (g.player.dashStrike || 0) + 1.5; } },
 
             // --- 通用技能强化(需要对应职业 & 未满级)---
             { id: 'skillQUp',    name: 'Q 技能强化', icon: 'Q', color: '#ff8a65', rarity: 'epic',
@@ -823,6 +838,7 @@ class Game {
             if (!this.isPaused && this.isRunning) {
                 if (e.key === 'q' || e.key === 'Q') this._requestSkill('Q');
                 else if (e.key === 'e' || e.key === 'E') this._requestSkill('E');
+                else if ((e.key === ' ' || e.key === 'Shift') && !e.repeat) this._requestSkill('dash');
             }
         });
         
@@ -1266,6 +1282,7 @@ class Game {
             id, x: q1(p.x), y: q1(p.y), size: p.size, color: p.color,
             currentHealth: Math.ceil(p.currentHealth), maxHealth: Math.ceil(p.maxHealth),
             class: p.class, hurtCooldown: q2(p.hurtCooldown), invincibleTimer: q2(p.invincibleTimer), kc: p.killCount || 0,
+            dc: q2(p.dashCooldown), dt: q2(p.dashTimer), dg: p.dodgeCount || 0,
             skillQ: { cooldown: q2(p.skillQ.cooldown), maxCooldown: q2(p.skillQ.maxCooldown), level: p.skillQ.level },
             skillE: { cooldown: q2(p.skillE.cooldown), maxCooldown: q2(p.skillE.maxCooldown), level: p.skillE.level }
         };
@@ -1394,6 +1411,9 @@ class Game {
             this.player.hurtCooldown = myData.hurtCooldown || 0;
             this.player.invincibleTimer = myData.invincibleTimer || 0;
             this.player.killCount = myData.kc || 0;
+            this.player.dashCooldown = myData.dc || 0;
+            this.player.dashTimer = myData.dt || 0;
+            this.player.dodgeCount = myData.dg || 0;
             // 同步资源（用于 HUD 显示）
             if (myData.mana !== undefined)    this.player.mana   = myData.mana;
             if (myData.maxMana !== undefined) this.player.maxMana = myData.maxMana;
@@ -1504,7 +1524,8 @@ class Game {
                 attack: p.attack, defense: p.defense, speed: p.speed,
                 maxHealth: p.maxHealth, class: p.class,
                 qLevel: p.skillQ.level, eLevel: p.skillE.level,
-                qMaxCd: p.skillQ.maxCooldown, eMaxCd: p.skillE.maxCooldown
+                qMaxCd: p.skillQ.maxCooldown, eMaxCd: p.skillE.maxCooldown,
+                dashMaxCd: p.dashMaxCooldown
             }
         });
         // 输入没变化时不必每帧发送(host 会沿用上一次输入),仅保留 250ms 心跳
@@ -1547,6 +1568,7 @@ class Game {
                 if (s.eLevel)  gp.skillE.level = s.eLevel;
                 if (s.qMaxCd)  gp.skillQ.maxCooldown = s.qMaxCd;
                 if (s.eMaxCd)  gp.skillE.maxCooldown = s.eMaxCd;
+                if (s.dashMaxCd) gp.dashMaxCooldown = s.dashMaxCd;
             }
             if (input.keys) gp.update(input.keys, this.width, this.height);
             if (input.moving && input.targetX !== null) {
@@ -1749,6 +1771,10 @@ class Game {
 
             this.bgTime += DT;
             this.updatePlayer();
+            this._tickDashStrike();
+            if (this.mpMode === 'host') {
+                for (const gp of this.mpGuestPlayers.values()) this._runAsPlayer(gp, () => this._tickDashStrike());
+            }
             this.updateEnemies();
             this.updateEnemyBullets();
             this.updateItems();
@@ -1798,7 +1824,7 @@ class Game {
 
     _runStats() {
         return { score: this.score, time: Math.floor(this.gameTime), level: this.level,
-                 bossRepels: this.runBossRepels || 0, cls: this.player.class };
+                 bossRepels: this.runBossRepels || 0, cls: this.player.class, dodges: this.player.dodgeCount || 0 };
     }
 
     // 每 tick 调用(host/guest 都走):统计击退魔王,每 0.5s 检查一次成就,推进解锁提示
@@ -1878,6 +1904,7 @@ class Game {
         const b = this.boss;
         const cur = { hurt: p.hurtCooldown || 0, life: this.life, level: this.level, boss: this.bossState,
                       q: p.skillQ.cooldown, e: p.skillE.cooldown, kills: p.killCount || 0,
+                      dash: p.dashCooldown || 0, dodge: p.dodgeCount || 0,
                       atk: b && b.atk ? b.atk + b.atkPhase : '', rage: !!(b && b.enraged) };
         const prev = this._sfxPrev;
         this._sfxPrev = cur;
@@ -1888,6 +1915,8 @@ class Game {
             this._onLocalHurt(died);
         }
         if (cur.kills > prev.kills) this._onLocalKill();
+        if (cur.dash > prev.dash + 0.5) Sound.play('whoosh');
+        if (cur.dodge > prev.dodge) { Sound.play('dodge'); this._triggerHitStop(0.05); }
         if (cur.level > prev.level) Sound.play('levelUp');
         if (cur.q > prev.q + 0.2 || cur.e > prev.e + 0.2) Sound.play('skill');
         if (cur.atk !== prev.atk && cur.atk) {
@@ -2079,7 +2108,9 @@ class Game {
     // ── Host：执行 guest 请求的技能 ──
     _castGuestSkill(playerId, which) {
         const gp = this.mpGuestPlayers.get(playerId);
-        if (!gp || !gp.class || gp.currentHealth <= 0) return;
+        if (!gp || gp.currentHealth <= 0) return;
+        if (which === 'dash') { this._runAsPlayer(gp, () => this._dash()); return; }
+        if (!gp.class) return;
         this._runAsPlayer(gp, () => (which === 'E' ? this.castSkillE() : this.castSkillQ()));
     }
 
@@ -2090,7 +2121,54 @@ class Game {
                 this.mpWs.send(JSON.stringify({ type: 'castSkill', skill: which }));
             return;
         }
-        if (which === 'E') this.castSkillE(); else this.castSkillQ();
+        if (which === 'dash') this._dash();
+        else if (which === 'E') this.castSkillE(); else this.castSkillQ();
+    }
+
+    // ── 冲刺闪避 ──
+    _dash() {
+        const p = this.player;
+        if (!p.tryDash()) return;
+        const cx = p.x + p.size / 2, cy = p.y + p.size / 2;
+        // 起步扬尘:向冲刺反方向喷出
+        this.spawnParticles(cx - p.faceX * 10, cy - p.faceY * 10, '#e0f7fa', 8, 1, 3, 2, 4, 0.03);
+    }
+
+    // 幻影冲锋天赋:冲刺途中撞到的敌人/魔王各结算一次伤害
+    _tickDashStrike() {
+        const p = this.player;
+        if (!(p.dashStrike > 0) || p.dashTimer <= 0) return;
+        if (!p._dashHits) p._dashHits = new Set();
+        const dmg = p.attack * p.dashStrike;
+        for (let i = this.enemies.length - 1; i >= 0; i--) {
+            const e = this.enemies[i];
+            if (p._dashHits.has(e.id) || !this.checkCollision(p, e)) continue;
+            p._dashHits.add(e.id);
+            this._dealDamage(e, dmg);
+        }
+        const b = this.boss;
+        if (b && this.bossState === 'active' && !p._dashHits.has('boss') && this.checkCollision(p, b)) {
+            p._dashHits.add('boss');
+            this._dealDamage(b, dmg);
+        }
+    }
+
+    // 玩家此刻能否受伤:受击无敌帧内不能;冲刺中不能,且算一次"完美闪避"
+    _canHurt(p) {
+        if (p.hurtCooldown > 0) return false;
+        if (p.dashTimer > 0) { this._onPerfectDodge(p); return false; }
+        return true;
+    }
+
+    // 完美闪避:每次冲刺最多触发一次,返还一半冲刺冷却
+    _onPerfectDodge(p) {
+        if (p.dashDodged) return;
+        p.dashDodged = true;
+        p.dodgeCount = (p.dodgeCount || 0) + 1;
+        p.dashCooldown = Math.max(0, p.dashCooldown - p.dashMaxCooldown * 0.5);
+        const cx = p.x + p.size / 2, cy = p.y + p.size / 2;
+        this._showFloatingText('闪避!', cx, p.y - 18, '#80d8ff');
+        this.spawnBurstRing(cx, cy, 22, '#80d8ff', 12);
     }
 
     _checkGuestCollisions() {
@@ -2098,13 +2176,15 @@ class Game {
             if (gp.hurtCooldown > 0) { gp.hurtCooldown -= DT; continue; }
             for (const enemy of this.enemies) {
                 if (this.checkCollision(gp, enemy)) {
-                    gp.takeDamage(enemy.contactDamage());
-                    gp.hurtCooldown = 0.6 + (gp.hurtCooldownBonus || 0);
+                    if (this._canHurt(gp)) {
+                        gp.takeDamage(enemy.contactDamage());
+                        gp.hurtCooldown = 0.6 + (gp.hurtCooldownBonus || 0);
+                    }
                     break;
                 }
             }
             // 魔王碰撞
-            if (gp.hurtCooldown <= 0 && this.boss && this.bossState === 'active' && this.checkCollision(gp, this.boss)) {
+            if (gp.hurtCooldown <= 0 && this.boss && this.bossState === 'active' && this.checkCollision(gp, this.boss) && this._canHurt(gp)) {
                 gp.takeDamage(this.boss.attack);
                 gp.hurtCooldown = 0.6 + (gp.hurtCooldownBonus || 0);
             }
@@ -2113,6 +2193,7 @@ class Game {
                 for (let i = this.enemyBullets.length - 1; i >= 0; i--) {
                     const b = this.enemyBullets[i];
                     if (!this.checkCollision(gp, b)) continue;
+                    if (!this._canHurt(gp)) break; // 冲刺中穿过子弹
                     gp.takeDamage(b.damage);
                     gp.hurtCooldown = 0.6 + (gp.hurtCooldownBonus || 0);
                     this.spawnHitParticles(gp.x + gp.size / 2, gp.y + gp.size / 2, '#ff9800', 8);
@@ -2183,8 +2264,11 @@ class Game {
                 this._updateBossAttacks(target);
 
                 // 受击判定:魔王 vs 玩家
-                if (this.checkCollision(this.player, this.boss)) {
-                    if (this.player.hurtCooldown <= 0) {
+                const bossTouch = this.checkCollision(this.player, this.boss);
+                // 冲刺中穿过魔王:不受伤也不被推开,算一次完美闪避
+                if (bossTouch && this.player.dashTimer > 0) this._canHurt(this.player);
+                else if (bossTouch) {
+                    if (this._canHurt(this.player)) {
                         this.player.takeDamage(this.boss.attack);
                         this.player.hurtCooldown = 0.6 + (this.player.hurtCooldownBonus || 0);
                         this.player.gainRage(15 + (this.player.rageOnHurtBonus || 0));
@@ -2387,7 +2471,7 @@ class Game {
 
     // 魔王招式命中玩家(host 本机或 guest),走与接触伤害相同的受击无敌帧;返回是否结算了伤害
     _bossHitPlayer(p, dmg, color) {
-        if (p.hurtCooldown > 0 || p.currentHealth <= 0) return false;
+        if (p.currentHealth <= 0 || !this._canHurt(p)) return false;
         p.takeDamage(dmg);
         p.hurtCooldown = 0.6 + (p.hurtCooldownBonus || 0);
         p.gainRage(15 + (p.rageOnHurtBonus || 0));
@@ -2554,6 +2638,8 @@ class Game {
     checkCollisions() {
         for (let i = this.enemies.length - 1; i >= 0; i--) {
             if (this.checkCollision(this.player, this.enemies[i])) {
+                // 冲刺中直接穿过敌人(不碰撞、不推开),碰上即算完美闪避
+                if (this.player.dashTimer > 0) { this._canHurt(this.player); continue; }
                 // 受击无敌帧：冷却期内不再结算玩家受伤，避免重叠时血量瞬间被掏空
                 if (this.player.hurtCooldown <= 0) {
                     this.player.takeDamage(this.enemies[i].contactDamage());
@@ -2623,6 +2709,7 @@ class Game {
         for (let i = this.enemyBullets.length - 1; i >= 0; i--) {
             const b = this.enemyBullets[i];
             if (this.checkCollision(this.player, b)) {
+                if (this.player.dashTimer > 0) { this._canHurt(this.player); continue; } // 冲刺中穿过子弹
                 if (this.player.hurtCooldown <= 0) {
                     this.player.takeDamage(b.damage);
                     this.player.hurtCooldown = 0.6 + (this.player.hurtCooldownBonus || 0);
@@ -4562,7 +4649,9 @@ class Game {
         // HUD 与菜单（在缩放坐标系内，无震动）
         this._renderHurtVignette();
         this._renderFreezeOverlay();
+        this.skillButtons = [];
         this._renderSkillHUD();
+        this._renderDashButton();
         this._renderBossHUD();
         this._renderStatsHUD();
         this._renderMuteButton();
@@ -4983,6 +5072,50 @@ class Game {
         }
     }
 
+    // 冲刺按钮:圆形,位于 E 技能槽正上方(未选职业时也显示);触屏点它冲刺,键盘为空格/Shift
+    _renderDashButton() {
+        if (!this.isRunning) return;
+        const p = this.player;
+        const ctx = this.ctx;
+        const r = 24;
+        const cx = this.width - 48, cy = this.height - 82 - 12 - r - 12;
+        this.skillButtons.push({ x: cx - r - 4, y: cy - r - 4, w: r * 2 + 8, h: r * 2 + 8, skill: 'dash' });
+        const ratio = p.dashMaxCooldown > 0 ? Math.max(0, Math.min(1, p.dashCooldown / p.dashMaxCooldown)) : 0;
+        const ready = ratio <= 0;
+        const col = '#80d8ff';
+        ctx.save();
+        ctx.beginPath();
+        ctx.arc(cx, cy, r, 0, Math.PI * 2);
+        ctx.fillStyle = ready ? 'rgba(128,216,255,0.18)' : 'rgba(0,0,0,0.6)';
+        ctx.shadowBlur = ready ? 14 : 0;
+        ctx.shadowColor = col;
+        ctx.fill();
+        ctx.shadowBlur = 0;
+        ctx.lineWidth = 2;
+        ctx.strokeStyle = ready ? 'rgba(128,216,255,0.85)' : '#555555';
+        ctx.stroke();
+        if (!ready) {
+            // 冷却扇形:顺时针恢复
+            ctx.beginPath();
+            ctx.moveTo(cx, cy);
+            ctx.arc(cx, cy, r, -Math.PI / 2, -Math.PI / 2 + Math.PI * 2 * (1 - ratio));
+            ctx.closePath();
+            ctx.fillStyle = 'rgba(128,216,255,0.22)';
+            ctx.fill();
+        }
+        ctx.fillStyle = ready ? col : '#9e9e9e';
+        ctx.font = 'bold 18px Arial';
+        ctx.textAlign = 'center';
+        ctx.textBaseline = 'middle';
+        ctx.fillText(ready ? '冲' : p.dashCooldown.toFixed(1), cx, cy - (ready ? 3 : 0));
+        if (ready) {
+            ctx.fillStyle = '#cccccc';
+            ctx.font = '9px Arial';
+            ctx.fillText('空格', cx, cy + 13);
+        }
+        ctx.restore();
+    }
+
     _renderSkillHUD() {
         if (!this.player.class) return;
         const ctx = this.ctx;
@@ -4994,11 +5127,11 @@ class Game {
         const baseX = this.width - (slotW * 2 + margin * 3);
         const baseY = this.height - slotH - margin * 2 - 16;
 
-        // 每帧重置技能命中区
-        this.skillButtons = [
+        // 技能命中区每帧由 render 清空后重新登记
+        this.skillButtons.push(
             { x: baseX,              y: baseY, w: slotW, h: slotH, skill: 'Q' },
             { x: baseX + slotW + margin, y: baseY, w: slotW, h: slotH, skill: 'E' }
-        ];
+        );
 
         const qNames = { warrior: '旋', mage: '弹', assassin: '闪', archer: '穿', paladin: '圣' };
         const eNames = { warrior: '盾', mage: '斥', assassin: '刺', archer: '雨', paladin: '环' };
@@ -5285,6 +5418,20 @@ class Player {
         this.targetY = null;
         this.moving = false;
 
+        // 冲刺闪避:沿最近的移动方向瞬间位移,冲刺途中无敌;冲刺中躲掉一次伤害 = 完美闪避
+        this.dashCooldown = 0;
+        this.dashMaxCooldown = 2.2;
+        this.dashTimer = 0;            // > 0 表示正在冲刺(同时是无敌窗口)
+        this.dashDuration = 0.18;
+        this.dashSpeed = 11;           // 像素/帧,约 120px 一次
+        this.dashVX = 0;
+        this.dashVY = 0;
+        this.dashDodged = false;       // 本次冲刺是否已触发过完美闪避
+        this.dodgeCount = 0;           // 本局完美闪避次数
+        this.faceX = 1;                // 最近一次移动方向(冲刺方向)
+        this.faceY = 0;
+        this._dashGhosts = [];         // 冲刺残影(纯视觉,render 时记录)
+
         // 天赋(按玩家存储;联机时每个 guest 各有一份)
         this.acquiredTalents = [];      // [{ id, count }]
         this.autoAttackTimer = 0;
@@ -5310,6 +5457,52 @@ class Player {
     }
     
     update(keys, width, height) {
+        if (this.dashCooldown > 0) this.dashCooldown = Math.max(0, this.dashCooldown - DT);
+        const startX = this.x, startY = this.y;
+        if (this.dashTimer > 0) {
+            // 冲刺中:忽略输入,沿锁定方向高速位移
+            this.dashTimer = Math.max(0, this.dashTimer - DT);
+            this.x = Math.max(0, Math.min(width - this.size, this.x + this.dashVX));
+            this.y = Math.max(0, Math.min(height - this.size, this.y + this.dashVY));
+        } else {
+            this._move(keys, width, height);
+            const mdx = this.x - startX, mdy = this.y - startY;
+            const md = Math.sqrt(mdx * mdx + mdy * mdy);
+            if (md > 0.5) { this.faceX = mdx / md; this.faceY = mdy / md; }
+        }
+
+        // 受击无敌帧倒计时
+        if (this.hurtCooldown > 0) {
+            this.hurtCooldown -= DT;
+            if (this.hurtCooldown < 0) this.hurtCooldown = 0;
+        }
+
+        // 刺客移动蓄力:基于位移累积(1 像素 = 0.1 stock,封顶 maxAssassinCharge)
+        if (this.class === 'assassin') {
+            const dxc = this.x - this.lastChargeX;
+            const dyc = this.y - this.lastChargeY;
+            const moved = Math.sqrt(dxc * dxc + dyc * dyc);
+            if (moved > 0) {
+                this.assassinCharge = Math.min(this.maxAssassinCharge, this.assassinCharge + moved * 0.1 * (this.chargeGainMult || 1));
+            }
+        }
+        this.lastChargeX = this.x;
+        this.lastChargeY = this.y;
+    }
+
+    // 发起冲刺,成功返回 true(冷却中/冲刺中/阵亡时失败)
+    tryDash() {
+        if (this.dashCooldown > 0 || this.dashTimer > 0 || this.currentHealth <= 0) return false;
+        this.dashVX = this.faceX * this.dashSpeed;
+        this.dashVY = this.faceY * this.dashSpeed;
+        this.dashTimer = this.dashDuration;
+        this.dashCooldown = this.dashMaxCooldown;
+        this.dashDodged = false;
+        this._dashHits = null;
+        return true;
+    }
+
+    _move(keys, width, height) {
         // 键盘控制
         if (keys['ArrowUp'] || keys['w']) {
             this.y = Math.max(0, this.y - this.speed);
@@ -5356,25 +5549,26 @@ class Player {
                 this.targetY = null;
             }
         }
-        
-        // 受击无敌帧倒计时
-        if (this.hurtCooldown > 0) {
-            this.hurtCooldown -= DT;
-            if (this.hurtCooldown < 0) this.hurtCooldown = 0;
-        }
+    }
 
-        // 刺客移动蓄力:基于位移累积(1 像素 = 0.1 stock,封顶 maxAssassinCharge)
-        if (this.class === 'assassin') {
-            const dxc = this.x - this.lastChargeX;
-            const dyc = this.y - this.lastChargeY;
-            const moved = Math.sqrt(dxc * dxc + dyc * dyc);
-            if (moved > 0) {
-                this.assassinCharge = Math.min(this.maxAssassinCharge, this.assassinCharge + moved * 0.1 * (this.chargeGainMult || 1));
-            }
+    // 冲刺残影:冲刺期间每个渲染帧记一个位置,200ms 内淡出(按真实时间,不随帧率变化)
+    _renderDashGhosts(ctx) {
+        const now = performance.now();
+        const g = this._dashGhosts;
+        if (this.dashTimer > 0) g.push({ x: this.x, y: this.y, t: now });
+        if (!g.length) return;
+        while (g.length && now - g[0].t > 200) g.shift();
+        const skin = this.skin || SKINS[0];
+        ctx.save();
+        ctx.fillStyle = skin.c1 || '#ffffff';
+        for (const p of g) {
+            const k = 1 - (now - p.t) / 200;
+            ctx.globalAlpha = 0.35 * k;
+            const s = this.size * (0.7 + 0.3 * k), o = (this.size - s) / 2;
+            roundRect(ctx, p.x + o, p.y + o, s, s, 6);
+            ctx.fill();
         }
-        this.lastChargeX = this.x;
-        this.lastChargeY = this.y;
-
+        ctx.restore();
     }
 
     takeDamage(damage) {
@@ -5429,6 +5623,7 @@ class Player {
     }
     
     render(ctx) {
+        this._renderDashGhosts(ctx);
         const flicker = this.hurtCooldown > 0 && Math.floor(this.hurtCooldown * 20) % 2 === 0;
         ctx.save();
         ctx.globalAlpha = flicker ? 0.3 : 1;
