@@ -5073,8 +5073,11 @@ class Game {
         const dist = Math.sqrt(dx * dx + dy * dy);
         if (dist > 0) {
             const nx = dx / dist, ny = dy / dist;
-            target.x -= nx * 150;
-            target.y -= ny * 150;
+            // 把敌人拽到身前:最多拉 150px,停在玩家身前,近距离时不会甩到身后
+            const stop = (this.player.size + target.size) / 2 + 6;
+            const pull = Math.min(150, Math.max(0, dist - stop));
+            target.x -= nx * pull;
+            target.y -= ny * pull;
             const dmg = this._computeAttackDamage(this.player.attack) * 2 * this._getSkillMultiplier(skill.level) * (this.player.warriorSkillDmgMult || 1);
             this._dealDamage(target, dmg);
             this.effects.push({ type: 'slash', x1: pcx, y1: pcy, x2: pcx + nx * 100, y2: pcy + ny * 100, color: '#4488ff', ttl: 0.3, maxTtl: 0.3 });
@@ -5723,7 +5726,7 @@ class Game {
                 flavor: '被动·战意：怒气越满越抗揍(最多减伤30%)，近战命中回血',
                 stats: ['攻击 +10  防御 -5  生命 +20', '近战范围自动攻击'],
                 q: { name: '旋风斩', cd: '3s', desc: '消耗30怒气，范围斩击周围敌人' },
-                e: { name: '盾击',   cd: '5s', desc: '消耗50怒气，击飞并重创单体目标' }
+                e: { name: '盾击',   cd: '5s', desc: '消耗50怒气，把最近的敌人拽到身前并重创' }
             },
             {
                 choice: 2, name: '法师', icon: '✦', color: '#4ecdc4',
