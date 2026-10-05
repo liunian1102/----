@@ -550,3 +550,55 @@ kbd {
 }
 .ach-item.done .ach-name { color: #ffd54f; }
 .ach-item:not(.done) .ach-icon { filter: grayscale(1); opacity: 0.4; }
+
+/* ── 操控方式选择 ── */
+.mp-control-btn {
+    padding: 10px 6px;
+    font-size: 0.85em;
+}
+.control-card { text-align: center; }
+.control-options {
+    display: flex;
+    gap: 12px;
+    margin: 6px 0 14px;
+}
+.control-opt {
+    flex: 1;
+    display: flex;
+    flex-direction: column;
+    align-items: center;
+    gap: 6px;
+    padding: 18px 10px;
+    border-radius: 12px;
+    background: rgba(0, 200, 255, 0.05);
+    border: 1px solid rgba(0, 200, 255, 0.25);
+    color: rgba(200, 232, 255, 0.75);
+    font-size: 0.85em;
+    letter-spacing: 0;
+    line-height: 1.4;
+    cursor: pointer;
+}
+.control-opt b { color: #fff; font-size: 1.15em; letter-spacing: 1px; }
+.control-opt .control-icon { font-size: 2em; line-height: 1; }
+.control-opt.selected {
+    border-color: rgba(0, 255, 150, 0.7);
+    background: rgba(0, 255, 150, 0.08);
+    box-shadow: 0 0 14px rgba(0, 255, 150, 0.25);
+}
+.control-opt:hover { border-color: rgba(0, 255, 150, 0.6); background: rgba(0, 255, 150, 0.06); }
+.control-remember {
+    display: inline-flex;
+    align-items: center;
+    gap: 6px;
+    color: rgba(200, 232, 255, 0.75);
+    font-size: 0.85em;
+    cursor: pointer;
+}
+.control-note {
+    margin-top: 8px;
+    color: rgba(200, 232, 255, 0.45);
+    font-size: 0.75em;
+}
+@media (max-width: 380px) {
+    .control-options { flex-direction: column; }
+}
