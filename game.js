@@ -184,7 +184,7 @@ const nextEntityId = () => ++_entityIdSeq;
 // 联机快照数值量化,缩小网络包
 const q1 = v => Math.round(v * 10) / 10;
 const q2 = v => Math.round(v * 100) / 100;
-const MP_ENEMY_TYPES = ['chaser', 'patroller', 'giant', 'gunner'];
+const MP_ENEMY_TYPES = ['chaser', 'patroller', 'giant', 'gunner', 'dasher', 'bomber'];
 const MP_ITEM_TYPES = ['potion', 'exp_book', 'snowflake', 'bomb', 'heart', 'potion_invicible'];
 
 // localStorage 读写(隐私模式/禁用存储时静默失败)
@@ -293,7 +293,7 @@ const Sound = {
     _last: {},
     _noiseBuf: null,
     // 同名音效最短间隔(秒),避免一帧内多次击杀叠成噪音
-    minGap: { kill: 0.05, skill: 0.08, pickup: 0.06, hurt: 0.1 },
+    minGap: { kill: 0.05, skill: 0.08, pickup: 0.06, hurt: 0.1, dash: 0.12, fuse: 0.2, bomb: 0.08 },
 
     init() {
         if (this.ctx) {
@@ -371,6 +371,13 @@ const Sound = {
             case 'bomb':
                 this._noise(0.6, 0.35, 'lowpass', 500);
                 this._tone(90, 0.5, 'sine', 0.3, 0.4);
+                break;
+            case 'dash':
+                this._noise(0.25, 0.14, 'bandpass', 1200);
+                this._tone(240, 0.2, 'sawtooth', 0.08, 2);
+                break;
+            case 'fuse':
+                [0, 0.25, 0.45, 0.6].forEach(d => this._tone(1200, 0.05, 'square', 0.06, 1, d));
                 break;
             case 'skill':
                 this._noise(0.15, 0.12, 'bandpass', 1800);
@@ -1192,6 +1199,7 @@ class Game {
 
     // 快照用紧凑数组 + 量化数值,只发渲染需要的动态字段(体积约为对象格式的 1/4)
     //   e: [id, 类型序号, x, y, hp, maxHp, 眩晕(0/1), (炮手) aimAngle, shootTimer, shootInterval]
+    //     冲锋者/自爆者额外 [状态, 状态剩余, 状态总长, 冲刺角度, 冲刺距离/爆炸半径]
     //   i: [id, 类型序号, 落点x, 落点y, 剩余时长]
     //   p: [id, 种类(0 普通弹/1 穿透箭), x, y, 角度]
     //   b: [id, x, y, 角度]
@@ -1207,6 +1215,7 @@ class Game {
                     Math.ceil(e.currentHealth), Math.ceil(e.maxHealth), (e.stunTimer > 0 ? 1 : 0) | (e._mpHit ? 2 : 0)];
                 e._mpHit = false;
                 if (e.type === 'gunner') row.push(q2(e.aimAngle || 0), q2(e.shootTimer || 0), q2(e.shootInterval || 1));
+                else if (e.type === 'dasher' || e.type === 'bomber') row.push(e.state, q2(e.stateTimer), q2(e.stateDur), q2(e.dashAngle), q1(e.type === 'dasher' ? e.dashDist : e.blastRadius));
                 return row;
             }),
             boss: this.boss ? [q1(this.boss.x), q1(this.boss.y), Math.ceil(this.boss.currentHealth),
@@ -1320,10 +1329,21 @@ class Game {
                 e.currentHealth = r[4]; e.maxHealth = r[5];
                 e.stunTimer = r[6] & 1 ? 1 : 0;
                 if (r[6] & 2) e.flash();
-                if (r.length > 7) { e.aimAngle = r[7]; e.shootTimer = r[8]; e.shootInterval = r[9]; }
+                if (r.length > 7) {
+                    if (e.type === 'gunner') { e.aimAngle = r[7]; e.shootTimer = r[8]; e.shootInterval = r[9]; }
+                    else {
+                        // 冲刺 / 点燃引信的音效按状态边沿在本机播放
+                        if (!isNew && r[7] !== e.state) {
+                            if (e.type === 'dasher' && r[7] === 2) Sound.play('dash');
+                            if (e.type === 'bomber' && r[7] === 1) Sound.play('fuse');
+                        }
+                        e.state = r[7]; e.stateTimer = r[8]; e.stateDur = r[9]; e.dashAngle = r[10];
+                        if (e.type === 'dasher') e.dashDist = r[11]; else e.blastRadius = r[11];
+                    }
+                }
             });
         this.enemies = en.list;
-        if (en.removed.length > 0) Sound.play('kill');
+        if (en.removed.length > 0) Sound.play(en.removed.some(e => e.type === 'bomber') ? 'bomb' : 'kill');
 
         // Boss
         if (snapshot.boss) {
@@ -1765,6 +1785,7 @@ class Game {
 
     // ── 局外成长:本局数据、成就检测与解锁提示 ──
     _initRunProgress() {
+        this.seenEnemyTypes = new Set();
         this.runBossRepels = 0;
         this.runUnlocked = [];
         this.achToasts = [];
@@ -2014,7 +2035,7 @@ class Game {
                             e.takeDamage(auraDmgTick);
                             if (e.currentHealth <= 0) {
                                 this.spawnHitParticles(e.x + e.size / 2, e.y + e.size / 2, e.color, 10);
-                                this._onEnemyKilled();
+                                this._onEnemyKilled(e);
                                 this.enemies.splice(i, 1);
                             }
                         }
@@ -2077,7 +2098,7 @@ class Game {
             if (gp.hurtCooldown > 0) { gp.hurtCooldown -= DT; continue; }
             for (const enemy of this.enemies) {
                 if (this.checkCollision(gp, enemy)) {
-                    gp.takeDamage(enemy.attack);
+                    gp.takeDamage(enemy.contactDamage());
                     gp.hurtCooldown = 0.6 + (gp.hurtCooldownBonus || 0);
                     break;
                 }
@@ -2433,7 +2454,16 @@ class Game {
             const e = this.enemies[i];
             e.applyKnockback(this.width, this.height);
             if (this.enemyFreezeTimer <= 0) {
-                e.update(this.player.x, this.player.y, this.width, this.height);
+                // 联机时每个敌人追离它最近的存活玩家,不再只盯房主
+                const t = this._nearestPlayer(e.x, e.y);
+                e.update(t.x, t.y, this.width, this.height, t.size);
+            }
+            if (e._sfx) { Sound.play(e._sfx); e._sfx = null; }
+            // 自爆者引信燃尽:原地爆炸(不算击杀,不给经验)
+            if (e.detonate) {
+                this.enemies.splice(i, 1);
+                this._bomberExplode(e, true);
+                continue;
             }
             // 炮手开火:取出 pendingShot 并生成敌方子弹
             if (e.pendingShot) {
@@ -2443,9 +2473,52 @@ class Game {
                 e.pendingShot = null;
             }
             if (e.currentHealth <= 0) {
-                this._onEnemyKilled();
+                this.spawnHitParticles(e.x + e.size / 2, e.y + e.size / 2, e.color, 10);
+                this._onEnemyKilled(e);
                 this.enemies.splice(i, 1);
             }
+        }
+    }
+
+    // 离 (x,y) 最近的存活玩家(单人/guest 恒为本机玩家)
+    _nearestPlayer(x, y) {
+        if (this.mpMode !== 'host' || this.mpGuestPlayers.size === 0) return this.player;
+        let best = this.player, bestD = Infinity;
+        const consider = p => {
+            if (p.currentHealth <= 0) return;
+            const d = (p.x - x) ** 2 + (p.y - y) ** 2;
+            if (d < bestD) { bestD = d; best = p; }
+        };
+        consider(this.player);
+        for (const gp of this.mpGuestPlayers.values()) consider(gp);
+        return best;
+    }
+
+    // 自爆者爆炸。armed=true:引信燃尽,伤玩家也伤周围敌人;false:被击杀后殉爆,只伤敌人(引到怪堆里打爆它)
+    _bomberExplode(e, armed) {
+        e.exploded = true;
+        const cx = e.x + e.size / 2, cy = e.y + e.size / 2, r = e.blastRadius;
+        this.effects.push({ type: 'shockwave', x: cx, y: cy, radius: 10, maxRadius: r, color: '#ff4081', ttl: 0.4, maxTtl: 0.4 });
+        this.effects.push({ type: 'shockwave', x: cx, y: cy, radius: 5, maxRadius: r * 0.55, color: '#ffd180', ttl: 0.3, maxTtl: 0.3 });
+        this.spawnParticles(cx, cy, '#ff80ab', 22, 3, 7, 2, 5, 0.04);
+        this.screenShake = Math.max(this.screenShake, armed ? 0.35 : 0.2);
+        Sound.play('bomb');
+        if (armed) {
+            const hit = p => {
+                const d = Math.hypot(p.x + p.size / 2 - cx, p.y + p.size / 2 - cy);
+                if (d <= r + p.size / 2) this._bossHitPlayer(p, e.blastDamage, '#ff4081');
+            };
+            hit(this.player);
+            if (this.mpMode === 'host') for (const gp of this.mpGuestPlayers.values()) hit(gp);
+        }
+        // 波及敌人:伤害只结算到血量,击杀统一由 updateEnemies 下一帧结算(可连锁殉爆)
+        const dmg = (armed ? 60 : 80) * e.difficulty;
+        for (const o of this.enemies) {
+            if (o === e || o.currentHealth <= 0) continue;
+            const ox = o.x + o.size / 2, oy = o.y + o.size / 2;
+            if (Math.hypot(ox - cx, oy - cy) > r + o.size / 2) continue;
+            o.takeDamage(dmg);
+            this._knockbackFrom(o, cx, cy, 6);
         }
     }
 
@@ -2483,7 +2556,7 @@ class Game {
             if (this.checkCollision(this.player, this.enemies[i])) {
                 // 受击无敌帧：冷却期内不再结算玩家受伤，避免重叠时血量瞬间被掏空
                 if (this.player.hurtCooldown <= 0) {
-                    this.player.takeDamage(this.enemies[i].attack);
+                    this.player.takeDamage(this.enemies[i].contactDamage());
                     this.player.hurtCooldown = 0.6 + (this.player.hurtCooldownBonus || 0);
                     this.player.gainRage(15 + (this.player.rageOnHurtBonus || 0));
                     this.spawnHitParticles(this.player.x + this.player.size / 2, this.player.y + this.player.size / 2, '#ff4444', 8);
@@ -2533,7 +2606,7 @@ class Game {
                 
                 if (this.enemies[i] && this.enemies[i].currentHealth <= 0) {
                     this.spawnHitParticles(this.enemies[i].x + this.enemies[i].size / 2, this.enemies[i].y + this.enemies[i].size / 2, this.enemies[i].color, 12);
-                    this._onEnemyKilled();
+                    this._onEnemyKilled(this.enemies[i]);
                     this.enemies.splice(i, 1);
                 }
             }
@@ -2585,7 +2658,7 @@ class Game {
                     // 投射物击杀立即结算
                     if (this.enemies[j].currentHealth <= 0) {
                         this.spawnHitParticles(this.enemies[j].x + this.enemies[j].size / 2, this.enemies[j].y + this.enemies[j].size / 2, this.enemies[j].color, 10);
-                        this._runAsPlayer(proj.owner, () => this._onEnemyKilled());
+                        this._runAsPlayer(proj.owner, () => this._onEnemyKilled(this.enemies[j]));
                         this.enemies.splice(j, 1);
                     } else {
                         this.spawnHitParticles(this.enemies[j].x + this.enemies[j].size / 2, this.enemies[j].y + this.enemies[j].size / 2, '#ffaa00', 4);
@@ -2622,14 +2695,14 @@ class Game {
         // 刷怪概率随难度上升但封顶,避免后期数量碾压
         const spawnChance = Math.min(0.045, 0.018 + 0.008 * (this.difficulty - 1));
         if (Math.random() < spawnChance) {
-            // 使用加权随机降低巨型追击者的刷新概率
-            // chaser 50% / patroller 28% / gunner 17% / giant 5%
-            let type;
-            const rand = Math.random();
-            if (rand < 0.50)      type = 'chaser';
-            else if (rand < 0.78) type = 'patroller';
-            else if (rand < 0.95) type = 'gunner';
-            else                  type = 'giant';
+            // 加权随机;冲锋者 30 秒、自爆者 50 秒后才加入,开局保持简单
+            const pool = [['chaser', 44], ['patroller', 24], ['gunner', 15], ['giant', 5]];
+            if (this.gameTime >= 30) pool.push(['dasher', 8]);
+            if (this.gameTime >= 50) pool.push(['bomber', 8]);
+            let roll = Math.random() * pool.reduce((a, w) => a + w[1], 0);
+            let type = pool[0][0];
+            for (const [t, w] of pool) { if ((roll -= w) < 0) { type = t; break; } }
+            this._introduceEnemy(type);
             
             let x, y;
 
@@ -2659,6 +2732,16 @@ class Game {
         }
     }
     
+    // 新敌种首次出场时提示一次它的打法
+    _introduceEnemy(type) {
+        const intro = Enemy.INTROS[type];
+        if (!intro) return;
+        if (!this.seenEnemyTypes) this.seenEnemyTypes = new Set();
+        if (this.seenEnemyTypes.has(type)) return;
+        this.seenEnemyTypes.add(type);
+        this.effects.push({ type: 'floatText', text: intro.text, x: this.width / 2, y: this.height * 0.3, color: intro.color, ttl: 2.2, maxTtl: 2.2 });
+    }
+
     spawnItems() {
         // 降低道具刷新频率以提高难度(原 0.015)
         if (Math.random() < 0.008) {
@@ -2885,7 +2968,7 @@ class Game {
             
             if (distance <= radius) {
                 // 秒杀敌人
-                this._onEnemyKilled();
+                this._onEnemyKilled(enemy);
                 this.enemies.splice(i, 1);
             }
         }
@@ -2993,7 +3076,7 @@ class Game {
             const idx = this.enemies.indexOf(target);
             if (idx >= 0) {
                 this.spawnHitParticles(target.x + target.size / 2, target.y + target.size / 2, target.color, 10);
-                this._onEnemyKilled();
+                this._onEnemyKilled(target);
                 this.enemies.splice(idx, 1);
             }
         } else {
@@ -3486,7 +3569,12 @@ class Game {
     }
 
     // 统一击杀结算入口:替代旧的 score+=10; exp+=5; checkLevelUp() 三连
-    _onEnemyKilled() {
+    _onEnemyKilled(e) {
+        // 被击杀的自爆者殉爆(稍等一帧,避免在调用方遍历 enemies 时改动数组)
+        if (e && e.type === 'bomber' && !e.exploded) {
+            e.exploded = true;
+            this.pendingActions.push({ delay: 0.05, fn: () => this._bomberExplode(e, false) });
+        }
         Sound.play('kill');
         // 击杀计数随玩家快照下发,本机据此触发击杀顿帧/震动(guest 也能拿到自己的击杀反馈)
         this.player.killCount = (this.player.killCount || 0) + 1;
@@ -4749,6 +4837,7 @@ class Game {
         if (enemies.length === 0) return;
         const m = ctx.getTransform(); // 世界变换只有缩放 + 平移(含震屏)
         const snap = { a: m.a, e: m.e, f: m.f };
+        Enemy.renderTelegraphs(ctx, enemies);
         ctx.imageSmoothingEnabled = false;
         for (const e of enemies) e.render(ctx, snap);
         ctx.imageSmoothingEnabled = true;
@@ -5409,6 +5498,11 @@ class Player {
 }
 
 class Enemy {
+    static INTROS = {
+        dasher: { text: '新敌人「冲」:蓄力后直线冲刺,看准路线侧身躲开', color: '#ffe57f' },
+        bomber: { text: '新敌人「爆」:贴身会自爆,先打爆它还能炸伤周围敌人', color: '#ff80ab' }
+    };
+
     constructor(x, y, type, difficulty) {
         this.id = nextEntityId();
         this.x = x;
@@ -5442,6 +5536,16 @@ class Enemy {
         this.moveDistance = 0;
         this.maxMoveDistance = 200;
         this.isResting = false;
+
+        // 冲锋者 / 自爆者专属:state 0 接近,冲锋者 1 蓄力 2 冲刺 3 硬直;自爆者 1 引信
+        this.state = 0;
+        this.stateTimer = 0;
+        this.stateDur = 0;
+        this.dashAngle = 0;
+        this.dashDist = 0;
+        this.dashTravel = 0;
+        this.dashCD = 0.5 + Math.random();
+        this.blastRadius = 0;
 
         this.stunTimer = 0;
 
@@ -5493,6 +5597,28 @@ class Enemy {
                 this.color = '#ff6f00';
                 this.shootInterval = Math.max(1.0, 2.5 - (this.difficulty - 1) * 0.3); // 难度越高射速越快
                 break;
+            case 'dasher': // 冲锋者:靠近后蓄力,锁定方向直线冲刺
+                this.size = 28;
+                this.speed = 1.5 * this.difficulty;
+                this.maxHealth = 45 * this.difficulty;
+                this.currentHealth = 45 * this.difficulty;
+                this.attack = 14 * this.difficulty;
+                this.defense = 3 * this.difficulty;
+                this.color = '#ffd600';
+                this.dashSpeed = 9 + 2 * this.difficulty;
+                this.dashDist = 200 + 15 * this.difficulty;
+                break;
+            case 'bomber': // 自爆者:贴近后点燃引信,原地爆炸;被击杀则殉爆,只伤敌人
+                this.size = 26;
+                this.speed = 2.2 * this.difficulty;
+                this.maxHealth = 30 * this.difficulty;
+                this.currentHealth = 30 * this.difficulty;
+                this.attack = 6 * this.difficulty;   // 接触伤害很低,威胁在爆炸
+                this.defense = 2 * this.difficulty;
+                this.color = '#ff4081';
+                this.blastRadius = 80;
+                this.blastDamage = 25 * this.difficulty;
+                break;
             default: // 默认追击者
                 this.type = 'chaser';
                 this.size = 30;
@@ -5505,9 +5631,14 @@ class Enemy {
         }
     }
     
-    update(playerX, playerY, width, height) {
+    update(playerX, playerY, width, height, playerSize = 30) {
         if (this.stunTimer > 0) {
             this.stunTimer -= DT;
+            // 冲锋者蓄力/冲刺中被控 = 打断;自爆者引信只是暂停
+            if (this.type === 'dasher' && (this.state === 1 || this.state === 2)) {
+                this.state = 0;
+                this.dashCD = 1;
+            }
             return;
         }
         switch (this.type) {
@@ -5523,7 +5654,89 @@ class Enemy {
             case 'gunner':
                 this.updateGunner(playerX, playerY);
                 break;
+            case 'dasher':
+                this.updateDasher(playerX, playerY, width, height, playerSize);
+                break;
+            case 'bomber':
+                this.updateBomber(playerX, playerY, playerSize);
+                break;
         }
+    }
+
+    // 与目标中心的偏移(playerX/Y 是目标左上角)
+    _toTarget(playerX, playerY, playerSize) {
+        const dx = playerX + playerSize / 2 - (this.x + this.size / 2);
+        const dy = playerY + playerSize / 2 - (this.y + this.size / 2);
+        return { dx, dy, dist: Math.hypot(dx, dy) };
+    }
+
+    _setState(state, dur) {
+        this.state = state;
+        this.stateTimer = this.stateDur = dur;
+    }
+
+    updateDasher(playerX, playerY, width, height, playerSize) {
+        const { dx, dy, dist } = this._toTarget(playerX, playerY, playerSize);
+        if (this.state === 0) {
+            this.dashCD -= DT;
+            if (dist > 0) {
+                this.x += (dx / dist) * this.speed;
+                this.y += (dy / dist) * this.speed;
+            }
+            // 进入射程且完全进场后开始蓄力
+            const inside = this.x > 0 && this.y > 0 && this.x < width - this.size && this.y < height - this.size;
+            if (this.dashCD <= 0 && inside && dist < this.dashDist * 1.1) {
+                this._setState(1, Math.max(0.5, 0.75 - (this.difficulty - 1) * 0.06));
+                this.dashAngle = Math.atan2(dy, dx);
+            }
+        } else if (this.state === 1) {
+            this.stateTimer -= DT;
+            // 前 50% 跟踪目标,之后锁定方向留出闪避窗口
+            if (this.stateTimer > this.stateDur * 0.5) this.dashAngle = Math.atan2(dy, dx);
+            if (this.stateTimer <= 0) {
+                this._setState(2, 1);
+                this.dashTravel = 0;
+                this._sfx = 'dash';
+            }
+        } else if (this.state === 2) {
+            const step = Math.min(this.dashSpeed, this.dashDist - this.dashTravel);
+            const nx = this.x + Math.cos(this.dashAngle) * step;
+            const ny = this.y + Math.sin(this.dashAngle) * step;
+            this.x = Math.max(0, Math.min(width - this.size, nx));
+            this.y = Math.max(0, Math.min(height - this.size, ny));
+            this.dashTravel += step;
+            this.stateTimer = 1 - this.dashTravel / this.dashDist;
+            // 冲完全程或撞墙即停,进入硬直(可趁机输出)
+            if (this.dashTravel >= this.dashDist || nx !== this.x || ny !== this.y) this._setState(3, 0.9);
+        } else {
+            this.stateTimer -= DT;
+            if (this.stateTimer <= 0) {
+                this.state = 0;
+                this.dashCD = 1.2 + Math.random() * 0.8;
+            }
+        }
+    }
+
+    updateBomber(playerX, playerY, playerSize) {
+        const { dx, dy, dist } = this._toTarget(playerX, playerY, playerSize);
+        if (this.state === 0) {
+            if (dist > 0) {
+                this.x += (dx / dist) * this.speed;
+                this.y += (dy / dist) * this.speed;
+            }
+            if (dist < 60) {
+                this._setState(1, 0.75);
+                this._sfx = 'fuse';
+            }
+        } else {
+            this.stateTimer -= DT;
+            if (this.stateTimer <= 0) this.detonate = true; // 由 Game.updateEnemies 结算爆炸
+        }
+    }
+
+    // 接触伤害:冲刺中的冲锋者更疼
+    contactDamage() {
+        return this.attack * (this.type === 'dasher' && this.state === 2 ? 1.5 : 1);
     }
 
     updateGunner(playerX, playerY) {
@@ -5681,7 +5894,56 @@ class Enemy {
         // 本体(渐变 + 光晕 + 描边 + 文字)按类型缓存,避免每帧 shadowBlur
         SpriteCache.drawPx(ctx, Enemy.bodySprite(this.type, this.size), this.x, this.y, snap);
         if (this.type === 'gunner') this._renderGunnerTop(ctx, snap);
+        if (this.state === 1 && (this.type === 'bomber' || this.type === 'dasher')) this._renderChargePulse(ctx, snap);
         this._renderHitFlash(ctx, snap);
+    }
+
+    // 蓄力 / 引信:白闪越来越快,提示即将出手
+    _renderChargePulse(ctx, snap) {
+        const p = 1 - this.stateTimer / (this.stateDur || 1);
+        const pulse = 0.5 + 0.5 * Math.sin(p * p * Math.PI * 14);
+        const alpha = ctx.globalAlpha;
+        ctx.globalAlpha = pulse * (0.25 + 0.5 * p);
+        SpriteCache.drawPx(ctx, Enemy.flashSprite(this.size, 6), this.x, this.y, snap);
+        ctx.globalAlpha = alpha;
+    }
+
+    // 第 0 遍:地面预警(冲锋者的冲刺路线、自爆者的爆炸范围),画在所有敌人身下。只有填充/描边,无 shadowBlur
+    static renderTelegraphs(ctx, enemies) {
+        for (const e of enemies) {
+            if (e.state !== 1) continue;
+            const cx = e.x + e.size / 2, cy = e.y + e.size / 2;
+            const p = Math.max(0, Math.min(1, 1 - e.stateTimer / (e.stateDur || 1)));
+            if (e.type === 'dasher') {
+                const len = e.dashDist + e.size / 2, w = e.size;
+                ctx.save();
+                ctx.translate(cx, cy);
+                ctx.rotate(e.dashAngle);
+                ctx.fillStyle = 'rgba(255,214,0,0.12)';
+                ctx.fillRect(0, -w / 2, len, w);
+                ctx.fillStyle = 'rgba(255,214,0,0.32)';
+                ctx.fillRect(0, -w / 2, len * p, w);
+                ctx.strokeStyle = 'rgba(255,241,118,0.75)';
+                ctx.lineWidth = 1.5;
+                ctx.strokeRect(0, -w / 2, len, w);
+                ctx.restore();
+            } else if (e.type === 'bomber') {
+                const r = e.blastRadius;
+                ctx.fillStyle = 'rgba(255,64,129,0.12)';
+                ctx.beginPath();
+                ctx.arc(cx, cy, r, 0, Math.PI * 2);
+                ctx.fill();
+                ctx.fillStyle = 'rgba(255,64,129,0.3)';
+                ctx.beginPath();
+                ctx.arc(cx, cy, r * p, 0, Math.PI * 2);
+                ctx.fill();
+                ctx.strokeStyle = `rgba(255,128,171,${0.5 + 0.5 * p})`;
+                ctx.lineWidth = 2;
+                ctx.beginPath();
+                ctx.arc(cx, cy, r, 0, Math.PI * 2);
+                ctx.stroke();
+            }
+        }
     }
 
     _renderGunnerTop(ctx, snap) {
@@ -5784,10 +6046,10 @@ class Enemy {
                 g.stroke();
                 return;
             }
-            const glowColors = { chaser: '#ff1744', patroller: '#2979ff', giant: '#d500f9' };
-            const lightColors = { chaser: '#ff6b6b', patroller: '#64b5f6', giant: '#e040fb' };
-            const darkColors = { chaser: '#b71c1c', patroller: '#0d47a1', giant: '#6a0080' };
-            const labels = { chaser: '追', patroller: '巡', giant: '巨' };
+            const glowColors = { chaser: '#ff1744', patroller: '#2979ff', giant: '#d500f9', dasher: '#ffd600', bomber: '#ff4081' };
+            const lightColors = { chaser: '#ff6b6b', patroller: '#64b5f6', giant: '#e040fb', dasher: '#fff59d', bomber: '#ff80ab' };
+            const darkColors = { chaser: '#b71c1c', patroller: '#0d47a1', giant: '#6a0080', dasher: '#f57f17', bomber: '#880e4f' };
+            const labels = { chaser: '追', patroller: '巡', giant: '巨', dasher: '冲', bomber: '爆' };
             const glow = glowColors[type] || '#ff1744';
             const r = type === 'giant' ? 10 : 6;
 
@@ -6383,7 +6645,7 @@ class PiercingArrow {
                 this.game.spawnHitParticles(ex, ey, '#aaff44', 6);
                 if (e.currentHealth <= 0) {
                     this.game.spawnHitParticles(ex, ey, e.color, 10);
-                    this.game._runAsPlayer(this.owner, () => this.game._onEnemyKilled());
+                    this.game._runAsPlayer(this.owner, () => this.game._onEnemyKilled(e));
                     this.game.enemies.splice(j, 1);
                 }
             }
