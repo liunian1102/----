@@ -512,8 +512,8 @@ class Game {
         this.joy = { active: false, id: null, bx: 0, by: 0, x: 0, y: 0 };
         // 技能/闪避按键:'tap' 点按释放(自动瞄准最近敌人)/ 'aim' 按住拖动瞄准,松手释放
         this.skillMode = Store.get('blockrun.skillMode', 'tap') === 'aim' ? 'aim' : 'tap';
-        // 拖拽瞄准状态:bcx/bcy 为按钮中心(逻辑坐标),sx/sy 为按下点(CSS px)
-        this.aim = { active: false, id: null, skill: null, bcx: 0, bcy: 0, sx: 0, sy: 0, ox: 0, oy: 0, dx: 0, dy: 0, armed: false };
+        // 拖拽瞄准状态:hcx/hcy 为按钮中心(HUD 坐标),sx/sy 为按下点(CSS px)
+        this.aim = { active: false, id: null, skill: null, hcx: 0, hcy: 0, sx: 0, sy: 0, ox: 0, oy: 0, dx: 0, dy: 0, armed: false };
         this.freezeOverlay = null; // 全屏冰封特效数据
 
         this.keys = {};
@@ -1013,7 +1013,7 @@ class Game {
             const btn = this.skillButtons.find(b => x >= b.x && x <= b.x + b.w && y >= b.y && y <= b.y + b.h);
             if (!btn) return false;
             Object.assign(this.aim, {
-                active: true, id, skill: btn.skill, bcx: btn.x + btn.w / 2, bcy: btn.y + btn.h / 2,
+                active: true, id, skill: btn.skill, hcx: btn.hcx, hcy: btn.hcy,
                 sx: clientX, sy: clientY, ox: 0, oy: 0, dx: 0, dy: 0, armed: false
             });
             return true;
@@ -5526,9 +5526,11 @@ class Game {
         this._renderHurtVignette();
         this._renderFreezeOverlay();
         this.skillButtons = [];
-        this._renderSkillHUD();
-        this._renderDashButton();
-        this._renderAimKnob();
+        this._withHud(() => {
+            this._renderSkillHUD();
+            this._renderDashButton();
+            this._renderAimKnob();
+        });
         this._renderBossHUD();
         this._renderEventHUD();
         this._renderStatsHUD();
@@ -5597,21 +5599,48 @@ class Game {
     }
 
     // 拖拽瞄准时按钮上的小摇杆头,跟着手指偏移(HUD 逻辑坐标)
+    // 技能/冲刺按键的坐标系:桌面端与世界同缩放(与以前一致);触屏端贴屏幕右下角,
+    // 按 CSS 像素定尺寸(1 单位 ≈ 1.35 CSS px),竖屏时落在画面下方黑边里,手指不挡视野
+    _withHud(fn) {
+        const ctx = this.ctx;
+        let h;
+        if (('ontouchstart' in window) || navigator.maxTouchPoints > 0) {
+            const k = this.canvas.width / (this.canvas.getBoundingClientRect().width || this.canvas.width);
+            const sc = Math.max(this.gameScale, k * 1.35);
+            h = { s: sc, ox: 0, oy: 0, w: this.canvas.width / sc, h: this.canvas.height / sc, k };
+        } else {
+            h = { s: this.gameScale, ox: this.gameOffsetX, oy: this.gameOffsetY, w: this.width, h: this.height,
+                  k: this.canvas.width / (this.canvas.getBoundingClientRect().width || this.canvas.width) };
+        }
+        this._hud = h;
+        ctx.save();
+        ctx.setTransform(h.s, 0, 0, h.s, h.ox, h.oy);
+        try { fn(); } finally { ctx.restore(); }
+    }
+
+    // 登记按键命中区:HUD 坐标 → 逻辑坐标(toCanvas 的输出),hcx/hcy 留给瞄准摇杆头
+    _hudButton(x, y, w, h, skill) {
+        const hd = this._hud, gs = this.gameScale;
+        this.skillButtons.push({
+            x: (hd.ox + x * hd.s - this.gameOffsetX) / gs, y: (hd.oy + y * hd.s - this.gameOffsetY) / gs,
+            w: w * hd.s / gs, h: h * hd.s / gs, skill, hcx: x + w / 2, hcy: y + h / 2
+        });
+    }
+
     _renderAimKnob() {
         const a = this.aim;
         if (!a.active || this.isPaused) return;
         const ctx = this.ctx;
-        const k = this.canvas.width / (this.canvas.getBoundingClientRect().width || this.canvas.width);
-        const perCss = k / this.gameScale;   // 1 CSS px = 多少逻辑 px
+        const perCss = this._hud.k / this._hud.s;   // 1 CSS px = 多少 HUD 单位
         let ox = a.ox * perCss, oy = a.oy * perCss;
         const d = Math.hypot(ox, oy), max = 30;
         if (d > max) { ox *= max / d; oy *= max / d; }
         ctx.save();
         ctx.strokeStyle = a.armed ? 'rgba(255,225,77,0.6)' : 'rgba(255,255,255,0.35)';
         ctx.lineWidth = 2;
-        ctx.beginPath(); ctx.arc(a.bcx, a.bcy, max + 6, 0, Math.PI * 2); ctx.stroke();
+        ctx.beginPath(); ctx.arc(a.hcx, a.hcy, max + 6, 0, Math.PI * 2); ctx.stroke();
         ctx.fillStyle = a.armed ? 'rgba(255,225,77,0.85)' : 'rgba(255,255,255,0.5)';
-        ctx.beginPath(); ctx.arc(a.bcx + ox, a.bcy + oy, 9, 0, Math.PI * 2); ctx.fill();
+        ctx.beginPath(); ctx.arc(a.hcx + ox, a.hcy + oy, 9, 0, Math.PI * 2); ctx.fill();
         ctx.restore();
     }
 
@@ -6129,8 +6158,8 @@ class Game {
         const p = this.player;
         const ctx = this.ctx;
         const r = 24;
-        const cx = this.width - 48, cy = this.height - 82 - 12 - r - 12;
-        this.skillButtons.push({ x: cx - r - 4, y: cy - r - 4, w: r * 2 + 8, h: r * 2 + 8, skill: 'dash' });
+        const cx = this._hud.w - 48, cy = this._hud.h - 82 - 12 - r - 12;
+        this._hudButton(cx - r - 4, cy - r - 4, r * 2 + 8, r * 2 + 8, 'dash');
         const ratio = p.dashMaxCooldown > 0 ? Math.max(0, Math.min(1, p.dashCooldown / p.dashMaxCooldown)) : 0;
         const ready = ratio <= 0;
         const col = '#80d8ff';
@@ -6175,14 +6204,12 @@ class Game {
         const cls = this.player.class;
         const slotW = 56, slotH = 56, slotR = 8;
         const margin = 10;
-        const baseX = this.width - (slotW * 2 + margin * 3);
-        const baseY = this.height - slotH - margin * 2 - 16;
+        const baseX = this._hud.w - (slotW * 2 + margin * 3);
+        const baseY = this._hud.h - slotH - margin * 2 - 16;
 
         // 技能命中区每帧由 render 清空后重新登记
-        this.skillButtons.push(
-            { x: baseX,              y: baseY, w: slotW, h: slotH, skill: 'Q' },
-            { x: baseX + slotW + margin, y: baseY, w: slotW, h: slotH, skill: 'E' }
-        );
+        this._hudButton(baseX, baseY, slotW, slotH, 'Q');
+        this._hudButton(baseX + slotW + margin, baseY, slotW, slotH, 'E');
 
         const qNames = { warrior: '旋', mage: '弹', assassin: '闪', archer: '穿', paladin: '圣' };
         const eNames = { warrior: '盾', mage: '斥', assassin: '刺', archer: '雨', paladin: '环' };
@@ -6301,7 +6328,7 @@ class Game {
             ctx.save();
             ctx.globalAlpha = alpha * 0.7;
             ctx.fillStyle = '#ffffff';
-            ctx.font = `${Math.max(9, Math.min(11, this.width * 0.022))}px Arial`;
+            ctx.font = '11px Arial';
             ctx.textAlign = 'center';
             ctx.textBaseline = 'top';
             ctx.fillText('可点击', baseX + slotW / 2, baseY + slotH + 22);
