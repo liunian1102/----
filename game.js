@@ -85,7 +85,8 @@ function roundRect(ctx, x, y, w, h, r) {
 
 // 只往当前路径追加一个圆角矩形子路径(不 beginPath),用于把多个圆角矩形合并成一次 fill
 function addRoundRect(ctx, x, y, w, h, r) {
-    r = Math.min(r, w / 2, h / 2);
+    if (!(w > 0) || !(h > 0)) return; // 进度条比例越界时宽度可能为负,arcTo 负半径会抛异常、整帧渲染中断
+    r = Math.max(0, Math.min(r, w / 2, h / 2));
     ctx.moveTo(x + r, y);
     ctx.lineTo(x + w - r, y);
     ctx.arcTo(x + w, y, x + w, y + r, r);
@@ -698,18 +699,14 @@ class Game {
               applicable: g => !!g.player.class && g.player.skillQ.level < 3,
               apply: g => {
                   g.player.skillQ.level = Math.min(3, g.player.skillQ.level + 1);
-                  const cdm = g._getCDMultiplier(g.player.skillQ.level);
-                  const base = (CLASS_BASE_CD[g.player.class] || { q: 3 }).q;
-                  g.player.skillQ.maxCooldown = base * cdm;
+                  g.player.skillQ.maxCooldown = g._skillMaxCd(g.player, 'q');
               } },
             { id: 'skillEUp',    name: 'E 技能强化', icon: 'E', color: '#ba68c8', rarity: 'epic',
               desc: 'E 技能等级 +1', stackable: true, maxStacks: 2,
               applicable: g => !!g.player.class && g.player.skillE.level < 3,
               apply: g => {
                   g.player.skillE.level = Math.min(3, g.player.skillE.level + 1);
-                  const cdm = g._getCDMultiplier(g.player.skillE.level);
-                  const base = (CLASS_BASE_CD[g.player.class] || { e: 5 }).e;
-                  g.player.skillE.maxCooldown = base * cdm;
+                  g.player.skillE.maxCooldown = g._skillMaxCd(g.player, 'e');
               } },
 
             // --- 战士专属 ---
@@ -748,7 +745,7 @@ class Game {
             { id: 'assassinShadow', name: '影袭', icon: '◐', color: '#9c27b0', rarity: 'common',
               desc: 'Q 闪现斩冷却 -1 秒', stackable: true, maxStacks: 2,
               applicable: g => g.player.class === 'assassin' && g.player.skillQ.maxCooldown > 1,
-              apply: g => { g.player.skillQ.maxCooldown = Math.max(1, g.player.skillQ.maxCooldown - 1); } },
+              apply: g => { g.player.qCdFlat = (g.player.qCdFlat || 0) + 1; g.player.skillQ.maxCooldown = g._skillMaxCd(g.player, 'q'); } },
             { id: 'assassinCombo', name: '连击专精', icon: '✕', color: '#aa00ff', rarity: 'epic',
               desc: 'E 连刺额外多攻击 1 个目标', stackable: true, maxStacks: 2,
               applicable: g => g.player.class === 'assassin',
@@ -1364,11 +1361,7 @@ class Game {
                         keys: msg.keys, targetX: msg.targetX,
                         targetY: msg.targetY, moving: msg.moving, stats: msg.stats
                     });
-                    if (!this.mpGuestPlayers.has(msg.playerId)) {
-                        const gp = new Player(this.width / 2 + msg.playerId * 40, this.height / 2);
-                        gp.color = this._mpPlayerColor(msg.playerId);
-                        this.mpGuestPlayers.set(msg.playerId, gp);
-                    }
+                    this._mpGuestPlayer(msg.playerId);
                 }
                 break;
             case 'castSkill':
@@ -1789,15 +1782,17 @@ class Game {
     sendGuestInput() {
         if (!this.mpWs || this.mpWs.readyState !== WebSocket.OPEN) return;
         const p = this.player;
-        const hasTarget = p.moving && p.targetX !== null;
+        const idle = this.isPaused; // 菜单/暂停中:发送空输入让角色原地停下
+        const k = idle ? {} : this.keys;
+        const hasTarget = !idle && p.moving && p.targetX !== null;
         const payload = JSON.stringify({
             type: 'input',
             keys: {
-                ArrowUp:    !!this.keys['ArrowUp'],   ArrowDown:  !!this.keys['ArrowDown'],
-                ArrowLeft:  !!this.keys['ArrowLeft'],  ArrowRight: !!this.keys['ArrowRight'],
-                w: !!this.keys['w'], a: !!this.keys['a'],
-                s: !!this.keys['s'], d: !!this.keys['d'],
-                _jx: q2(this.keys._jx || 0), _jy: q2(this.keys._jy || 0)
+                ArrowUp:    !!k['ArrowUp'],   ArrowDown:  !!k['ArrowDown'],
+                ArrowLeft:  !!k['ArrowLeft'],  ArrowRight: !!k['ArrowRight'],
+                w: !!k['w'], a: !!k['a'],
+                s: !!k['s'], d: !!k['d'],
+                _jx: q2(k._jx || 0), _jy: q2(k._jy || 0)
             },
             targetX: hasTarget ? p.targetX : null,
             targetY: hasTarget ? p.targetY : null,
@@ -1809,7 +1804,8 @@ class Game {
                 qLevel: p.skillQ.level, eLevel: p.skillE.level,
                 qMaxCd: p.skillQ.maxCooldown, eMaxCd: p.skillE.maxCooldown,
                 dashMaxCd: p.dashMaxCooldown,
-                spec: p.spec || undefined, awk: p.awakened ? 1 : undefined
+                spec: p.spec || undefined, awk: p.awakened ? 1 : undefined,
+                menu: (this.showingClassSelection || this.showingPotentialMenu) ? 1 : undefined
             }
         });
         // 输入没变化时不必每帧发送(host 会沿用上一次输入),仅保留 250ms 心跳
@@ -1830,13 +1826,7 @@ class Game {
     // ── Host：应用 guest 输入到其 Player 对象 ──
     _applyGuestInputs() {
         for (const [id, input] of this.mpGuestInputs) {
-            let gp = this.mpGuestPlayers.get(id);
-            if (!gp) {
-                gp = new Player(this.width / 2 + id * 40, this.height / 2);
-                gp.color = this._mpPlayerColor(id);
-                gp.extraLives = 2; // 额外复活次数
-                this.mpGuestPlayers.set(id, gp);
-            }
+            const gp = this._mpGuestPlayer(id);
             // 应用 guest 传来的属性（职业/天赋效果同步）
             if (input.stats) {
                 const s = input.stats;
@@ -1855,7 +1845,11 @@ class Game {
                 if (s.qMaxCd)  gp.skillQ.maxCooldown = s.qMaxCd;
                 if (s.eMaxCd)  gp.skillE.maxCooldown = s.eMaxCd;
                 if (s.dashMaxCd) gp.dashMaxCooldown = s.dashMaxCd;
+                // guest 在选天赋/职业时世界不会为他暂停:期间给保护,免得站着挨打
+                gp.menuGuard = !!s.menu;
             }
+            // 房主暂停(升级菜单等)时整个世界冻结,guest 也不移动、不推进计时
+            if (this.isPaused) continue;
             if (input.keys) gp.update(input.keys, this.width, this.height);
             if (input.moving && input.targetX !== null) {
                 gp.targetX = input.targetX;
@@ -1876,15 +1870,33 @@ class Game {
         }
     }
 
+    // ── Host：取得(没有则创建)guest 的 Player。两处创建入口共用,保证都有额外复活次数 ──
+    _mpGuestPlayer(id) {
+        let gp = this.mpGuestPlayers.get(id);
+        if (!gp) {
+            gp = new Player(this.width / 2 + id * 40, this.height / 2);
+            gp.color = this._mpPlayerColor(id);
+            this.mpGuestPlayers.set(id, gp);
+        }
+        return gp;
+    }
+
     // ── Host：为指定 Player 对象配置职业 ──
+    // 本机选职业与 host 替 guest 配置共用,保证两边属性一致(弓手普攻倍率是乘算,不能当加法叠)
     _applyClassToPlayer(p, className) {
         if (!CLASS_BASE_CD[className] || p.class) return;
         p.class = className;
-        const adj = CLASS_BASE_ADJUST[className] || {};
-        for (const [k, v] of Object.entries(adj)) p[k] = (p[k] || 0) + v;
         const cd = CLASS_BASE_CD[className];
-        p.skillQ.maxCooldown = cd.q;
-        p.skillE.maxCooldown = cd.e;
+        p.skillQ = { cooldown: 0, maxCooldown: cd.q, level: 1 };
+        p.skillE = { cooldown: 0, maxCooldown: cd.e, level: 1 };
+        const adj = CLASS_BASE_ADJUST[className] || {};
+        if (adj.attack)    p.attack += adj.attack;
+        if (adj.defense)   p.defense = Math.max(0, p.defense + adj.defense);
+        if (adj.maxHealth) { p.maxHealth += adj.maxHealth; p.currentHealth = p.maxHealth; }
+        if (adj.speed)     p.speed += adj.speed;
+        if (adj.manaRegen) p.manaRegen += adj.manaRegen;
+        if (adj.maxMana)   { p.maxMana += adj.maxMana; p.mana = p.maxMana; }
+        if (adj.autoAttackDmgMult) p.autoAttackDmgMult = (p.autoAttackDmgMult || 1) * adj.autoAttackDmgMult;
     }
 
     // ── Guest：更新本地资源（保持 HUD 流畅） ──
@@ -2139,8 +2151,14 @@ class Game {
         if (this.mpMode === 'guest') {
             if (!this.isPaused) {
                 if (this.mpStateBuffer) {
+                    const prevBoss = this.bossState;
                     this.applyRemoteState(this.mpStateBuffer);
                     this.mpStateBuffer = null;
+                    // 击退魔王的 +1 潜能是每人一份:房主在 _repelBoss 里拿,guest 按状态边沿自己加
+                    if (prevBoss === 'active' && this.bossState === 'retreating') {
+                        this.player.potentialPoints++;
+                        if (!this.showingClassSelection) this.showPotentialMenu();
+                    }
                 }
                 // 职业选择(3 级) / 进阶 / 觉醒触发
                 if (!this.showingClassSelection && !this.showingPotentialMenu) {
@@ -2151,6 +2169,7 @@ class Game {
                 if (this.level > (this._mpGuestLastLevel || 1)) {
                     const gained = this.level - (this._mpGuestLastLevel || 1);
                     this.player.potentialPoints += gained;
+                    this.player.speed += 0.2 * gained; // 与房主 checkLevelUp 的每级 +0.2 移速一致
                     this._mpGuestLastLevel = this.level;
                     if (this.player.potentialPoints > 0 && !this.showingClassSelection) this.showPotentialMenu();
                 }
@@ -2168,6 +2187,9 @@ class Game {
                 this.bgTime += DT;
                 this._uiTimer += DT;
                 if (this._uiTimer >= 0.1) { this.updateUI(); this._uiTimer = 0; }
+                this.sendGuestInput();
+            } else {
+                // 选天赋/职业或暂停时本地不推进,但要告诉 host 停下(否则沿用上次按住的方向一直走)
                 this.sendGuestInput();
             }
             return;
@@ -2211,6 +2233,7 @@ class Game {
             this._updateEvents();
             this._tickPendingActions();
             this.checkCollisions();
+            this._checkLocalDeath(); // 兜底:任何来源把血量打到 0 都能结算复活/扣命
             this.spawnEnemies();
             this.spawnItems();
             // updateUI 降频:每 100ms 刷新一次 DOM
@@ -2793,7 +2816,7 @@ class Game {
 
     // 玩家此刻能否受伤:受击无敌帧内不能;冲刺中不能,且算一次"完美闪避"
     _canHurt(p) {
-        if (p.hurtCooldown > 0) return false;
+        if (p.hurtCooldown > 0 || p.menuGuard) return false;
         if (p.dashTimer > 0) { this._onPerfectDodge(p); return false; }
         return true;
     }
@@ -2810,9 +2833,10 @@ class Game {
     }
 
     _checkGuestCollisions() {
+        if (this.isPaused) return; // 暂停期间世界冻结,guest 不受伤也不拾取
         for (const [, gp] of this.mpGuestPlayers) {
             // guest 拾取道具(无敌药水会改动基础属性,与 guest 上报的属性冲突,留给房主)
-            if (gp.currentHealth > 0 && !this.isPaused) {
+            if (gp.currentHealth > 0) {
                 for (let i = this.items.length - 1; i >= 0; i--) {
                     const it = this.items[i];
                     if (it.type === 'potion_invicible' || !this.checkCollision(gp, it)) continue;
@@ -2820,12 +2844,14 @@ class Game {
                     this.items.splice(i, 1);
                 }
             }
-            if (gp.hurtCooldown > 0) { gp.hurtCooldown -= DT; continue; }
+            // 无敌帧由 gp.update(Player.update)倒计时,这里不能再减一次(否则 guest 的无敌帧只有一半)
+            if (gp.hurtCooldown > 0) continue;
             for (const enemy of this.enemies) {
                 if (enemy.contactDamage() > 0 && this.checkCollision(gp, enemy)) {
                     if (this._canHurt(gp)) {
                         gp.takeDamage(enemy.contactDamage());
                         gp.hurtCooldown = 0.6 + (gp.hurtCooldownBonus || 0);
+                        gp.gainRage(15 + (gp.rageOnHurtBonus || 0));
                     }
                     break;
                 }
@@ -2834,6 +2860,7 @@ class Game {
             if (gp.hurtCooldown <= 0 && this.boss && this.bossState === 'active' && this.checkCollision(gp, this.boss) && this._canHurt(gp)) {
                 gp.takeDamage(this.boss.attack);
                 gp.hurtCooldown = 0.6 + (gp.hurtCooldownBonus || 0);
+                gp.gainRage(15 + (gp.rageOnHurtBonus || 0));
             }
             // 敌方子弹(炮手/魔王弹幕)
             if (gp.hurtCooldown <= 0 && gp.currentHealth > 0) {
@@ -2843,20 +2870,22 @@ class Game {
                     if (!this._canHurt(gp)) break; // 冲刺中穿过子弹
                     gp.takeDamage(b.damage);
                     gp.hurtCooldown = 0.6 + (gp.hurtCooldownBonus || 0);
+                    gp.gainRage(15 + (gp.rageOnHurtBonus || 0));
                     this.spawnHitParticles(gp.x + gp.size / 2, gp.y + gp.size / 2, '#ff9800', 8);
                     this.enemyBullets.splice(i, 1);
                     break;
                 }
             }
-            // 死亡后复活
+            // 死亡后复活:与房主共用全队生命(各端 HUD 显示的就是这个数),用完则全队结束
             if (gp.currentHealth <= 0) {
-                if (gp.extraLives > 0) {
-                    gp.extraLives--;
-                    gp.currentHealth = gp.maxHealth;
-                    gp.hurtCooldown = 1.5;
-                    gp.x = this.width / 2; gp.y = this.height / 2;
-                } else {
-                    gp.currentHealth = 0;
+                gp.currentHealth = 0;
+                if (this.life > 0) {
+                    this.life--;
+                    if (this.life > 0) {
+                        gp.currentHealth = gp.maxHealth;
+                        gp.hurtCooldown = 1.5;
+                        gp.x = this.width / 2 - gp.size / 2; gp.y = this.height / 2 - gp.size / 2;
+                    }
                 }
             }
         }
@@ -2928,16 +2957,7 @@ class Game {
                     const dist = Math.sqrt(dx * dx + dy * dy) || 1;
                     this.player.x = Math.max(0, Math.min(this.width - this.player.size, this.player.x + (dx / dist) * 15));
                     this.player.y = Math.max(0, Math.min(this.height - this.player.size, this.player.y + (dy / dist) * 15));
-                    // 玩家死亡检查
-                    if (this.player.currentHealth <= 0) {
-                        this.life--;
-                        if (this.life > 0) {
-                            this.player.x = this.width / 2;
-                            this.player.y = this.height / 2;
-                            this.player.currentHealth = this.player.maxHealth;
-                            this.player.hurtCooldown = 1.5;
-                        }
-                    }
+                    this._checkLocalDeath();
                 }
 
                 // 投射物 vs 魔王(单独处理,因为 boss 不在 enemies 数组里)
@@ -3125,16 +3145,22 @@ class Game {
         p.gainRage(15 + (p.rageOnHurtBonus || 0));
         this.spawnHitParticles(p.x + p.size / 2, p.y + p.size / 2, color, 12);
         // guest 的死亡/复活在 _checkGuestCollisions 里统一处理
-        if (p === this.player && p.currentHealth <= 0) {
-            this.life--;
-            if (this.life > 0) {
-                p.x = this.width / 2;
-                p.y = this.height / 2;
-                p.currentHealth = p.maxHealth;
-                p.hurtCooldown = 1.5;
-            }
-        }
+        if (p === this.player) this._checkLocalDeath();
         return true;
+    }
+
+    // 本机玩家血量归零:扣一条命,还有命就在中央复活并给 1.5 秒无敌。
+    // 同一帧可能被多个来源判定死亡,生命已为 0 时不再重复扣(否则命数会变成负数)
+    _checkLocalDeath() {
+        const p = this.player;
+        if (p.currentHealth > 0 || this.life <= 0) return;
+        this.life--;
+        if (this.life > 0) {
+            p.x = this.width / 2 - p.size / 2;
+            p.y = this.height / 2 - p.size / 2;
+            p.currentHealth = p.maxHealth;
+            p.hurtCooldown = 1.5;
+        }
     }
 
     _spawnBoss() {
@@ -3634,17 +3660,7 @@ class Game {
                     this.enemies[i].y -= pushY;
                 }
                 
-                // 检查玩家是否死亡
-                if (this.player.currentHealth <= 0) {
-                    this.life--;
-                    if (this.life > 0) {
-                        // 重置玩家位置和状态，复活后给一小段无敌避免连死
-                        this.player.x = this.width / 2;
-                        this.player.y = this.height / 2;
-                        this.player.currentHealth = this.player.maxHealth;
-                        this.player.hurtCooldown = 1.5;
-                    }
-                }
+                this._checkLocalDeath(); // 复活后给一小段无敌避免连死
                 
                 if (this.enemies[i] && this.enemies[i].currentHealth <= 0) {
                     this.spawnHitParticles(this.enemies[i].x + this.enemies[i].size / 2, this.enemies[i].y + this.enemies[i].size / 2, this.enemies[i].color, 12);
@@ -3671,15 +3687,7 @@ class Game {
                     this.player.hurtCooldown = 0.6 + (this.player.hurtCooldownBonus || 0);
                     this.player.gainRage(15 + (this.player.rageOnHurtBonus || 0));
                     this.spawnHitParticles(this.player.x + this.player.size / 2, this.player.y + this.player.size / 2, '#ff9800', 8);
-                    if (this.player.currentHealth <= 0) {
-                        this.life--;
-                        if (this.life > 0) {
-                            this.player.x = this.width / 2;
-                            this.player.y = this.height / 2;
-                            this.player.currentHealth = this.player.maxHealth;
-                            this.player.hurtCooldown = 1.5;
-                        }
-                    }
+                    this._checkLocalDeath();
                 }
                 this.enemyBullets.splice(i, 1);
             }
@@ -4111,6 +4119,15 @@ class Game {
         if (level === 2) return 1.2;
         if (level >= 3) return 1.5;
         return 1.0;
+    }
+
+    // 技能冷却上限 = 职业基础 × 等级倍率 - 固定减免(影袭);升级/觉醒重算时不会丢掉影袭的 -1 秒
+    _skillMaxCd(p, key) {
+        const base = (CLASS_BASE_CD[p.class] || { q: 3, e: 5 })[key];
+        const sk = key === 'q' ? p.skillQ : p.skillE;
+        const flat = key === 'q' ? (p.qCdFlat || 0) : 0;
+        const cd = base * this._getCDMultiplier(sk.level);
+        return flat ? Math.max(1, cd - flat) : cd;
     }
 
     _getCDMultiplier(level) {
@@ -4615,8 +4632,9 @@ class Game {
         this.spawnParticles(pcx, pcy, '#aa44ff', 10, 2, 5, 2, 4, 0.05);
         if (dist > 0) {
             const nx = dx / dist, ny = dy / dist;
-            this.player.x = target.x - nx * (target.size + this.player.size * 0.5);
-            this.player.y = target.y - ny * (target.size + this.player.size * 0.5);
+            // 落点钳在场地内(目标贴边时会被闪到场外)
+            this.player.x = Math.max(0, Math.min(this.width - this.player.size, target.x - nx * (target.size + this.player.size * 0.5)));
+            this.player.y = Math.max(0, Math.min(this.height - this.player.size, target.y - ny * (target.size + this.player.size * 0.5)));
         }
         const chargeMult = this._consumeAssassinCharge();
         const dmg = this._computeAttackDamage(this.player.attack) * 2.5 * this._getSkillMultiplier(skill.level) * (this.player.assassinSkillDmgMult || 1) * chargeMult;
@@ -5246,20 +5264,7 @@ class Game {
         const nameByChoice = { 1: 'warrior', 2: 'mage', 3: 'assassin', 4: 'archer', 5: 'paladin' };
         const name = nameByChoice[choice];
         if (!name) return;
-        const cd = CLASS_BASE_CD[name];
-        this.player.class = name;
-        this.player.skillQ = { cooldown: 0, maxCooldown: cd.q, level: 1 };
-        this.player.skillE = { cooldown: 0, maxCooldown: cd.e, level: 1 };
-
-        // 应用职业基础属性偏移
-        const adj = CLASS_BASE_ADJUST[name] || {};
-        if (adj.attack)    this.player.attack += adj.attack;
-        if (adj.defense)   this.player.defense = Math.max(0, this.player.defense + adj.defense);
-        if (adj.maxHealth) { this.player.maxHealth += adj.maxHealth; this.player.currentHealth = this.player.maxHealth; }
-        if (adj.speed)     this.player.speed += adj.speed;
-        if (adj.manaRegen) this.player.manaRegen += adj.manaRegen;
-        if (adj.maxMana)   { this.player.maxMana += adj.maxMana; this.player.mana = this.player.maxMana; }
-        if (adj.autoAttackDmgMult) this.player.autoAttackDmgMult = (this.player.autoAttackDmgMult || 1) * adj.autoAttackDmgMult;
+        this._applyClassToPlayer(this.player, name);
 
         this.showingClassSelection = false;
         // Guest 模式：把职业选择发给 host
@@ -5319,10 +5324,9 @@ class Game {
     _awakenPlayer(p) {
         if (!p.spec || p.awakened) return;
         p.awakened = true;
-        const base = CLASS_BASE_CD[p.class];
         for (const [sk, key] of [[p.skillQ, 'q'], [p.skillE, 'e']]) {
             if (sk.level < 3) sk.level++;
-            if (base) sk.maxCooldown = base[key] * this._getCDMultiplier(sk.level);
+            if (CLASS_BASE_CD[p.class]) sk.maxCooldown = this._skillMaxCd(p, key);
         }
         p.currentHealth = p.maxHealth;
         if (p.spec === 'protector') p.paladinAuraDurationBonus = (p.paladinAuraDurationBonus || 0) + 3;
@@ -6875,7 +6879,7 @@ class Game {
         }
 
         for (const s of slots) {
-            const cdRatio = s.skill.maxCooldown > 0 ? Math.max(0, s.skill.cooldown / s.skill.maxCooldown) : 0;
+            const cdRatio = s.skill.maxCooldown > 0 ? Math.max(0, Math.min(1, s.skill.cooldown / s.skill.maxCooldown)) : 0;
             const ready = cdRatio <= 0;
 
             ctx.shadowBlur = ready ? 16 : 4;
@@ -7825,6 +7829,13 @@ class Enemy {
                 // 重置巡逻起点
                 this.patrolStart = this.patrolAxis === 'x' ? this.x : this.y;
             }
+        } else if (this.x < 0 || this.y < 0 || this.x > width - this.size || this.y > height - this.size) {
+            // 刚从场外刷出:先走进场地再巡逻(否则会在屏幕外来回巡逻、永远不进场)
+            const cx = width / 2 - this.x, cy = height / 2 - this.y;
+            const d = Math.hypot(cx, cy) || 1;
+            this.x += cx / d * this.speed;
+            this.y += cy / d * this.speed;
+            this.patrolStart = this.patrolAxis === 'x' ? this.x : this.y;
         } else {
             // 巡逻模式
             if (this.patrolAxis === 'x') {
