@@ -69,8 +69,8 @@ const CLASS_SPECS = {
           desc: '圣光打击变为审判之锤:晕眩目标周围所有敌人;圣锤普攻伤害 +50%',
           awaken: '每第 4 次圣锤召唤天降圣光柱(3 倍伤害)' },
         { id: 'protector', name: '守护者', icon: '✚', q: '圣', e: '护',
-          desc: '护盾上限翻倍;神圣光环半径扩大并治疗范围内队友',
-          awaken: '神圣光环内所有玩家受到伤害 -50%,光环持续 +3 秒' }
+          desc: '护盾上限翻倍;圣锤附加 5% 最大生命 + 50% 当前护盾伤害;神圣光环半径扩大、按最大生命灼烧并治疗队友',
+          awaken: '圣光反击:受到攻击时对周围敌人反弹 1.5 倍伤害;光环内玩家减伤 50%,光环持续 +3 秒' }
     ]
 };
 function specDef(p) {
@@ -2526,7 +2526,9 @@ class Game {
                             if (this.player.awakened) ally.auraGuard = 0.1;
                         }
                     }
-                    const auraDmgTick = this._computeAttackDamage(this.player.attack) * 0.5 * DT * (this.player.paladinSkillDmgMult || 1);
+                    // 守护者:光环额外按最大生命灼烧(每秒 12%)
+                    const auraDmgTick = (this._computeAttackDamage(this.player.attack) * 0.5 * (this.player.paladinSkillDmgMult || 1)
+                        + (this.player.spec === 'protector' ? this.player.maxHealth * 0.12 : 0)) * DT;
                     for (let i = this.enemies.length - 1; i >= 0; i--) {
                         const e = this.enemies[i];
                         const dx = e.x + e.size / 2 - pcx;
@@ -2570,6 +2572,16 @@ class Game {
                 this._hitAround(pcx, pcy, 110, this._computeAttackDamage(p.attack) * 0.5, e => { e.stunTimer = Math.max(e.stunTimer || 0, e === this.boss ? 0.4 : 1); });
                 this.effects.push({ type: 'shockwave', x: pcx, y: pcy, radius: 10, maxRadius: 110, color: '#90caf9', ttl: 0.4, maxTtl: 0.4 });
                 this._showFloatingText('圣盾爆发', pcx, p.y - 26, '#90caf9');
+            }
+        }
+        // 守护者觉醒「圣光反击」:把这一帧受到的攻击(护盾吸收的也算)以 1.5 倍反弹给周围敌人
+        if (p._reflect > 0) {
+            const raw = p._reflect;
+            p._reflect = 0;
+            if (p.spec === 'protector' && p.awakened && p.currentHealth > 0) {
+                this._hitAround(pcx, pcy, 100, raw * 1.5 + p.maxHealth * 0.05);
+                this.effects.push({ type: 'shockwave', x: pcx, y: pcy, radius: 8, maxRadius: 100, color: '#ffe082', ttl: 0.3, maxTtl: 0.3 });
+                this._showFloatingText('反击', pcx, p.y - 22, '#ffe082');
             }
         }
         // 铁卫觉醒「不屈」触发提示
@@ -4885,7 +4897,9 @@ class Game {
         const range = 75;
         const near = this._findClosestTarget();
         if (!near || Math.hypot(near.x + near.size / 2 - pcx, near.y + near.size / 2 - pcy) > range + near.size / 2) return;
-        const dmg = this._computeAttackDamage(p.attack) * 0.9 * (p.autoAttackDmgMult || 1) * (p.spec === 'crusader' ? 1.5 : 1);
+        let dmg = this._computeAttackDamage(p.attack) * 0.9 * (p.autoAttackDmgMult || 1) * (p.spec === 'crusader' ? 1.5 : 1);
+        // 守护者「以盾为锤」:越坦打得越疼
+        if (p.spec === 'protector') dmg += p.maxHealth * 0.05 + p.shield * 0.5;
         const hits = this._hitAround(pcx, pcy, range, dmg);
         p.faith = Math.min(p.maxFaith, p.faith + 3 * hits);
         this.effects.push({ type: 'meleeSwing', x: pcx, y: pcy, radius: range, startAngle: 0, endAngle: Math.PI * 2, color: '#ffd54f', ttl: 0.22, maxTtl: 0.22 });
@@ -7347,8 +7361,9 @@ class Player {
         let actualDamage = Math.max(1, damage - this.defense - gearDef - flatReduction);
         // 战士被动「战意」:怒气越高越抗揍(满怒 -30%)
         if (this.class === 'warrior') actualDamage *= 1 - 0.3 * Math.min(1, this.rage / this.maxRage);
-        // 守护者觉醒:神圣光环内减伤 50%
+        // 守护者觉醒:神圣光环内减伤 50%;记下原始伤害,交给 Game 反弹
         if (this.auraGuard > 0) actualDamage *= 0.5;
+        if (this.spec === 'protector' && this.awakened) this._reflect = (this._reflect || 0) + damage;
         // 圣骑士护盾优先全额抵挡(不再因 Math.max(1) 强制漏 1 点)
         if (this.shield > 0) {
             const absorbed = Math.min(this.shield, actualDamage);
