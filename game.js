@@ -184,7 +184,16 @@ const nextEntityId = () => ++_entityIdSeq;
 // 联机快照数值量化,缩小网络包
 const q1 = v => Math.round(v * 10) / 10;
 const q2 = v => Math.round(v * 100) / 100;
-const MP_ENEMY_TYPES = ['chaser', 'patroller', 'giant', 'gunner', 'dasher', 'bomber'];
+const MP_ENEMY_TYPES = ['chaser', 'patroller', 'giant', 'gunner', 'dasher', 'bomber', 'treasure'];
+
+// 随机事件(两次魔王之间触发,由 host/单人调度,经快照 ev 下发给 guest)
+const GAME_EVENTS = {
+    meteor:   { name: '流星雨',   icon: '🌠', color: '#ff9100', dur: 10, desc: '躲开地面红圈,陨石也会砸伤敌人' },
+    treasure: { name: '宝藏方块', icon: '💰', color: '#ffd740', dur: 14, desc: '追上并击败它,掉落装备和一堆道具' },
+    elite:    { name: '精英来袭', icon: '♛', color: '#ffc400', dur: 20, desc: '击败金框精英怪获得额外奖励' },
+    horde:    { name: '怪潮',     icon: '🌊', color: '#40c4ff', dur: 12, desc: '敌人大量涌来,击杀经验和分数翻倍' }
+};
+const EVENT_TYPES = Object.keys(GAME_EVENTS);
 const MP_ITEM_TYPES = ['potion', 'exp_book', 'snowflake', 'bomb', 'heart', 'potion_invicible',
     'gear_blade', 'gear_orb', 'gear_armor', 'gear_bow'];
 
@@ -230,6 +239,8 @@ const ACHIEVEMENTS = [
     { id: 'boss1',      icon: '👑', name: '魔王克星', desc: '击退一次方块大魔王',         check: r => r.bossRepels >= 1 },
     { id: 'boss3',      icon: '🔥', name: '屠魔者',   desc: '单局击退方块大魔王 3 次',    check: r => r.bossRepels >= 3 },
     { id: 'allClasses', icon: '🎭', name: '全能大师', desc: '五种职业各玩过一次',         check: (r, p) => Object.keys(Object.assign({}, p.classesPlayed, r.cls ? { [r.cls]: 1 } : {})).length >= 5 },
+    { id: 'treasure1',  icon: '💰', name: '寻宝者',   desc: '击败一次宝藏方块',           check: r => (r.treasures || 0) >= 1 },
+    { id: 'elite10',    icon: '♛', name: '精英猎手', desc: '单局击败 10 个精英怪',        check: r => (r.elites || 0) >= 10 },
     { id: 'total20k',   icon: '💎', name: '积少成多', desc: '累计得分 20000',            check: (r, p) => p.totalScore + r.score >= 20000 }
 ];
 
@@ -309,7 +320,7 @@ const Sound = {
     _last: {},
     _noiseBuf: null,
     // 同名音效最短间隔(秒),避免一帧内多次击杀叠成噪音
-    minGap: { kill: 0.05, skill: 0.08, pickup: 0.06, hurt: 0.1, dash: 0.12, fuse: 0.2, bomb: 0.08 },
+    minGap: { kill: 0.05, skill: 0.08, pickup: 0.06, hurt: 0.1, dash: 0.12, fuse: 0.2, bomb: 0.08, meteor: 0.1 },
 
     init() {
         if (this.ctx) {
@@ -448,6 +459,16 @@ const Sound = {
             case 'bossRepel':
                 [392, 523, 659, 784].forEach((f, i) => this._tone(f, 0.2, 'square', 0.12, 1, i * 0.09));
                 break;
+            case 'event':
+                [523, 659, 784, 659, 988].forEach((f, i) => this._tone(f, 0.12, 'square', 0.09, 1, i * 0.07));
+                break;
+            case 'meteor':
+                this._noise(0.35, 0.22, 'lowpass', 700);
+                this._tone(120, 0.3, 'sine', 0.18, 0.5);
+                break;
+            case 'treasure':
+                [1047, 1319, 1568, 2093].forEach((f, i) => this._tone(f, 0.1, 'triangle', 0.14, 1, i * 0.05));
+                break;
             case 'gameOver':
                 [659, 523, 440, 349].forEach((f, i) => this._tone(f, 0.3, 'triangle', 0.18, 1, i * 0.2));
                 break;
@@ -507,6 +528,7 @@ class Game {
 
         this.enemyFreezeTimer = 0;
         this.gearTimer = 20;          // 距离下一件限时装备掉落的秒数
+        this._resetEvents();
 
         // 方块大魔王调度
         this.bossState = 'idle';      // idle | warning | active | retreating
@@ -1131,6 +1153,7 @@ class Game {
         this.difficulty = 1;
         this.enemyFreezeTimer = 0;
         this.gearTimer = 20;
+        this._resetEvents();
         this.showingPotentialMenu = false;
         this.showingClassSelection = false;
         this.particles = [];
@@ -1335,7 +1358,9 @@ class Game {
     //   e: [id, 类型序号, x, y, hp, maxHp, 眩晕(0/1), (炮手) aimAngle, shootTimer, shootInterval]
     //     冲锋者/自爆者额外 [状态, 状态剩余, 状态总长, 冲刺角度, 冲刺距离/爆炸半径]
     //   i: [id, 类型序号, 落点x, 落点y, 剩余时长]
+    //     e 的标志位:1 眩晕 / 2 受击闪白 / 4 精英
     //   p: [id, 种类(0 普通弹/1 穿透箭/2 装备弹), x, y, 角度]
+    //   ev: [事件序号(EVENT_TYPES), 剩余, 总时长, 剩余精英数] 或 0;mt: [id, x, y, 半径, 落地倒计时, 总时长]
     //   b: [id, x, y, 角度]
     //   boss: [x, y, hp, maxHp, 击退中(0/1), 受击闪白(0/1), 招式序号(BlockBoss.ATK_CODES), 招式阶段, 阶段剩余, 阶段总长, 招式角度, 狂暴(0/1)]
     serializeState() {
@@ -1346,7 +1371,7 @@ class Game {
         return {
             e: this.enemies.map(e => {
                 const row = [e.id, MP_ENEMY_TYPES.indexOf(e.type), q1(e.x), q1(e.y),
-                    Math.ceil(e.currentHealth), Math.ceil(e.maxHealth), (e.stunTimer > 0 ? 1 : 0) | (e._mpHit ? 2 : 0)];
+                    Math.ceil(e.currentHealth), Math.ceil(e.maxHealth), (e.stunTimer > 0 ? 1 : 0) | (e._mpHit ? 2 : 0) | (e.elite ? 4 : 0)];
                 e._mpHit = false;
                 if (e.type === 'gunner') row.push(q2(e.aimAngle || 0), q2(e.shootTimer || 0), q2(e.shootInterval || 1));
                 else if (e.type === 'dasher' || e.type === 'bomber') row.push(e.state, q2(e.stateTimer), q2(e.stateDur), q2(e.dashAngle), q1(e.type === 'dasher' ? e.dashDist : e.blastRadius));
@@ -1361,6 +1386,9 @@ class Game {
                 q2(Math.atan2(p.dy, p.dx))]),
             b: this.enemyBullets.map(b => [b.id, q1(b.x), q1(b.y), q2(b.angle)]),
             players,
+            ev: this.event ? [EVENT_TYPES.indexOf(this.event.type), q1(this.event.timer), this.event.dur, this.event.left || 0] : 0,
+            mt: this.meteors.map(m => [m.id, q1(m.x), q1(m.y), q1(m.r), q2(m.t), m.dur]),
+            tk: this.treasureKills, ek: this.eliteKills,
             ef: this._mpTakeNewEffects(),
             fx: this._mpFx.splice(0),
             gameTime: q1(this.gameTime), level: this.level, score: this.score,
@@ -1466,7 +1494,11 @@ class Game {
 
         // 敌人(仅渲染,不运行 AI)
         const en = this._mpSyncList(this.enemies, snapshot.e || [],
-            r => new Enemy(r[2], r[3], MP_ENEMY_TYPES[r[1]] || 'chaser', 1),
+            r => {
+                const e = new Enemy(r[2], r[3], MP_ENEMY_TYPES[r[1]] || 'chaser', 1);
+                if (r[6] & 4) e.makeElite();
+                return e;
+            },
             (e, r, isNew) => {
                 this._mpSetTarget(e, r[2], r[3], isNew);
                 e.currentHealth = r[4]; e.maxHealth = r[5];
@@ -1487,6 +1519,7 @@ class Game {
             });
         this.enemies = en.list;
         if (en.removed.length > 0) Sound.play(en.removed.some(e => e.type === 'bomber') ? 'bomb' : 'kill');
+        if (snapshot.tk > (this.treasureKills || 0)) Sound.play('treasure');
 
         // Boss
         if (snapshot.boss) {
@@ -1507,6 +1540,16 @@ class Game {
         } else {
             this.boss = null;
         }
+
+        // 随机事件与陨石(陨石落地倒计时在 _mpInterpolate 里本地推进)
+        const evRow = snapshot.ev;
+        this.event = evRow ? { type: EVENT_TYPES[evRow[0]], timer: evRow[1], dur: evRow[2], left: evRow[3] } : null;
+        const mt = this._mpSyncList(this.meteors, snapshot.mt || [], () => ({}),
+            (m, r) => { m.x = r[1]; m.y = r[2]; m.r = r[3]; m.t = r[4]; m.dur = r[5]; });
+        this.meteors = mt.list;
+        if (mt.removed.length) Sound.play('meteor');
+        if (snapshot.tk !== undefined) this.treasureKills = snapshot.tk;
+        if (snapshot.ek !== undefined) this.eliteKills = snapshot.ek;
 
         // 道具(仅渲染;落地/旋转动画在本地跑)
         const it = this._mpSyncList(this.items, snapshot.i || [],
@@ -1629,6 +1672,8 @@ class Game {
             if (this.boss.atk) this.boss.atkTimer = Math.max(0, this.boss.atkTimer - DT);
         }
         for (const it of this.items) it.update();
+        for (const m of this.meteors) m.t = Math.max(0, m.t - DT);
+        if (this.event) this.event.timer = Math.max(0, this.event.timer - DT);
     }
 
     // ── Guest：发送输入 ──
@@ -2009,6 +2054,7 @@ class Game {
             this.updateEffects();
             this.updateParticles();
             this._updateBoss();
+            this._updateEvents();
             this._tickPendingActions();
             this.checkCollisions();
             this.spawnEnemies();
@@ -2051,7 +2097,8 @@ class Game {
 
     _runStats() {
         return { score: this.score, time: Math.floor(this.gameTime), level: this.level,
-                 bossRepels: this.runBossRepels || 0, cls: this.player.class, dodges: this.player.dodgeCount || 0 };
+                 bossRepels: this.runBossRepels || 0, cls: this.player.class, dodges: this.player.dodgeCount || 0,
+                 treasures: this.treasureKills || 0, elites: this.eliteKills || 0 };
     }
 
     // 每 tick 调用(host/guest 都走):统计击退魔王,每 0.5s 检查一次成就,推进解锁提示
@@ -2132,7 +2179,8 @@ class Game {
         const cur = { hurt: p.hurtCooldown || 0, life: this.life, level: this.level, boss: this.bossState,
                       q: p.skillQ.cooldown, e: p.skillE.cooldown, kills: p.killCount || 0,
                       dash: p.dashCooldown || 0, dodge: p.dodgeCount || 0, gear: p.gear ? p.gear.type : '',
-                      atk: b && b.atk ? b.atk + b.atkPhase : '', rage: !!(b && b.enraged) };
+                      atk: b && b.atk ? b.atk + b.atkPhase : '', rage: !!(b && b.enraged),
+                      ev: this.event ? this.event.type : '' };
         const prev = this._sfxPrev;
         this._sfxPrev = cur;
         if (!prev) return;
@@ -2152,6 +2200,7 @@ class Game {
             else Sound.play(cur.atk === 'slam1' ? 'bossSlam' : cur.atk === 'ring1' ? 'bossRing' : 'bossCharge');
         }
         if (cur.rage && !prev.rage) Sound.play('bossEnrage');
+        if (cur.ev && cur.ev !== prev.ev) Sound.play('event');
         if (cur.boss !== prev.boss) {
             if (cur.boss === 'warning') Sound.play('bossWarn');
             else if (cur.boss === 'active') Sound.play('bossSpawn');
@@ -2561,7 +2610,7 @@ class Game {
             }
             if (gp.hurtCooldown > 0) { gp.hurtCooldown -= DT; continue; }
             for (const enemy of this.enemies) {
-                if (this.checkCollision(gp, enemy)) {
+                if (enemy.contactDamage() > 0 && this.checkCollision(gp, enemy)) {
                     if (this._canHurt(gp)) {
                         gp.takeDamage(enemy.contactDamage());
                         gp.hurtCooldown = 0.6 + (gp.hurtCooldownBonus || 0);
@@ -2917,6 +2966,309 @@ class Game {
         this.showPotentialMenu();
     }
     
+    // ══════════════════════════════════════════════════════════════════
+    //  随机事件:流星雨 / 宝藏方块 / 精英来袭 / 怪潮
+    //  只在魔王 idle 期间开始,且保证在魔王预警前结束;host/单人调度,guest 只渲染快照
+    // ══════════════════════════════════════════════════════════════════
+    _resetEvents() {
+        this.event = null;            // { type, timer, dur, left }
+        this.eventTimer = 25;         // 距离下一个事件的秒数
+        this.meteors = [];            // { id, x, y, r, t, dur }:t 为落地倒计时
+        this.treasureKills = 0;
+        this.eliteKills = 0;
+        this._lastEventType = null;
+    }
+
+    _updateEvents() {
+        this._updateMeteors();
+        const ev = this.event;
+        if (ev) {
+            ev.timer -= DT;
+            if (ev.type === 'meteor') {
+                ev.spawnCd -= DT;
+                if (ev.spawnCd <= 0 && ev.timer > 1.3) {
+                    ev.spawnCd = Math.max(0.2, 0.42 - 0.06 * (this.difficulty - 1)) * (this.mpGuestPlayers.size ? 0.8 : 1);
+                    this._spawnMeteor();
+                }
+            } else if (ev.type === 'elite') {
+                ev.left = this.enemies.reduce((n, e) => n + (e.elite ? 1 : 0), 0);
+                if (ev.left === 0) { ev.success = true; ev.timer = 0; }
+            } else if (ev.type === 'treasure') {
+                const t = this.enemies.find(e => e.type === 'treasure');
+                if (!t) ev.timer = 0;
+                else {
+                    // 金光闪闪的拖尾,远处也看得见
+                    ev.sparkle = (ev.sparkle || 0) - DT;
+                    if (ev.sparkle <= 0) {
+                        ev.sparkle = 0.12;
+                        this.spawnParticles(t.x + t.size / 2, t.y + t.size / 2, '#ffd740', 2, 0.5, 1.5, 1.5, 3, 0.04);
+                    }
+                }
+            }
+            if (ev.timer <= 0) this._endEvent();
+            return;
+        }
+        if (this.bossState !== 'idle') return;
+        this.eventTimer -= DT;
+        if (this.eventTimer > 0) return;
+        // 随机挑一个和上次不同的事件;来不及在魔王降临前结束就稍后再试
+        const pool = EVENT_TYPES.filter(t => t !== this._lastEventType);
+        const type = pool[Math.floor(Math.random() * pool.length)];
+        if (this.bossTimer < GAME_EVENTS[type].dur + 4) { this.eventTimer = 2; return; }
+        this._startEvent(type);
+    }
+
+    _startEvent(type) {
+        const def = GAME_EVENTS[type];
+        this.event = { type, timer: def.dur, dur: def.dur, left: 0, spawnCd: 0.6 };
+        this._lastEventType = type;
+        // 放在新敌人提示(height*0.3)上方,避免精英带出的首次提示与之重叠
+        this._showFloatingText(`${def.icon} ${def.name}`, this.width / 2, this.height * 0.17, def.color);
+        this.effects.push({ type: 'floatText', text: def.desc, x: this.width / 2, y: this.height * 0.17 + 28, color: '#ffffff', ttl: 2.2, maxTtl: 2.2 });
+        if (type === 'treasure') this._spawnTreasure();
+        else if (type === 'elite') this._spawnElites();
+    }
+
+    _endEvent() {
+        const ev = this.event;
+        if (!ev) return;
+        this.event = null;
+        this.eventTimer = 22 + Math.random() * 10;
+        if (ev.type === 'treasure') {
+            const i = this.enemies.findIndex(e => e.type === 'treasure');
+            if (i >= 0) {
+                // 没追上:原地遁走
+                const t = this.enemies[i];
+                this.enemies.splice(i, 1);
+                this.spawnBurstRing(t.x + t.size / 2, t.y + t.size / 2, 26, '#ffd740', 14);
+                this._showFloatingText('宝藏方块溜走了…', this.width / 2, this.height * 0.3, '#ffe082');
+            }
+        } else if (ev.type === 'elite' && ev.success) {
+            this._showFloatingText('精英全灭!', this.width / 2, this.height * 0.3, '#ffc400');
+        } else if (ev.type === 'horde') {
+            this._showFloatingText('怪潮退去', this.width / 2, this.height * 0.3, '#80d8ff');
+        }
+    }
+
+    // 敌人从场外随机一侧进场
+    _edgeSpawnPos() {
+        if (Math.random() < 0.5) return { x: Math.random() < 0.5 ? -50 : this.width + 50, y: Math.random() * this.height };
+        return { x: Math.random() * this.width, y: Math.random() < 0.5 ? -50 : this.height + 50 };
+    }
+
+    _livingPlayers() {
+        const out = [];
+        if (this.player.currentHealth > 0) out.push(this.player);
+        if (this.mpMode === 'host') for (const gp of this.mpGuestPlayers.values()) if (gp.currentHealth > 0) out.push(gp);
+        return out;
+    }
+
+    _spawnTreasure() {
+        // 在场内远离所有玩家的位置现身
+        const players = this._livingPlayers();
+        let x = 0, y = 0;
+        for (let i = 0; i < 12; i++) {
+            x = 60 + Math.random() * (this.width - 150);
+            y = 60 + Math.random() * (this.height - 150);
+            if (players.every(p => Math.hypot(p.x - x, p.y - y) > 260)) break;
+        }
+        const t = new Enemy(x, y, 'treasure', this.difficulty);
+        this.enemies.push(t);
+        this.spawnBurstRing(x + t.size / 2, y + t.size / 2, 30, '#ffd740', 16);
+    }
+
+    _spawnElites() {
+        const n = Math.min(6, 3 + Math.floor(this.difficulty - 1) + this.mpGuestPlayers.size);
+        const pool = [['chaser', 40], ['patroller', 25], ['dasher', 25], ['giant', 10]];
+        const total = pool.reduce((a, w) => a + w[1], 0);
+        for (let i = 0; i < n; i++) {
+            let roll = Math.random() * total, type = 'chaser';
+            for (const [t, w] of pool) { if ((roll -= w) < 0) { type = t; break; } }
+            this._introduceEnemy(type);
+            const { x, y } = this._edgeSpawnPos();
+            const e = new Enemy(x, y, type, this.difficulty);
+            e.makeElite();
+            this.enemies.push(e);
+        }
+    }
+
+    _spawnMeteor() {
+        let x, y;
+        const players = this._livingPlayers();
+        if (players.length && Math.random() < 0.45) {
+            // 一部分瞄准玩家脚下(带偏移),逼玩家移动
+            const p = players[Math.floor(Math.random() * players.length)];
+            x = p.x + p.size / 2 + (Math.random() - 0.5) * 100;
+            y = p.y + p.size / 2 + (Math.random() - 0.5) * 100;
+        } else {
+            x = 40 + Math.random() * (this.width - 80);
+            y = 40 + Math.random() * (this.height - 80);
+        }
+        const dur = 1.2;
+        this.meteors.push({ id: nextEntityId(), x: Math.max(20, Math.min(this.width - 20, x)),
+            y: Math.max(20, Math.min(this.height - 20, y)), r: 36 + Math.random() * 16, t: dur, dur });
+    }
+
+    _updateMeteors() {
+        for (let i = this.meteors.length - 1; i >= 0; i--) {
+            const m = this.meteors[i];
+            m.t -= DT;
+            if (m.t > 0) continue;
+            this.meteors.splice(i, 1);
+            this._meteorImpact(m);
+        }
+    }
+
+    _meteorImpact(m) {
+        this.effects.push({ type: 'shockwave', x: m.x, y: m.y, radius: 6, maxRadius: m.r, color: '#ff9100', ttl: 0.35, maxTtl: 0.35 });
+        this.spawnParticles(m.x, m.y, '#ffab40', 12, 2, 6, 2, 4, 0.05);
+        this.screenShake = Math.max(this.screenShake, 0.12);
+        Sound.play('meteor');
+        const dmg = 12 + 8 * this.difficulty;
+        for (const p of this._livingPlayers()) {
+            const d = Math.hypot(p.x + p.size / 2 - m.x, p.y + p.size / 2 - m.y);
+            if (d <= m.r + p.size * 0.3) this._bossHitPlayer(p, dmg, '#ff9100');
+        }
+        // 也砸敌人:击杀统一由 updateEnemies 结算
+        const edmg = 110 * this.difficulty;
+        for (const e of this.enemies) {
+            if (e.currentHealth <= 0) continue;
+            const d = Math.hypot(e.x + e.size / 2 - m.x, e.y + e.size / 2 - m.y);
+            if (d > m.r + e.size / 2) continue;
+            e.takeDamage(e.type === 'treasure' ? edmg * 0.4 : edmg);
+            this._knockbackFrom(e, m.x, m.y, 6);
+        }
+    }
+
+    // 在 (x,y) 掉一个随机普通道具
+    _dropRandomItem(x, y, pool) {
+        pool = pool || ['potion', 'potion', 'exp_book', 'exp_book', 'snowflake', 'bomb', 'heart'];
+        const type = pool[Math.floor(Math.random() * pool.length)];
+        x = Math.max(10, Math.min(this.width - 40, x));
+        y = Math.max(40, Math.min(this.height - 40, y));
+        this.items.push(new Item(x, y, type));
+    }
+
+    _treasureReward(e) {
+        const cx = e.x + e.size / 2, cy = e.y + e.size / 2;
+        this._dropGear(cx - 12, cy - 12);
+        for (let i = 0; i < 3; i++) {
+            const a = (i / 3) * Math.PI * 2 + Math.random();
+            this._dropRandomItem(cx - 12 + Math.cos(a) * 55, cy - 12 + Math.sin(a) * 55);
+        }
+        this.score += 80 * (this.scoreMult || 1);
+        this.exp += 40;
+        this.treasureKills++;
+        this.spawnParticles(cx, cy, '#ffd740', 30, 2, 7, 2, 5, 0.03);
+        this.spawnBurstRing(cx, cy, 40, '#fff59d', 20);
+        this._showFloatingText('宝藏到手!  +80 分  掉落装备', this.width / 2, this.height * 0.3, '#ffd740');
+        Sound.play('treasure');
+        if (this.event && this.event.type === 'treasure') this.event.timer = 0;
+    }
+
+    _eliteReward(e) {
+        const cx = e.x + e.size / 2, cy = e.y + e.size / 2;
+        this._dropRandomItem(cx - 12, cy - 12);
+        this.score += 30 * (this.scoreMult || 1);
+        this.exp += 20;
+        this.eliteKills++;
+        this.spawnBurstRing(cx, cy, 30, '#ffc400', 14);
+        this._showFloatingText('精英击破!', cx, e.y - 14, '#ffc400');
+    }
+
+    // 地面预警:外圈 + 随落地进度填满的内圈(只有填充/描边,无 shadowBlur)
+    _renderMeteorMarks(ctx) {
+        if (!this.meteors.length) return;
+        ctx.save();
+        for (const m of this.meteors) {
+            const p = Math.max(0, Math.min(1, 1 - m.t / m.dur));
+            ctx.fillStyle = 'rgba(255,145,0,0.12)';
+            ctx.beginPath();
+            ctx.arc(m.x, m.y, m.r, 0, Math.PI * 2);
+            ctx.fill();
+            ctx.fillStyle = 'rgba(255,112,67,0.26)';
+            ctx.beginPath();
+            ctx.arc(m.x, m.y, m.r * p, 0, Math.PI * 2);
+            ctx.fill();
+            ctx.strokeStyle = `rgba(255,171,64,${0.45 + 0.5 * p})`;
+            ctx.lineWidth = 2;
+            ctx.beginPath();
+            ctx.arc(m.x, m.y, m.r, 0, Math.PI * 2);
+            ctx.stroke();
+        }
+        ctx.restore();
+    }
+
+    // 下落中的陨石:从右上方斜着砸向落点,后 60% 时长可见
+    _renderMeteorRocks(ctx) {
+        if (!this.meteors.length) return;
+        ctx.save();
+        // 陨石从场外飞入,裁到场地内,竖屏时不画进上下留黑区
+        ctx.beginPath();
+        ctx.rect(0, 0, this.width, this.height);
+        ctx.clip();
+        ctx.lineCap = 'round';
+        for (const m of this.meteors) {
+            const p = 1 - m.t / m.dur;
+            if (p < 0.4) continue;
+            const k = (p - 0.4) / 0.6, f = 1 - k * k;
+            const x = m.x + 150 * f, y = m.y - 240 * f;
+            const tx = x + 150 * 0.18, ty = y - 240 * 0.18;
+            const grad = ctx.createLinearGradient(x, y, tx, ty);
+            grad.addColorStop(0, 'rgba(255,171,64,0.9)');
+            grad.addColorStop(1, 'rgba(255,87,34,0)');
+            ctx.strokeStyle = grad;
+            ctx.lineWidth = 10;
+            ctx.beginPath();
+            ctx.moveTo(x, y);
+            ctx.lineTo(tx, ty);
+            ctx.stroke();
+            ctx.fillStyle = '#ffcc80';
+            ctx.beginPath();
+            ctx.arc(x, y, 8, 0, Math.PI * 2);
+            ctx.fill();
+            ctx.fillStyle = '#bf360c';
+            ctx.beginPath();
+            ctx.arc(x + 2, y + 2, 4, 0, Math.PI * 2);
+            ctx.fill();
+        }
+        ctx.restore();
+    }
+
+    // 顶部中央的事件横幅:图标 + 名称 + 剩余时间条(魔王出场时让位给魔王血条)
+    _renderEventHUD() {
+        const ev = this.event;
+        if (!ev || this.bossState === 'warning' || this.bossState === 'active') return;
+        const def = GAME_EVENTS[ev.type];
+        if (!def) return;
+        const ctx = this.ctx;
+        const w = 230, h = 30, x = (this.width - w) / 2, y = 10;
+        const pct = Math.max(0, Math.min(1, ev.timer / (ev.dur || 1)));
+        ctx.save();
+        ctx.fillStyle = 'rgba(10,16,28,0.78)';
+        roundRect(ctx, x, y, w, h, 10);
+        ctx.fill();
+        ctx.strokeStyle = def.color;
+        ctx.globalAlpha = 0.6 + 0.4 * Math.abs(Math.sin(this.bgTime * 3));
+        ctx.lineWidth = 1.5;
+        roundRect(ctx, x, y, w, h, 10);
+        ctx.stroke();
+        ctx.globalAlpha = 1;
+        ctx.fillStyle = def.color;
+        roundRect(ctx, x + 8, y + h - 6, (w - 16) * pct, 3, 1.5);
+        ctx.fill();
+        let label = `${def.icon} ${def.name}`;
+        if (ev.type === 'elite') label += `  剩余 ${ev.left}`;
+        else if (ev.type === 'horde') label += '  经验×2';
+        label += `  ${Math.ceil(ev.timer)}s`;
+        ctx.fillStyle = '#ffffff';
+        ctx.font = 'bold 14px Arial';
+        ctx.textAlign = 'center';
+        ctx.textBaseline = 'middle';
+        ctx.fillText(label, this.width / 2, y + h / 2 - 2);
+        ctx.restore();
+    }
+
     updatePlayer() {
         this.player.update(this.keys, this.width, this.height);
     }
@@ -3027,9 +3379,10 @@ class Game {
         for (let i = this.enemies.length - 1; i >= 0; i--) {
             if (this.checkCollision(this.player, this.enemies[i])) {
                 // 冲刺中直接穿过敌人(不碰撞、不推开),碰上即算完美闪避
-                if (this.player.dashTimer > 0) { this._canHurt(this.player); continue; }
+                const harmless = this.enemies[i].contactDamage() <= 0; // 宝藏方块碰了不疼
+                if (this.player.dashTimer > 0) { if (!harmless) this._canHurt(this.player); continue; }
                 // 受击无敌帧：冷却期内不再结算玩家受伤，避免重叠时血量瞬间被掏空
-                if (this.player.hurtCooldown <= 0) {
+                if (this.player.hurtCooldown <= 0 && !harmless) {
                     this.player.takeDamage(this.enemies[i].contactDamage());
                     this.player.hurtCooldown = 0.6 + (this.player.hurtCooldownBonus || 0);
                     this.player.gainRage(15 + (this.player.rageOnHurtBonus || 0));
@@ -3166,9 +3519,11 @@ class Game {
     spawnEnemies() {
         // 魔王活跃 / 击退中,停刷普通敌人
         if (this.bossState === 'active' || this.bossState === 'retreating') return;
-        if (this.enemies.length >= maxEnemiesFor(this.difficulty)) return;
+        // 怪潮事件:刷怪概率 ×3、数量上限 +25
+        const horde = this.event && this.event.type === 'horde';
+        if (this.enemies.length >= maxEnemiesFor(this.difficulty) + (horde ? 25 : 0)) return;
         // 刷怪概率随难度上升但封顶,避免后期数量碾压
-        const spawnChance = Math.min(0.045, 0.018 + 0.008 * (this.difficulty - 1));
+        const spawnChance = Math.min(0.045, 0.018 + 0.008 * (this.difficulty - 1)) * (horde ? 3 : 1);
         if (Math.random() < spawnChance) {
             // 加权随机;冲锋者 30 秒、自爆者 50 秒后才加入,开局保持简单
             const pool = [['chaser', 44], ['patroller', 24], ['gunner', 15], ['giant', 5]];
@@ -4085,8 +4440,11 @@ class Game {
         Sound.play('kill');
         // 击杀计数随玩家快照下发,本机据此触发击杀顿帧/震动(guest 也能拿到自己的击杀反馈)
         this.player.killCount = (this.player.killCount || 0) + 1;
-        this.score += 10 * (this.scoreMult || 1);
-        this.exp += 5;
+        const horde = this.event && this.event.type === 'horde' ? 2 : 1;
+        this.score += 10 * (this.scoreMult || 1) * horde;
+        this.exp += 5 * horde;
+        if (e && e.type === 'treasure') this._treasureReward(e);
+        if (e && e.elite) this._eliteReward(e);
         if (this.player.lifeStealPerKill) {
             this.player.heal(this.player.lifeStealPerKill);
         }
@@ -5034,6 +5392,7 @@ class Game {
         }
 
         this.renderBackground();
+        this._renderMeteorMarks(ctx);
 
         this.player.render(this.ctx);
         this._renderGearAura(this.player);
@@ -5060,6 +5419,7 @@ class Game {
         for (let b of this.enemyBullets) {
             b.render(this.ctx);
         }
+        this._renderMeteorRocks(ctx);
 
         this._renderEffects();
 
@@ -5076,6 +5436,7 @@ class Game {
         this._renderSkillHUD();
         this._renderDashButton();
         this._renderBossHUD();
+        this._renderEventHUD();
         this._renderStatsHUD();
         this._renderGearHUD();
         this._renderMuteButton();
@@ -6362,6 +6723,17 @@ class Enemy {
                 this.blastRadius = 80;
                 this.blastDamage = 25 * this.difficulty;
                 break;
+            case 'treasure': // 宝藏方块:不伤人,远离玩家四处逃窜,事件结束前没打死就溜走
+                this.size = 28;
+                this.speed = 2.3 + 0.35 * this.difficulty;
+                this.maxHealth = 170 * this.difficulty;
+                this.currentHealth = this.maxHealth;
+                this.attack = 0;
+                this.defense = 0;
+                this.color = '#ffd740';
+                this.wanderDir = Math.random() * Math.PI * 2;
+                this.wanderOff = 0;
+                break;
             default: // 默认追击者
                 this.type = 'chaser';
                 this.size = 30;
@@ -6403,7 +6775,50 @@ class Enemy {
             case 'bomber':
                 this.updateBomber(playerX, playerY, playerSize);
                 break;
+            case 'treasure':
+                this.updateTreasure(playerX, playerY, width, height, playerSize);
+                break;
         }
+    }
+
+    // 精英化:体型 ×1.3、血量 ×3、攻防略升,画金框皇冠(guest 只用到体型与标记)
+    makeElite() {
+        if (this.elite) return;
+        this.elite = true;
+        this.size = Math.round(this.size * 1.3);
+        this.maxHealth *= 3;
+        this.currentHealth = this.maxHealth;
+        this.attack *= 1.3;
+        this.defense *= 1.2;
+        this.speed *= 1.1;
+        if (this.type === 'dasher') this.dashDist *= 1.15;
+    }
+
+    // 宝藏方块:离玩家近就背向逃跑(带随机偏转),远了就闲逛;贴墙时被推回场内
+    updateTreasure(playerX, playerY, width, height, playerSize) {
+        const { dx, dy, dist } = this._toTarget(playerX, playerY, playerSize);
+        this.stateTimer -= DT;
+        if (this.stateTimer <= 0) {
+            this.stateTimer = 0.4 + Math.random() * 0.5;
+            this.wanderOff = (Math.random() - 0.5) * 1.8;
+            this.wanderDir += (Math.random() - 0.5) * 2;
+        }
+        let ax, ay, speed = this.speed;
+        if (dist < 280 && dist > 0) {
+            const a = Math.atan2(-dy, -dx) + this.wanderOff;
+            ax = Math.cos(a); ay = Math.sin(a);
+        } else {
+            ax = Math.cos(this.wanderDir); ay = Math.sin(this.wanderDir);
+            speed *= 0.5;
+        }
+        const m = 70;
+        if (this.x < m) ax += (m - this.x) / m * 1.5;
+        if (this.x > width - this.size - m) ax -= (this.x - (width - this.size - m)) / m * 1.5;
+        if (this.y < m) ay += (m - this.y) / m * 1.5;
+        if (this.y > height - this.size - m) ay -= (this.y - (height - this.size - m)) / m * 1.5;
+        const len = Math.hypot(ax, ay) || 1;
+        this.x = Math.max(0, Math.min(width - this.size, this.x + ax / len * speed));
+        this.y = Math.max(0, Math.min(height - this.size, this.y + ay / len * speed));
     }
 
     // 与目标中心的偏移(playerX/Y 是目标左上角)
@@ -6479,6 +6894,7 @@ class Enemy {
 
     // 接触伤害:冲刺中的冲锋者更疼
     contactDamage() {
+        if (this.type === 'treasure') return 0;
         return this.attack * (this.type === 'dasher' && this.state === 2 ? 1.5 : 1);
     }
 
@@ -6736,7 +7152,8 @@ class Enemy {
         fill('rgba(0,0,0,0.5)', e => { addRoundRect(ctx, e.x, e.y - 10, e.size, 4, 2); return true; });
         // 血量
         const hp = e => addRoundRect(ctx, e.x, e.y - 10, e.size * (e.currentHealth / e.maxHealth), 4, 2);
-        fill('#ff1744', e => e.type !== 'gunner' && (hp(e), true));
+        fill('#ff1744', e => e.type !== 'gunner' && !e.elite && e.type !== 'treasure' && (hp(e), true));
+        fill('#ffc400', e => (e.elite || e.type === 'treasure') && (hp(e), true));
         fill('#ff6f00', e => e.type === 'gunner' && (hp(e), true));
         // 炮手装弹进度条(显示下次开火倒计时)
         const reloadPct = e => Math.max(0, 1 - e.shootTimer / e.shootInterval);
@@ -6748,6 +7165,7 @@ class Enemy {
 
     // 第 3 遍:眩晕星星、冰封叠加
     renderOverlays(ctx, snap, frozen) {
+        if (this.elite) SpriteCache.drawPx(ctx, Enemy.eliteSprite(this.size, this.type === 'giant' ? 10 : 6), this.x, this.y, snap);
         if (this.stunTimer > 0 && this.type !== 'gunner') {
             const cx = this.x + this.size / 2;
             const cy = this.y - 16;
@@ -6789,10 +7207,10 @@ class Enemy {
                 g.stroke();
                 return;
             }
-            const glowColors = { chaser: '#ff1744', patroller: '#2979ff', giant: '#d500f9', dasher: '#ffd600', bomber: '#ff4081' };
-            const lightColors = { chaser: '#ff6b6b', patroller: '#64b5f6', giant: '#e040fb', dasher: '#fff59d', bomber: '#ff80ab' };
-            const darkColors = { chaser: '#b71c1c', patroller: '#0d47a1', giant: '#6a0080', dasher: '#f57f17', bomber: '#880e4f' };
-            const labels = { chaser: '追', patroller: '巡', giant: '巨', dasher: '冲', bomber: '爆' };
+            const glowColors = { chaser: '#ff1744', patroller: '#2979ff', giant: '#d500f9', dasher: '#ffd600', bomber: '#ff4081', treasure: '#ffd740' };
+            const lightColors = { chaser: '#ff6b6b', patroller: '#64b5f6', giant: '#e040fb', dasher: '#fff59d', bomber: '#ff80ab', treasure: '#fffde7' };
+            const darkColors = { chaser: '#b71c1c', patroller: '#0d47a1', giant: '#6a0080', dasher: '#f57f17', bomber: '#880e4f', treasure: '#c79100' };
+            const labels = { chaser: '追', patroller: '巡', giant: '巨', dasher: '冲', bomber: '爆', treasure: '宝' };
             const glow = glowColors[type] || '#ff1744';
             const r = type === 'giant' ? 10 : 6;
 
@@ -6811,11 +7229,28 @@ class Enemy {
             roundRect(g, 0, 0, size, size, r);
             g.stroke();
 
-            g.fillStyle = 'rgba(255,255,255,0.9)';
+            g.fillStyle = type === 'treasure' ? '#6d4c00' : 'rgba(255,255,255,0.9)';
             g.font = `bold ${Math.floor(size * 0.38)}px Arial`;
             g.textAlign = 'center';
             g.textBaseline = 'middle';
             g.fillText(labels[type] || '?', size / 2, size / 2);
+        });
+    }
+
+    // 精英金框 + 头顶皇冠(皇冠在血条上方,外扩要留够)
+    static eliteSprite(size, r) {
+        return SpriteCache.get(`enemy|elite|${size}|${r}`, size, size, SpriteCache.padFor(10) + 22, g => {
+            g.shadowBlur = SpriteCache.blur(10);
+            g.shadowColor = '#ffc400';
+            g.strokeStyle = '#ffd740';
+            g.lineWidth = 2.5;
+            roundRect(g, -2, -2, size + 4, size + 4, r + 2);
+            g.stroke();
+            g.fillStyle = '#ffd740';
+            g.font = 'bold 15px Arial';
+            g.textAlign = 'center';
+            g.textBaseline = 'middle';
+            g.fillText('♛', size / 2, -20);
         });
     }
 
