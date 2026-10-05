@@ -633,6 +633,17 @@ const Sound = {
             case 'levelUp':
                 [523, 659, 784, 1047].forEach((f, i) => this._tone(f, 0.16, 'triangle', 0.18, 1, i * 0.08));
                 break;
+            case 'combo': {
+                // 连杀里程碑:越高音越亮
+                const base = 600 + Math.min(4, arg || 0) * 80;
+                [1, 1.25, 1.5].forEach((k, i) => this._tone(base * k, 0.1, 'square', 0.1, 1.02, i * 0.05));
+                break;
+            }
+            case 'heartbeat':
+                // 低血量心跳:两声闷响
+                this._tone(70, 0.12, 'sine', 0.3, 0.7);
+                this._tone(62, 0.14, 'sine', 0.24, 0.7, 0.17);
+                break;
             case 'bossWarn':
                 for (let i = 0; i < 3; i++) {
                     this._tone(440, 0.18, 'square', 0.12, 1, i * 0.4);
@@ -686,6 +697,9 @@ class Game {
     static JOY_RADIUS = 56;   // 摇杆半径(CSS px)
     static ORB_SPIN = 4.2;    // 烈焰法球转速(弧度/秒)
     static ORB_RADIUS = 58;   // 烈焰法球环绕半径
+    static COMBO_WINDOW = 3;  // 连杀间隔上限(秒)
+    // 连杀里程碑:10 / 25 / 50 / 100,之后每 100
+    static comboMilestone(n) { return n === 10 || n === 25 || n === 50 || (n >= 100 && n % 100 === 0); }
     // 技能位上下文(见 _withCtx):普攻 / Q / E
     static CTX = { a: { slot: 'a', mult: 1 }, q: { slot: 'q', mult: 1 }, e: { slot: 'e', mult: 1 } };
     constructor() {
@@ -1148,14 +1162,20 @@ class Game {
                 Sound.toggleMute();
                 return;
             }
+            const pb = this.pauseButton;
+            if (pb && this.isRunning && !this.isPaused &&
+                x >= pb.x && x <= pb.x + pb.w && y >= pb.y && y <= pb.y + pb.h) {
+                this.togglePause();
+                return;
+            }
 
             if (this.showingPotentialMenu || this.showingClassSelection) {
                 this.checkButtonClick(x, y);
                 return;
             }
 
-            // 普通暂停(非菜单)时点击屏幕继续,触屏设备没有 P 键
-            if (this.isRunning && this.isPaused) { this.togglePause(); return; }
+            // 普通暂停(非菜单):暂停面板上的按钮,点面板外继续(触屏设备没有 P 键)
+            if (this.isRunning && this.isPaused) { if (!this.showingBuild) this._handlePauseClick(x, y); return; }
             if (!this.isRunning) return;
 
             // 检查是否点在技能按钮上
@@ -1185,7 +1205,7 @@ class Game {
             if (!this.isRunning || this.isPaused || this.showingPotentialMenu || this.showingClassSelection) return false;
             const { x, y } = toCanvas(clientX, clientY);
             const hit = (b) => b && x >= b.x && x <= b.x + b.w && y >= b.y && y <= b.y + b.h;
-            if (hit(this.muteButton) || this.skillButtons.some(hit)) return false;
+            if (hit(this.muteButton) || hit(this.pauseButton) || this.skillButtons.some(hit)) return false;
             const b = toBacking(clientX, clientY);
             Object.assign(this.joy, { active: true, id, bx: b.x, by: b.y, x: b.x, y: b.y, k: b.k });
             this._setJoyVector(0, 0);
@@ -1390,6 +1410,7 @@ class Game {
     togglePause() {
         if (this.isRunning) {
             this.isPaused = !this.isPaused;
+            this._pauseQuitArmed = false;
         }
     }
     
@@ -1693,6 +1714,8 @@ class Game {
             class: p.class, hurtCooldown: q2(p.hurtCooldown), invincibleTimer: q2(p.invincibleTimer), kc: p.killCount || 0,
             sp: p.spec || 0, aw: p.awakened ? 1 : 0,
             dc: q2(p.dashCooldown), dt: q2(p.dashTimer), dg: p.dodgeCount || 0,
+            // 连杀 [连杀数, 剩余秒] 与本局最高连杀
+            cb: p.combo > 0 ? [p.combo, q2(p.comboTimer)] : 0, mc: p.maxCombo || 0,
             // 限时装备 [种类序号, 剩余, 总时长, 法球角度]
             g: p.gear ? [GEAR_TYPES.indexOf(p.gear.type), q1(p.gear.timer), p.gear.max, q2(p.gear.angle || 0)] : 0,
             // 拾取过的技能石(host 判定拾取,guest 据此得到宝石;镶嵌以 guest 本地为准)
@@ -1851,6 +1874,9 @@ class Game {
             this.player.dashCooldown = myData.dc || 0;
             this.player.dashTimer = myData.dt || 0;
             this.player.dodgeCount = myData.dg || 0;
+            this.player.combo = myData.cb ? myData.cb[0] : 0;
+            this.player.comboTimer = myData.cb ? myData.cb[1] : 0;
+            this.player.maxCombo = myData.mc || 0;
             this.player.gear = this._mpGear(myData.g);
             // 新捡到的技能石:追加到本地背包并自动镶嵌
             const gl = myData.gl || '';
@@ -2333,21 +2359,108 @@ class Game {
         this.bgTime = (this.bgTime || 0) + DT;
     }
 
+    // 本局概况(暂停面板与结算弹窗共用)
+    _runSummaryRows() {
+        const p = this.player;
+        let cls = CLASS_NAMES[p.class] || '未选择';
+        const spec = p.spec && (CLASS_SPECS[p.class] || []).find(sp => sp.id === p.spec);
+        if (spec) cls += ` · ${spec.name}`;
+        if (p.awakened) cls += '(觉醒)';
+        return [
+            ['职业', cls],
+            ['等级', `Lv ${this.level}`],
+            ['击杀', String(p.killCount || 0)],
+            ['最高连杀', String(p.maxCombo || 0)],
+            ['击退魔王', `${this.runBossRepels || 0} 次`],
+            ['完美闪避', `${p.dodgeCount || 0} 次`]
+        ];
+    }
+
+    // 暂停面板:本局概况 + 继续 / 静音 / 结束本局(联机客机为离开房间,需再点一次确认)
     _renderPauseOverlay() {
         const ctx = this.ctx;
+        const m = this._menu, W = m.w, H = m.h;
+        this.buttons = [];
         ctx.save();
-        ctx.fillStyle = 'rgba(0,0,0,0.55)';
-        ctx.fillRect(0, 0, this.width, this.height);
-        ctx.fillStyle = '#ffffff';
-        ctx.font = `bold ${Math.min(52, this.width * 0.11)}px Arial`;
+        ctx.fillStyle = 'rgba(0,0,0,0.6)';
+        ctx.fillRect(-W, -H, W * 3, H * 3);
+        const pw = Math.min(300, W - 32), ph = 336;
+        const px = (W - pw) / 2, py = Math.max(8, (H - ph) / 2);
+        this._pausePanel = { x: px, y: py, w: pw, h: ph };
+        ctx.fillStyle = 'rgba(6, 16, 28, 0.94)';
+        roundRect(ctx, px, py, pw, ph, 14);
+        ctx.fill();
+        ctx.strokeStyle = 'rgba(0, 200, 255, 0.45)';
+        ctx.lineWidth = 1.5;
+        roundRect(ctx, px, py, pw, ph, 14);
+        ctx.stroke();
+
         ctx.textAlign = 'center'; ctx.textBaseline = 'middle';
-        ctx.shadowBlur = 20; ctx.shadowColor = '#00c8ff';
-        ctx.fillText('已暂停', this.width / 2, this.height * 0.45);
+        ctx.font = 'bold 28px Arial';
+        ctx.fillStyle = '#ffffff';
+        ctx.shadowBlur = 16; ctx.shadowColor = '#00c8ff';
+        ctx.fillText('已暂停', W / 2, py + 34);
         ctx.shadowBlur = 0;
-        ctx.fillStyle = 'rgba(200,232,255,0.5)';
-        ctx.font = `${Math.min(16, this.width * 0.034)}px Arial`;
-        ctx.fillText('点击屏幕 / 按 P 继续 · M 静音', this.width / 2, this.height * 0.56);
+        const t = Math.floor(this.gameTime);
+        ctx.font = '12px Arial';
+        ctx.fillStyle = 'rgba(200,232,255,0.6)';
+        ctx.fillText(`生存 ${Math.floor(t / 60)}:${String(t % 60).padStart(2, '0')}  ·  ★ ${this.score}`, W / 2, py + 60);
+
+        // 概况:两列三行
+        const rows = this._runSummaryRows();
+        const colW = (pw - 32) / 2;
+        rows.forEach(([k, v], i) => {
+            const cx = px + 16 + (i % 2) * colW, cy = py + 84 + Math.floor(i / 2) * 36;
+            ctx.textAlign = 'left';
+            ctx.font = '10px Arial';
+            ctx.fillStyle = 'rgba(200,232,255,0.55)';
+            ctx.fillText(k, cx + 6, cy + 8);
+            ctx.font = 'bold 13px Arial';
+            ctx.fillStyle = '#ffffff';
+            let txt = v;
+            while (txt.length > 2 && ctx.measureText(txt).width > colW - 12) txt = txt.slice(0, -2) + '…';
+            ctx.fillText(txt, cx + 6, cy + 24);
+        });
         ctx.restore();
+
+        const bw = pw - 48, bh = 40, bx = px + 24;
+        let by = py + 196;
+        this.drawButton(bx, by, bw, bh, '#00b0ff', '继续游戏', 'resume');
+        by += bh + 10;
+        this.drawButton(bx, by, bw, bh, '#546e7a', Sound.muted ? '🔇 声音:关' : '🔊 声音:开', 'mute');
+        by += bh + 10;
+        const quitText = this.mpMode === 'guest' ? '离开房间' : '结束本局';
+        this.drawButton(bx, by, bw, bh, this._pauseQuitArmed ? '#ff1744' : '#8d3b3b',
+                        this._pauseQuitArmed ? `再点一次${quitText}` : quitText, 'quit');
+    }
+
+    // 暂停面板点击:按钮 → 对应操作;面板外 → 继续游戏;面板内空白处不处理
+    _handlePauseClick(x, y) {
+        const m = this._menu;
+        if (m) {
+            x = (x * this.gameScale + this.gameOffsetX - m.ox) / m.s;
+            y = (y * this.gameScale + this.gameOffsetY - m.oy) / m.s;
+        }
+        const btn = (this.buttons || []).find(b => x >= b.x && x <= b.x + b.width && y >= b.y && y <= b.y + b.height);
+        if (btn) {
+            if (btn.choice === 'resume') this.togglePause();
+            else if (btn.choice === 'mute') Sound.toggleMute();
+            else if (btn.choice === 'quit') {
+                if (!this._pauseQuitArmed) { this._pauseQuitArmed = true; return; }
+                this._quitRun();
+            }
+            return;
+        }
+        const pp = this._pausePanel;
+        if (!pp || x < pp.x || x > pp.x + pp.w || y < pp.y || y > pp.y + pp.h) this.togglePause();
+    }
+
+    // 主动结束:单人/房主直接结算(房主会广播给客机);客机离开房间回大厅
+    _quitRun() {
+        this._pauseQuitArmed = false;
+        this.isPaused = false;
+        if (this.mpMode === 'guest') { if (this.onBackToLobby) this.onBackToLobby(); }
+        else this.endGame();
     }
 
     update() {
@@ -2561,7 +2674,7 @@ class Game {
                       q: p.skillQ.cooldown, e: p.skillE.cooldown, kills: p.killCount || 0,
                       dash: p.dashCooldown || 0, dodge: p.dodgeCount || 0, gear: p.gear ? p.gear.type : '',
                       atk: b && b.atk ? b.atk + b.atkPhase : '', rage: !!(b && b.enraged),
-                      ev: this.event ? this.event.type : '' };
+                      ev: this.event ? this.event.type : '', cb: p.combo || 0 };
         const prev = this._sfxPrev;
         this._sfxPrev = cur;
         if (!prev) return;
@@ -2571,6 +2684,12 @@ class Game {
             this._onLocalHurt(died);
         }
         if (cur.kills > prev.kills) this._onLocalKill();
+        if (cur.cb > prev.cb) {
+            for (let n = Math.max(prev.cb + 1, cur.cb - 50); n <= cur.cb; n++) {
+                if (Game.comboMilestone(n)) { Sound.play('combo', n >= 100 ? 4 : n >= 50 ? 3 : n >= 25 ? 2 : 1); this.comboPop = 1; break; }
+            }
+            this.comboBump = 1;
+        }
         if (cur.dash > prev.dash + 0.5) Sound.play('whoosh');
         if (cur.dodge > prev.dodge) { Sound.play('dodge'); this._triggerHitStop(0.05); }
         if (cur.level > prev.level) Sound.play('levelUp');
@@ -2641,14 +2760,31 @@ class Game {
         for (const e of this.enemies) if (e.hitFlash > -1) e.hitFlash = Math.max(-1, e.hitFlash - DT);
         if (this.boss && this.boss.hitFlash > -1) this.boss.hitFlash = Math.max(-1, this.boss.hitFlash - DT);
         if (this.hurtVignette > 0) this.hurtVignette = Math.max(0, this.hurtVignette - DT);
+        // 低血量(<30%)心跳:屏幕边缘随心跳泛红,血越少跳得越快
+        const p = this.player;
+        const ratio = p.maxHealth > 0 ? p.currentHealth / p.maxHealth : 1;
+        if (ratio > 0 && ratio < 0.3) {
+            this.lowHpBeat = Math.max(0, (this.lowHpBeat || 0) - DT);
+            this.lowHpPeriod = ratio < 0.15 ? 0.6 : 0.9;
+            if (this.lowHpBeat <= 0) { this.lowHpBeat = this.lowHpPeriod; Sound.play('heartbeat'); }
+        } else {
+            this.lowHpBeat = 0;
+            this.lowHpPeriod = 0;
+        }
     }
 
     // 本机受击时屏幕四周泛红
     _renderHurtVignette() {
-        if (this.hurtVignette <= 0) return;
+        // 低血量心跳脉冲:每次心跳亮一下再慢慢暗下去
+        let beat = 0;
+        if (this.lowHpPeriod > 0) {
+            const ph = 1 - this.lowHpBeat / this.lowHpPeriod;   // 0 = 刚跳
+            beat = (ph < 0.15 ? 1 : Math.max(0, 1 - (ph - 0.15) / 0.6)) * 0.3;
+        }
+        if (this.hurtVignette <= 0 && beat <= 0) return;
         const ctx = this.ctx;
         const W = this.width, H = this.height;
-        const a = Math.min(1, this.hurtVignette / 0.35) * 0.55;
+        const a = Math.max(Math.min(1, this.hurtVignette / 0.35) * 0.55, beat);
         const g = ctx.createRadialGradient(W / 2, H / 2, Math.min(W, H) * 0.3, W / 2, H / 2, Math.max(W, H) * 0.65);
         g.addColorStop(0, 'rgba(255,0,40,0)');
         g.addColorStop(1, `rgba(255,0,40,${a})`);
@@ -2677,6 +2813,10 @@ class Game {
     // 技能冷却 + 职业资源回复/衰减 + 圣光光环,作用于 this.player(guest 通过 _runAsPlayer 复用)
     _tickPlayerResources() {
         this._tickGear();
+        if (this.player.comboTimer > 0) {
+            this.player.comboTimer -= DT;
+            if (this.player.comboTimer <= 0) { this.player.comboTimer = 0; this.player.combo = 0; }
+        }
         // 天赋「嗜血回春」:每秒回复最大生命的一部分
         const regen = this.player.tree && this.player.tree.regen;
         if (regen && this.player.currentHealth > 0) this.player.heal(this.player.maxHealth * regen * DT);
@@ -5616,7 +5756,8 @@ class Game {
         // 击杀计数随玩家快照下发,本机据此触发击杀顿帧/震动(guest 也能拿到自己的击杀反馈)
         this.player.killCount = (this.player.killCount || 0) + 1;
         const horde = this.event && this.event.type === 'horde' ? 2 : 1;
-        this.score += 10 * (this.scoreMult || 1) * horde;
+        const comboMult = this._registerCombo(e);
+        this.score += Math.round(10 * (this.scoreMult || 1) * horde * comboMult);
         this.exp += 5 * horde;
         if (e && e.type === 'treasure') this._treasureReward(e);
         else if (e && !e.elite && Math.random() < 0.006) this._dropGem(e.x, e.y);
@@ -5647,6 +5788,24 @@ class Game {
         this.checkLevelUp();
     }
     
+    // 连杀:击杀者(this.player,替 guest 结算时已切换)累加连杀并刷新计时,返回分数倍率。
+    // 每 10 连杀 +10% 击杀分数(最多 +50%),到达里程碑时额外奖励分数并飘字
+    _registerCombo(e) {
+        const p = this.player;
+        p.combo = (p.comboTimer > 0 ? p.combo : 0) + 1;
+        p.comboTimer = Game.COMBO_WINDOW;
+        if (p.combo > p.maxCombo) p.maxCombo = p.combo;
+        const n = p.combo;
+        if (Game.comboMilestone(n)) {
+            this.score += Math.round(n * 5 * (this.scoreMult || 1));
+            const cx = p.x + p.size / 2, cy = p.y;
+            this.effects.push({ type: 'floatText', x: cx, y: cy - 26, text: `${n} 连杀! +${Math.round(n * 5 * (this.scoreMult || 1))}`,
+                                color: n >= 100 ? '#ff4081' : n >= 50 ? '#ffab40' : '#ffd740', ttl: 1.1, maxTtl: 1.1, size: n >= 50 ? 20 : 16 });
+            this.effects.push({ type: 'shockwave', x: cx, y: p.y + p.size / 2, radius: 8, maxRadius: 70, color: '#ffd740', ttl: 0.35, maxTtl: 0.35 });
+        }
+        return 1 + Math.min(0.5, Math.floor(n / 10) * 0.1);
+    }
+
     checkLevelUp() {
         if (this._actingAs) return; // 替 guest 施法期间推迟,_runAsPlayer 结束后补结算
         if (this.exp >= this.expToNext) {
@@ -6489,6 +6648,19 @@ class Game {
         }
         document.getElementById('finalTime').textContent = time;
         document.getElementById('finalScore').textContent = score;
+        const sumEl = document.getElementById('runSummary');
+        if (sumEl) {
+            sumEl.innerHTML = '';
+            for (const [k, v] of this._runSummaryRows()) {
+                const d = document.createElement('div');
+                d.className = 'rs-item';
+                d.innerHTML = '<div class="rs-k"></div><div class="rs-v"></div>';
+                d.firstChild.textContent = k;
+                d.lastChild.textContent = v;
+                d.lastChild.title = v;
+                sumEl.appendChild(d);
+            }
+        }
         const bestEl = document.getElementById('bestRecord');
         if (bestEl) {
             const b = Store.get('blockrun.best', { score: 0, time: 0 });
@@ -6810,7 +6982,11 @@ class Game {
         this._renderEventHUD();
         this._renderStatsHUD();
         this._renderGearHUD();
-        this._renderMuteButton();
+        // 右上角按钮与连杀计数:触屏时贴屏幕角落按固定尺寸绘制,竖屏也够大好点
+        this._withHud(() => {
+            this._renderMuteButton();
+            this._renderComboHUD();
+        });
         this._renderAchToasts();
 
         if (this.showingClassSelection) {
@@ -6820,7 +6996,7 @@ class Game {
         }
 
         if (this.isPaused && !this.showingClassSelection && !this.showingPotentialMenu && !this.showingBuild) {
-            this._renderPauseOverlay();
+            this._withMenu(() => this._renderPauseOverlay());
         }
 
         ctx.restore(); // 结束缩放变换
@@ -7080,10 +7256,84 @@ class Game {
         ctx.restore();
     }
 
-    _renderMuteButton() {
-        const size = 30, x = this.width - size - 10, y = 10;
-        this.muteButton = { x, y, w: size, h: size };
+    // 右上角(静音按钮下方)连杀计数:数字随击杀弹跳,下方细条是剩余连杀时间;中断后淡出
+    _renderComboHUD() {
+        const p = this.player;
+        const live = p.combo >= 3 && p.comboTimer > 0;
+        if (live) this._comboShow = { n: p.combo, a: 1 };
+        else if (this._comboShow) this._comboShow.a -= 1 / 30;
+        const show = this._comboShow;
+        if (!show || show.a <= 0) { this._comboShow = null; return; }
+        const n = show.n;
+        const bump = this.comboBump || 0, pop = this.comboPop || 0;
+        this.comboBump = Math.max(0, bump - 0.12);
+        this.comboPop = Math.max(0, pop - 0.03);
+        const color = n >= 100 ? '#ff4081' : n >= 50 ? '#ffab40' : n >= 25 ? '#ffd740' : '#fff59d';
         const ctx = this.ctx;
+        const rx = this._hud.w - 12, y = 48;
+        ctx.save();
+        ctx.globalAlpha = Math.max(0, Math.min(1, show.a));
+        ctx.textAlign = 'right';
+        ctx.textBaseline = 'alphabetic';
+        // 数字 + 「连杀」
+        ctx.font = 'bold 12px Arial';
+        ctx.fillStyle = 'rgba(255,255,255,0.85)';
+        ctx.fillText('连杀', rx, y + 26);
+        const lw = ctx.measureText('连杀').width;
+        const sc = 1 + bump * 0.25 + pop * 0.5;
+        ctx.save();
+        ctx.translate(rx - lw - 4, y + 26);
+        ctx.scale(sc, sc);
+        ctx.font = 'bold 26px Arial';
+        ctx.shadowBlur = 10 + pop * 14;
+        ctx.shadowColor = color;
+        ctx.fillStyle = color;
+        ctx.fillText(String(n), 0, 0);
+        ctx.restore();
+        // 剩余时间条
+        const bw = 78, bh = 3, bx = rx - bw, by = y + 33;
+        const ratio = live ? Math.max(0, Math.min(1, p.comboTimer / Game.COMBO_WINDOW)) : 0;
+        ctx.fillStyle = 'rgba(255,255,255,0.15)';
+        ctx.fillRect(bx, by, bw, bh);
+        ctx.fillStyle = color;
+        ctx.fillRect(bx + bw * (1 - ratio), by, bw * ratio, bh);
+        // 当前分数加成
+        const bonus = Math.min(50, Math.floor(n / 10) * 10);
+        if (bonus > 0) {
+            ctx.font = '10px Arial';
+            ctx.fillStyle = 'rgba(255,236,179,0.85)';
+            ctx.fillText(`击杀分数 +${bonus}%`, rx, by + 14);
+        }
+        ctx.restore();
+    }
+
+    // HUD 坐标矩形 → 逻辑坐标(toCanvas 的输出)
+    _hudRect(x, y, w, h) {
+        const hd = this._hud, gs = this.gameScale;
+        return { x: (hd.ox + x * hd.s - this.gameOffsetX) / gs, y: (hd.oy + y * hd.s - this.gameOffsetY) / gs,
+                 w: w * hd.s / gs, h: h * hd.s / gs };
+    }
+
+    _renderMuteButton() {
+        const size = 30, x = this._hud.w - size - 10, y = 10;
+        this.muteButton = this._hudRect(x, y, size, size);
+        const ctx = this.ctx;
+        // 静音按钮左边的暂停按钮(触屏没有 P 键)
+        const px = x - size - 8;
+        this.pauseButton = this._hudRect(px, y, size, size);
+        ctx.save();
+        ctx.globalAlpha = 0.7;
+        ctx.fillStyle = 'rgba(0,0,0,0.45)';
+        roundRect(ctx, px, y, size, size, 6);
+        ctx.fill();
+        ctx.strokeStyle = 'rgba(0,200,255,0.5)';
+        ctx.lineWidth = 1;
+        roundRect(ctx, px, y, size, size, 6);
+        ctx.stroke();
+        ctx.fillStyle = '#ffffff';
+        ctx.fillRect(px + 10, y + 9, 3.5, 12);
+        ctx.fillRect(px + size - 13.5, y + 9, 3.5, 12);
+        ctx.restore();
         ctx.save();
         ctx.globalAlpha = 0.7;
         ctx.fillStyle = 'rgba(0,0,0,0.45)';
@@ -7388,7 +7638,7 @@ class Game {
                 ctx.shadowBlur = 8;
                 ctx.shadowColor = fx.color;
                 ctx.fillStyle = fx.color;
-                ctx.font = 'bold 14px Arial';
+                ctx.font = `bold ${fx.size || 14}px Arial`;
                 ctx.textAlign = 'center';
                 ctx.textBaseline = 'middle';
                 ctx.fillText(fx.text, fx.x, fx.y - prog * 24);
@@ -8190,6 +8440,9 @@ class Player {
         this.dashVY = 0;
         this.dashDodged = false;       // 本次冲刺是否已触发过完美闪避
         this.dodgeCount = 0;           // 本局完美闪避次数
+        this.combo = 0;                // 连杀数:击杀间隔不超过 Game.COMBO_WINDOW 秒就累加
+        this.comboTimer = 0;           // 连杀剩余时间(秒),归零时连杀中断
+        this.maxCombo = 0;             // 本局最高连杀
         this.faceX = 1;                // 最近一次移动方向(冲刺方向)
         this.faceY = 0;
         this._dashGhosts = [];         // 冲刺残影(纯视觉,render 时记录)
@@ -8412,6 +8665,8 @@ class Player {
         }
         if (actualDamage > 0) {
             this.currentHealth = Math.max(0, this.currentHealth - actualDamage);
+            // 受伤打断一半连杀:冲刺躲开攻击才能把连杀滚大
+            if (this.combo > 0) this.combo = Math.floor(this.combo / 2);
         }
         return actualDamage;
     }
@@ -10143,17 +10398,17 @@ window.addEventListener('load', () => {
     });
 
     // 返回大厅
+    const backToLobby = () => {
+        game.restartGame();
+        document.getElementById('gameOver').style.display = 'none';
+        overlay.style.display = 'flex';
+        mpLobby.style.display = 'none';
+        if (game.mpWs) { game.mpWs.close(); game.mpWs = null; }
+        game.mpMode = null;
+    };
+    game.onBackToLobby = backToLobby;   // 暂停面板「离开房间」也走这里
     const backBtn = document.getElementById('backToLobbyBtn');
-    if (backBtn) {
-        backBtn.addEventListener('click', () => {
-            game.restartGame();
-            document.getElementById('gameOver').style.display = 'none';
-            overlay.style.display = 'flex';
-            mpLobby.style.display = 'none';
-            if (game.mpWs) { game.mpWs.close(); game.mpWs = null; }
-            game.mpMode = null;
-        });
-    }
+    if (backBtn) backBtn.addEventListener('click', backToLobby);
 
     // 暂停按钮（兼容）
     const pauseBtn = document.getElementById('pauseBtn');
