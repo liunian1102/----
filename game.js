@@ -5029,7 +5029,7 @@ class Game {
         if (this.classMenuMode === 'spec' || this.classMenuMode === 'awaken') { this._renderSpecSelection(); return; }
         this.buttons = [];
         const ctx = this.ctx;
-        const W = this.width, H = this.height;
+        const W = this._menu.w, H = this._menu.h;
         const portrait = W < H || W < 520;
 
         // 背景
@@ -5050,7 +5050,7 @@ class Game {
         ctx.fillText('选择职业', W / 2, H * 0.03);
         ctx.shadowBlur = 0;
         ctx.fillStyle = 'rgba(180,220,255,0.55)';
-        ctx.font = `${Math.min(11, W * 0.025)}px Arial`;
+        ctx.font = `${portrait ? 13 : Math.min(11, W * 0.025)}px Arial`;
         ctx.fillText(`点击卡片选择  ·  ${SPEC_LEVEL} 级进阶专精、${AWAKEN_LEVEL} 级觉醒`, W / 2, H * 0.03 + titleFS + 4);
         ctx.restore();
 
@@ -5088,7 +5088,7 @@ class Game {
                 tag: '远程  高投射  箭矢',
                 tagColor: '#c6ef6b',
                 flavor: '被动·专注：站定不动时普攻速度 +43%；箭矢用尽需装填',
-                stats: ['攻击 +8  防御 -5', '普攻伤害×1.3，多天赋支持多重射击'],
+                stats: ['攻击 +8  防御 -5', '普攻伤害×1.3，可多重射击'],
                 q: { name: '穿透箭', cd: '3s', desc: '消耗1箭，发射穿透敌阵的强力箭矢' },
                 e: { name: '箭雨',   cd: '8s', desc: '消耗3箭，在大范围内降下密集箭雨' }
             },
@@ -5111,9 +5111,9 @@ class Game {
             cols = 2; rows = 3;
             gapX = Math.min(10, W * 0.02); gapY = Math.min(8, H * 0.015);
             cardW = (W - gapX * 3) / 2;
-            cardH = Math.min(155, (H * 0.84 - gapY * (rows + 1)) / rows);
+            cardH = Math.min(300, (H * 0.86 - gapY * (rows + 1)) / rows);
             startX = gapX;
-            startY = H * 0.12;
+            startY = H * 0.11;
         } else {
             // 横屏:5列1行 或 按宽度降级到2行
             const maxCardW = Math.min(138, (W - 12 * 6) / 5);
@@ -5135,11 +5135,13 @@ class Game {
             }
         }
 
-        const nameFS   = Math.min(15, cardW * 0.13);
-        const tagFS    = Math.min(10, cardW * 0.085);
-        const statFS   = Math.min(10, cardW * 0.083);
-        const skillFS  = Math.min(10, cardW * 0.085);
-        const descFS   = Math.min(9,  cardW * 0.075);
+        // 竖屏卡片更宽更高,字号上限放大
+        const fk = portrait ? 1.35 : 1;
+        const nameFS   = Math.min(15 * fk, cardW * 0.13);
+        const tagFS    = Math.min(10 * fk, cardW * 0.085);
+        const statFS   = Math.min(10 * fk, cardW * 0.083);
+        const skillFS  = Math.min(10 * fk, cardW * 0.085);
+        const descFS   = Math.min(9 * fk,  cardW * 0.075);
         const rarityColor = { common: '#90a4ae', rare: '#42a5f5', epic: '#ba68c8' };
 
         classDefs.forEach((cls, i) => {
@@ -5330,7 +5332,7 @@ class Game {
     _renderSpecSelection() {
         this.buttons = [];
         const ctx = this.ctx;
-        const W = this.width, H = this.height;
+        const W = this._menu.w, H = this._menu.h;
         const p = this.player;
         const awaken = this.classMenuMode === 'awaken';
         const color = CLASS_COLORS[p.class] || '#00e5ff';
@@ -5360,7 +5362,7 @@ class Game {
         const n = list.length;
         const gap = 18;
         let cardW, cardH;
-        if (portrait) { cardW = Math.min(340, W * 0.86); cardH = Math.min(220, (H * 0.74 - gap) / Math.max(1, n)); }
+        if (portrait) { cardW = Math.min(360, W * 0.9); cardH = Math.min(240, (H * 0.74 - gap) / Math.max(1, n)); }
         else { cardW = Math.min(330, (W - gap * (n + 1)) / n); cardH = Math.min(280, H * 0.6); }
         const totalW = portrait ? cardW : n * cardW + (n - 1) * gap;
         const totalH = portrait ? n * cardH + (n - 1) * gap : cardH;
@@ -5530,20 +5532,21 @@ class Game {
         if (!this.showingPotentialMenu) return;
         this.buttons = [];
         const ctx = this.ctx;
+        const MW = this._menu.w, MH = this._menu.h;   // 菜单坐标系(见 _withMenu)
 
         // 背景遮罩
-        const bgGrad = ctx.createRadialGradient(this.width / 2, this.height / 2, 0, this.width / 2, this.height / 2, this.width * 0.7);
+        const bgGrad = ctx.createRadialGradient(MW / 2, MH / 2, 0, MW / 2, MH / 2, MW * 0.7);
         bgGrad.addColorStop(0, 'rgba(10, 15, 35, 0.93)');
         bgGrad.addColorStop(1, 'rgba(0, 0, 0, 0.96)');
         ctx.fillStyle = bgGrad;
-        ctx.fillRect(0, 0, this.width, this.height);
+        ctx.fillRect(0, 0, MW, MH);
 
         // 自适应字号
-        const titleFontSize = Math.min(28, this.width * 0.06);
-        const subFontSize = Math.min(14, this.width * 0.032);
-        const cardNameSize = Math.min(16, this.width * 0.038);
-        const cardDescSize = Math.min(11, this.width * 0.026);
-        const cardIconSize = Math.min(36, this.width * 0.085);
+        const titleFontSize = Math.min(28, MW * 0.06);
+        const subFontSize = Math.min(14, MW * 0.032);
+        const cardNameSize = Math.min(16, MW * 0.038);
+        const cardDescSize = Math.min(11, MW * 0.026);
+        const cardIconSize = Math.min(36, MW * 0.085);
 
         // 标题
         ctx.save();
@@ -5552,33 +5555,33 @@ class Game {
         ctx.fillStyle = '#00e5ff';
         ctx.font = `bold ${titleFontSize}px Arial`;
         ctx.textAlign = 'center';
-        ctx.fillText('选择天赋', this.width / 2, this.height * 0.09);
+        ctx.fillText('选择天赋', MW / 2, MH * 0.09);
         ctx.shadowBlur = 0;
         ctx.fillStyle = '#ffcc00';
         ctx.font = `${subFontSize}px Arial`;
-        ctx.fillText(`剩余潜能点: ${this.player.potentialPoints}`, this.width / 2, this.height * 0.14);
+        ctx.fillText(`剩余潜能点: ${this.player.potentialPoints}`, MW / 2, MH * 0.14);
         ctx.restore();
 
         // 卡牌布局:横屏三列横排;竖屏(宽<高)三行竖排
-        const portrait = this.width < this.height;
+        const portrait = MW < MH;
         const choices = this.currentTalentChoices;
         const n = choices.length;
 
         let cardW, cardH, startX, startY, stepX, stepY;
-        if (portrait || this.width < 480) {
-            cardW = Math.min(280, this.width * 0.75);
-            cardH = Math.min(110, this.height * 0.14);
-            startX = (this.width - cardW) / 2;
-            startY = this.height * 0.20;
+        if (portrait || MW < 480) {
+            cardW = Math.min(280, MW * 0.75);
+            cardH = Math.min(110, MH * 0.14);
+            startX = (MW - cardW) / 2;
+            startY = MH * 0.20;
             stepX = 0;
-            stepY = cardH + Math.max(8, this.height * 0.015);
+            stepY = cardH + Math.max(8, MH * 0.015);
         } else {
-            const spacing = Math.min(16, this.width * 0.025);
-            cardW = Math.min(180, (this.width - spacing * (n + 1)) / Math.max(n, 1));
-            cardH = Math.min(220, this.height * 0.42);
+            const spacing = Math.min(16, MW * 0.025);
+            cardW = Math.min(180, (MW - spacing * (n + 1)) / Math.max(n, 1));
+            cardH = Math.min(220, MH * 0.42);
             const totalW = cardW * n + spacing * (n - 1);
-            startX = (this.width - totalW) / 2;
-            startY = this.height * 0.22;
+            startX = (MW - totalW) / 2;
+            startY = MH * 0.22;
             stepX = cardW + spacing;
             stepY = 0;
         }
@@ -5619,7 +5622,7 @@ class Game {
             ctx.textBaseline = 'top';
             ctx.fillText(rarityLabel[t.rarity] || '', cx + cardW - 8, cy + 6);
 
-            if (portrait || this.width < 480) {
+            if (portrait || MW < 480) {
                 // 竖屏:图标左侧 | 名字/描述右侧
                 const iconBoxW = cardH;
                 ctx.fillStyle = t.color;
@@ -5683,15 +5686,15 @@ class Game {
         }
 
         // 跳过按钮
-        const skipW = Math.min(140, this.width * 0.35);
-        const skipH = Math.max(36, Math.min(44, this.height * 0.075));
-        const skipX = (this.width - skipW) / 2;
+        const skipW = Math.min(140, MW * 0.35);
+        const skipH = Math.max(36, Math.min(44, MH * 0.075));
+        const skipX = (MW - skipW) / 2;
         let skipY;
-        if (portrait || this.width < 480) {
-            skipY = startY + stepY * n + Math.max(8, this.height * 0.015);
-            skipY = Math.min(skipY, this.height - skipH - 12);
+        if (portrait || MW < 480) {
+            skipY = startY + stepY * n + Math.max(8, MH * 0.015);
+            skipY = Math.min(skipY, MH - skipH - 12);
         } else {
-            skipY = startY + cardH + Math.max(16, this.height * 0.04);
+            skipY = startY + cardH + Math.max(16, MH * 0.04);
         }
         this.drawButton(skipX, skipY, skipW, skipH, '#78909c', '跳过', 0);
 
@@ -5706,7 +5709,7 @@ class Game {
                 const def = this.talentDefs.find(d => d.id === a.id);
                 return def ? (def.name + (a.count > 1 ? `×${a.count}` : '')) : '';
             }).filter(Boolean).join('  ·  ');
-            ctx.fillText(`已获得: ${summary}`, this.width / 2, this.height - 6);
+            ctx.fillText(`已获得: ${summary}`, MW / 2, MH - 6);
             ctx.restore();
         }
     }
@@ -5781,6 +5784,12 @@ class Game {
     }
     
     checkButtonClick(mouseX, mouseY) {
+        // 逻辑坐标(toCanvas) → 菜单坐标(_withMenu)
+        const m = this._menu;
+        if (m) {
+            mouseX = (mouseX * this.gameScale + this.gameOffsetX - m.ox) / m.s;
+            mouseY = (mouseY * this.gameScale + this.gameOffsetY - m.oy) / m.s;
+        }
         if (this.showingClassSelection && this.buttons) {
             for (let button of this.buttons) {
                 if (mouseX >= button.x && mouseX <= button.x + button.width && 
@@ -6154,9 +6163,9 @@ class Game {
         this._renderAchToasts();
 
         if (this.showingClassSelection) {
-            this.renderClassSelection();
+            this._withMenu(() => this.renderClassSelection());
         } else if (this.showingPotentialMenu) {
-            this.renderPotentialMenu();
+            this._withMenu(() => this.renderPotentialMenu());
         }
 
         if (this.isPaused && !this.showingClassSelection && !this.showingPotentialMenu) {
@@ -6216,6 +6225,23 @@ class Game {
     // 拖拽瞄准时按钮上的小摇杆头,跟着手指偏移(HUD 逻辑坐标)
     // 技能/冲刺按键的坐标系:桌面端与世界同缩放(与以前一致);触屏端贴屏幕右下角,
     // 按 CSS 像素定尺寸(1 单位 ≈ 1.35 CSS px),竖屏时落在画面下方黑边里,手指不挡视野
+    // 菜单坐标系:桌面沿用 800×600 世界缩放;触屏铺满整块屏幕,且短边至少按 420 单位排版,
+    // 竖屏手机不再把菜单缩进中间的小条里。命中区记在菜单坐标里,checkButtonClick 负责换算。
+    _withMenu(fn) {
+        const ctx = this.ctx;
+        let m;
+        if (('ontouchstart' in window) || navigator.maxTouchPoints > 0) {
+            const s = Math.max(this.gameScale, Math.min(this.canvas.width, this.canvas.height) / 420);
+            m = { s, ox: 0, oy: 0, w: this.canvas.width / s, h: this.canvas.height / s };
+        } else {
+            m = { s: this.gameScale, ox: this.gameOffsetX, oy: this.gameOffsetY, w: this.width, h: this.height };
+        }
+        this._menu = m;
+        ctx.save();
+        ctx.setTransform(m.s, 0, 0, m.s, m.ox, m.oy);
+        try { fn(); } finally { ctx.restore(); }
+    }
+
     _withHud(fn) {
         const ctx = this.ctx;
         let h;
