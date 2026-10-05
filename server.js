@@ -172,7 +172,9 @@ wss.on('connection', ws => {
                 if (!info || info.isHost) break;
                 const room = getRoom(info.roomCode);
                 if (!room) break;
-                send(room.host, { type: 'castSkill', playerId: info.playerId, skill: msg.skill });
+                // aim:拖拽瞄准方向 [dx,dy],只转发合法的两个数字
+                const aim = Array.isArray(msg.aim) && msg.aim.length === 2 && msg.aim.every(Number.isFinite) ? msg.aim : null;
+                send(room.host, { type: 'castSkill', playerId: info.playerId, skill: msg.skill, aim });
                 break;
             }
         }
