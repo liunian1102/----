@@ -894,3 +894,36 @@ kbd {
     .build-card .build-close { width: 30px; height: 30px; }
     .build-card .sock { width: 44px; height: 44px; }
 }
+
+/* 结算弹窗:本局概况(两列小卡片) */
+.run-summary {
+    display: grid;
+    grid-template-columns: repeat(3, minmax(0, 1fr));
+    gap: 8px;
+    width: min(420px, calc(100vw - 32px));
+    margin: 4px 0 14px;
+}
+.run-summary:empty { display: none; }
+.run-summary .rs-item {
+    background: rgba(0, 200, 255, 0.07);
+    border: 1px solid rgba(0, 200, 255, 0.22);
+    border-radius: 8px;
+    padding: 6px 8px;
+    text-align: center;
+    min-width: 0;
+}
+.run-summary .rs-k {
+    font-size: 0.72em;
+    color: rgba(200, 232, 255, 0.55);
+}
+.run-summary .rs-v {
+    font-size: 0.95em;
+    font-weight: 700;
+    color: #ffffff;
+    white-space: nowrap;
+    overflow: hidden;
+    text-overflow: ellipsis;
+}
+@media (max-width: 420px) {
+    .run-summary { grid-template-columns: repeat(2, minmax(0, 1fr)); }
+}
