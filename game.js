@@ -251,7 +251,7 @@ const GAME_EVENTS = {
 };
 const EVENT_TYPES = Object.keys(GAME_EVENTS);
 const MP_ITEM_TYPES = ['potion', 'exp_book', 'snowflake', 'bomb', 'heart', 'potion_invicible',
-    'gear_blade', 'gear_orb', 'gear_armor', 'gear_bow'];
+    'gear_blade', 'gear_orb', 'gear_armor', 'gear_bow', 'gear_thorns'];
 
 // 限时装备:捡起后一段时间内强化属性,并附带一种独立于职业的特殊攻击(Game._tickGear 驱动)
 //   atkMult 攻击倍率 / defBonus 防御加成 / speedMult 移速倍率;every = 特殊攻击间隔(秒)
@@ -263,7 +263,10 @@ const GEARS = {
     armor: { name: '寒霜战甲', icon: '🛡️', color: '#80d8ff', duration: 12, defBonus: 12, every: 1.8,
              desc: '防御 +12  冰霜新星' },
     bow:   { name: '风暴连弩', icon: '🏹', color: '#69f0ae', duration: 12, speedMult: 1.25, every: 0.45,
-             desc: '移速 +25%  扇形连射' }
+             desc: '移速 +25%  扇形连射' },
+    // 荆棘之甲:挨打越多打得越疼,与圣骑士守护者的「圣光反击」叠加时反伤再 ×1.5
+    thorns: { name: '荆棘之甲', icon: '🌵', color: '#c6ff00', duration: 12, defBonus: 6, every: 0.5,
+              desc: '防御 +6  受击反伤 尖刺' }
 };
 const GEAR_TYPES = Object.keys(GEARS);
 
@@ -2020,6 +2023,23 @@ class Game {
         ctx.beginPath();
         ctx.arc(cx, cy, r, -Math.PI / 2, -Math.PI / 2 + Math.PI * 2 * Math.max(0, g.timer / (g.max || 1)));
         ctx.stroke();
+        if (g.type === 'thorns') {
+            // 一圈缓慢转动的尖刺
+            ctx.shadowBlur = 0;
+            ctx.globalAlpha = 0.8 * blink;
+            ctx.fillStyle = def.color;
+            const rot = this.bgTime * 0.8;
+            ctx.beginPath();
+            for (let i = 0; i < 10; i++) {
+                const a = rot + i * Math.PI / 5;
+                const c = Math.cos(a), s = Math.sin(a);
+                ctx.moveTo(cx + c * (r + 9), cy + s * (r + 9));
+                ctx.lineTo(cx + Math.cos(a - 0.14) * (r + 1), cy + Math.sin(a - 0.14) * (r + 1));
+                ctx.lineTo(cx + Math.cos(a + 0.14) * (r + 1), cy + Math.sin(a + 0.14) * (r + 1));
+                ctx.closePath();
+            }
+            ctx.fill();
+        }
         if (g.type === 'orb') {
             const base = (g.angle || 0) + (g._phaseAt !== undefined ? (this.bgTime - g._phaseAt) * Game.ORB_SPIN : 0);
             ctx.globalAlpha = 0.12;
@@ -2606,14 +2626,46 @@ class Game {
         const def = GEARS[g.type];
         const pcx = p.x + p.size / 2, pcy = p.y + p.size / 2;
         if (g.type === 'orb') { this._gearOrbTick(g, pcx, pcy); return; }
+        if (g.type === 'thorns' && p._thornsHit > 0) this._gearThornsBurst(p, pcx, pcy);
         g.cd -= DT;
         if (g.cd > 0) return;
         let fired = false;
         if (g.type === 'blade') fired = this._gearChainLightning(pcx, pcy);
         else if (g.type === 'armor') fired = this._gearFrostNova(pcx, pcy);
         else if (g.type === 'bow') fired = this._gearFanShot(pcx, pcy);
+        else if (g.type === 'thorns') fired = this._gearThornsSpikes(p, pcx, pcy);
         // 附近没目标就稍后再试,不白白进入冷却
         g.cd = fired ? def.every : 0.1;
+    }
+
+    // 荆棘之甲:受击后把这一帧受到的原始伤害 ×2(守护者再 ×1.5)+ 半个攻击力,炸向 110 范围内的敌人
+    _gearThornsBurst(p, pcx, pcy) {
+        const raw = p._thornsHit;
+        p._thornsHit = 0;
+        if (p.currentHealth <= 0) return;
+        const dmg = (raw * 2 + p.attack * 0.5) * (p.spec === 'protector' ? 1.5 : 1);
+        for (const t of this._gearTargets()) {
+            const tx = t.x + t.size / 2, ty = t.y + t.size / 2;
+            if (Math.hypot(tx - pcx, ty - pcy) <= 110 + t.size / 2) this._gearHit(t, dmg, '#c6ff00', pcx, pcy);
+        }
+        this.effects.push({ type: 'shockwave', x: pcx, y: pcy, radius: 8, maxRadius: 110, color: '#c6ff00', ttl: 0.3, maxTtl: 0.3 });
+        for (let i = 0; i < 12; i++) {
+            this.effects.push({ type: 'iceShard', x: pcx, y: pcy, angle: i * Math.PI / 6, length: 26, color: '#eeff41', ttl: 0.25, maxTtl: 0.25 });
+        }
+        this._showFloatingText('荆棘反伤', pcx, p.y - 22, '#c6ff00');
+    }
+
+    // 荆棘之甲:每 0.5 秒扎一次贴身的敌人
+    _gearThornsSpikes(p, pcx, pcy) {
+        const dmg = p.attack * 0.5 + p.maxHealth * 0.02;
+        let hit = false;
+        for (const t of this._gearTargets()) {
+            const tx = t.x + t.size / 2, ty = t.y + t.size / 2;
+            if (Math.hypot(tx - pcx, ty - pcy) > p.size / 2 + t.size / 2 + 22) continue;
+            this._gearHit(t, dmg, '#c6ff00', pcx, pcy);
+            hit = true;
+        }
+        return hit;
     }
 
     // 装备攻击的可选目标:普通敌人 + 活跃魔王
@@ -7364,6 +7416,7 @@ class Player {
         // 守护者觉醒:神圣光环内减伤 50%;记下原始伤害,交给 Game 反弹
         if (this.auraGuard > 0) actualDamage *= 0.5;
         if (this.spec === 'protector' && this.awakened) this._reflect = (this._reflect || 0) + damage;
+        if (this.gear && this.gear.type === 'thorns') this._thornsHit = (this._thornsHit || 0) + damage;
         // 圣骑士护盾优先全额抵挡(不再因 Math.max(1) 强制漏 1 点)
         if (this.shield > 0) {
             const absorbed = Math.min(this.shield, actualDamage);
