@@ -288,7 +288,20 @@ const GAME_EVENTS = {
 };
 const EVENT_TYPES = Object.keys(GAME_EVENTS);
 const MP_ITEM_TYPES = ['potion', 'exp_book', 'snowflake', 'bomb', 'heart', 'potion_invicible',
-    'gear_blade', 'gear_orb', 'gear_armor', 'gear_bow', 'gear_thorns'];
+    'gear_blade', 'gear_orb', 'gear_armor', 'gear_bow', 'gear_thorns',
+    'relic_thunder_ring', 'relic_vampire_fang', 'relic_chrono_watch', 'relic_reaper_cloak', 'relic_alchemist_stone', 'relic_warmog_vest'];
+
+// 永久战利品暗金遗物系统 (Relic Loot System)
+//   玩家最多同时装备 3 件遗物,整局常驻生效并带来流派质变
+const RELICS = {
+    thunder_ring:    { name: '雷神指环', icon: '💍', color: '#ffe14d', desc: '每第3次普攻/技能召唤天雷轰顶' },
+    vampire_fang:    { name: '吸血鬼獠牙', icon: '🧛', color: '#ff5252', desc: '每次击杀回复 2 点生命,溢出转为护盾' },
+    chrono_watch:    { name: '时空怀表', icon: '⌚', color: '#80d8ff', desc: '全技能与冲刺冷却缩减 18%' },
+    reaper_cloak:    { name: '死神斗篷', icon: '🧥', color: '#ea80fc', desc: '生命<35%时伤害+50%,闪避率+25%' },
+    alchemist_stone: { name: '炼金魔石', icon: '🧪', color: '#b9f6ca', desc: '道具持续时间+50%,拾取磁吸范围+80px' },
+    warmog_vest:     { name: '狂徒铠甲', icon: '🦺', color: '#ffd54f', desc: '最大生命+40,受到的所有伤害强制减免5点' }
+};
+const RELIC_TYPES = Object.keys(RELICS);
 
 // 限时装备:捡起后一段时间内强化属性,并附带一种独立于职业的特殊攻击(Game._tickGear 驱动)
 //   atkMult 攻击倍率 / defBonus 防御加成 / speedMult 移速倍率;every = 特殊攻击间隔(秒)
@@ -1975,6 +1988,8 @@ class Game {
             // 终极觉醒奥义充能(0~100)与激活中标记
             uc: q1(p.ultCharge || 0), ua: p.ultActiveTimer > 0 ? 1 : 0,
             gc: p.greedContract || 0, // 贪婪契约
+            // 永久暗金遗物列表
+            rl: (p.relics && p.relics.length > 0) ? p.relics.slice() : undefined,
             // 联机倒地信标状态 [剩余倒计时, 救援进度]
             dn: p.downed ? [q1(p.downedTimer), q2(p.rescueCharge || 0)] : 0,
             // 连杀 [连杀数, 剩余秒] 与本局最高连杀
@@ -2177,6 +2192,7 @@ class Game {
             this.player.gear = this._mpGear(myData.g);
             this.player.blessTimer = myData.bl || 0;
             this.player.greedContract = myData.gc || null;
+            if (myData.rl) this.player.relics = myData.rl.slice();
             if (myData.dn) {
                 this.player.downed = true;
                 this.player.downedTimer = myData.dn[0];
@@ -3044,6 +3060,35 @@ class Game {
             ctx.textAlign = 'left';
             ctx.fillText(desc, x + 28, y + 13);
             ctx.restore();
+            y += 30;
+        }
+
+        // 永久暗金遗物勋章栏(最多 3 件)
+        if (p.relics && p.relics.length > 0) {
+            const ctx = this.ctx;
+            let rx = 10;
+            const slotSize = 28;
+            for (const rk of p.relics) {
+                const rdef = RELICS[rk];
+                if (!rdef) continue;
+                ctx.save();
+                ctx.fillStyle = 'rgba(25, 20, 5, 0.8)';
+                roundRect(ctx, rx, y, slotSize, slotSize, 6);
+                ctx.fill();
+                ctx.shadowBlur = 8;
+                ctx.shadowColor = '#ffd700';
+                ctx.strokeStyle = '#ffd700';
+                ctx.lineWidth = 1.2;
+                roundRect(ctx, rx, y, slotSize, slotSize, 6);
+                ctx.stroke();
+
+                ctx.font = '15px Arial';
+                ctx.textAlign = 'center';
+                ctx.textBaseline = 'middle';
+                ctx.fillText(rdef.icon, rx + slotSize / 2, y + slotSize / 2);
+                ctx.restore();
+                rx += slotSize + 6;
+            }
         }
     }
 
@@ -3140,6 +3185,10 @@ class Game {
             ['装备觉醒', `${this.gearAwakenedCount || 0} 次`],
             ['虚空挑战', `${this.voidRiftClearedCount || 0} 次`]
         ];
+        if (p.relics && p.relics.length > 0) {
+            const relicStr = p.relics.map(rk => (RELICS[rk] ? RELICS[rk].name : rk)).join(', ');
+            rows.push(['暗金遗物', relicStr]);
+        }
         // 致命一击只在本机记录到时显示(客机的受击在主机结算,拿不到来源)
         if (this.fatalBlow) rows.push(['致命一击', `${this.fatalBlow.src} (${Math.round(this.fatalBlow.dmg)})`]);
         return rows;
@@ -5262,23 +5311,29 @@ class Game {
         const baseScore = Math.round(100 * (this.scoreMult || 1) * diffDef(this.diffMode).score);
         this.score += perfect ? baseScore * 2 : baseScore;
         // 击退动画
-        // 击退必掉一件限时装备与一颗技能石(落在魔王原位)
+        // 击退必掉一件限时装备、一颗技能石与一件永久暗金遗物(落在魔王原位)
         this._dropGear(this.boss.x + this.boss.size / 2 - 12, this.boss.y + this.boss.size / 2 - 12);
         this._dropGem(this.boss.x + this.boss.size / 2 + 24, this.boss.y + this.boss.size / 2 - 12);
+        this._dropRelic(this.boss.x + this.boss.size / 2, this.boss.y + this.boss.size / 2 + 24);
         if (perfect) {
             // perfect 时额外掉落一颗技能石(位置错开)
             this._dropGem(this.boss.x + this.boss.size / 2 - 48, this.boss.y + this.boss.size / 2 - 12);
         }
         this.boss.triggerRetreat(this.player.x, this.player.y);
         this.bossState = 'retreating';
-        // 视效:闪白 + 大粒子爆发
-        this.effects.push({ type: 'shockwave', x: this.boss.x + 40, y: this.boss.y + 40, radius: 10, maxRadius: 250, color: '#ffffff', ttl: 0.7, maxTtl: 0.7 });
+
+        // 魔王击退 K.O. 慢镜头终结特写(子弹时间 + 全屏金色裂空斩击)
+        this.hitStop = 0.45;
+        this.screenShake = 0.6;
+        Sound.play('bossRepel');
+        this.effects.push({ type: 'shockwave', x: this.width / 2, y: this.height / 2, radius: 20, maxRadius: this.width * 0.95, color: '#ffd700', ttl: 0.75, maxTtl: 0.75 });
+        this.effects.push({ type: 'slash', x: this.boss.x + 40, y: this.boss.y + 40, angle: -Math.PI / 4, length: 160, color: '#ffd700', ttl: 0.4, maxTtl: 0.4 });
+        this.spawnBurstRing(this.boss.x + 40, this.boss.y + 40, 100, '#ffd700', 30);
         this.spawnParticles(this.boss.x + 40, this.boss.y + 40, '#ffeb3b', 40, 2, 7, 3, 6, 0.03);
-        this.spawnParticles(this.boss.x + 40, this.boss.y + 40, '#ffffff', 20, 3, 8, 2, 5, 0.04);
-        const title = perfect ? '完美击退魔王!' : '魔王遁走…';
+        this.spawnParticles(this.boss.x + 40, this.boss.y + 40, '#ffffff', 25, 3, 8, 2, 5, 0.04);
+        const title = perfect ? '👑 完美击退魔王 (K.O.)!' : '魔王遁走…';
         const color = perfect ? '#ffd700' : '#ffeb3b';
-        this._showFloatingText(`${title}  +1 命  +1 潜能  +1 天赋点  掉落装备与技能石`, this.width / 2, this.height * 0.4, color);
-        this.screenShake = 0.5;
+        this._showFloatingText(`${title}  +1命 +1潜能 +1天赋  爆出暗金遗物!`, this.width / 2, this.height * 0.4, color);
         // 立即弹天赋菜单(奖励的潜能点)
         this.showPotentialMenu();
     }
@@ -5570,9 +5625,10 @@ class Game {
             e.takeDamage(120);
         }
 
-        // 爆仓掉落: 高阶技能石 + 史诗限时装备 + 经验之书 + 生命药水
+        // 爆仓掉落: 高阶技能石 + 史诗限时装备 + 永久暗金遗物 + 经验之书 + 生命药水
         this._dropGem(cx - 30, cy);
         this._dropGear(cx + 30, cy);
+        this._dropRelic(cx, cy);
         this.items.push(new Item(cx, cy - 35, 'exp_book', 'epic'));
         this.items.push(new Item(cx, cy + 35, 'potion', 'rare'));
         this.score += 800 * (this.scoreMult || 1);
@@ -6053,21 +6109,24 @@ class Game {
         }
     }
     
-    // 拾取磁吸:落地后的道具被附近最近的存活玩家吸过去,越近越快(无敌药水只有房主/单人能捡,只吸向本机玩家)
+    // 拾取磁吸:落地后的道具被附近最近的存活玩家吸过去,越近越快(无敌药水只有房主/单人能捡,只吸向本机玩家;暗金遗物【炼金魔石】磁吸范围+80px)
     _magnetItems() {
         const players = this._allPlayers();
         if (!players.length) return;
-        const R = Game.MAGNET_RADIUS;
         for (const it of this.items) {
             if (it.landTimer > 0) continue;
             const ix = it.x + it.size / 2, iy = it.y + it.size / 2;
-            let best = null, bd = R;
+            let best = null, bd = Infinity;
             for (const p of players) {
                 if (it.type === 'potion_invicible' && p !== this.player) continue;
+                const magBonus = (p.relics && p.relics.includes('alchemist_stone')) ? 80 : 0;
+                const R = Game.MAGNET_RADIUS + magBonus;
                 const d = Math.hypot(p.x + p.size / 2 - ix, p.y + p.size / 2 - iy);
-                if (d < bd) { bd = d; best = p; }
+                if (d <= R && d < bd) { bd = d; best = p; }
             }
             if (!best || bd < 1) continue;
+            const magBonus = (best.relics && best.relics.includes('alchemist_stone')) ? 80 : 0;
+            const R = Game.MAGNET_RADIUS + magBonus;
             const step = Math.min(bd, 1.5 + 7 * (1 - bd / R));
             const k = step / bd;
             it.x += (best.x + best.size / 2 - ix) * k;
@@ -6364,6 +6423,17 @@ class Game {
         this.items.push(new Item(x, y, 'gear_' + kind));
     }
 
+    // 在 (x,y) 掉落一件永久暗金遗物
+    _dropRelic(x, y, kind) {
+        kind = kind || RELIC_TYPES[Math.floor(Math.random() * RELIC_TYPES.length)];
+        x = Math.max(15, Math.min(this.width - 45, x));
+        y = Math.max(40, Math.min(this.height - 45, y));
+        const item = new Item(x, y, 'relic_' + kind);
+        this.items.push(item);
+        this.effects.push({ type: 'shockwave', x, y, radius: 10, maxRadius: 80, color: '#ffd700', ttl: 0.5, maxTtl: 0.5 });
+        this.spawnBurstRing(x, y, 40, '#ffd700', 16);
+    }
+
     // 给 this.player 穿上装备:同款升阶为 Lv2 觉醒状态并续满/延长时长,换款替换
     _equipGear(kind) {
         const def = GEARS[kind];
@@ -6466,6 +6536,27 @@ class Game {
                         label = `🌟 ${def.evoName} Lv.2 觉醒!  ${def.evoDesc}`;
                     } else {
                         label = `${def.name}  ${def.desc}`;
+                    }
+                } else if (item.relic) {
+                    const rdef = RELICS[item.relic];
+                    if (rdef) {
+                        if (!this.player.relics) this.player.relics = [];
+                        const existingIdx = this.player.relics.indexOf(item.relic);
+                        if (existingIdx >= 0) {
+                            label = `🌟 强化遗物【${rdef.name}】!`;
+                        } else {
+                            if (this.player.relics.length >= 3) this.player.relics.shift(); // 满 3 件替换最早的
+                            this.player.relics.push(item.relic);
+                            if (item.relic === 'warmog_vest') {
+                                this.player.maxHealth += 40;
+                                this.player.currentHealth = Math.min(this.player.maxHealth, this.player.currentHealth + 40);
+                            }
+                            label = `👑 获得暗金遗物【${rdef.name}】! ${rdef.desc}`;
+                        }
+                        Sound.play('levelUp');
+                        this.effects.push({ type: 'shockwave', x: cx, y: cy, radius: 10, maxRadius: 100, color: '#ffd700', ttl: 0.5, maxTtl: 0.5 });
+                        this.spawnBurstRing(cx, cy, 60, '#ffe082', 25);
+                        this.spawnParticles(cx, cy, '#ffd700', 30, 2, 7, 2, 5, 0.03);
                     }
                 } else if (item.gem) {
                     label = this._grantGem(item.gem);
@@ -6697,8 +6788,9 @@ class Game {
         const base = (CLASS_BASE_CD[p.class] || { q: 3, e: 5 })[key];
         const sk = key === 'q' ? p.skillQ : p.skillE;
         const flat = key === 'q' ? (p.qCdFlat || 0) : 0;
-        // 冷却缩减:天赋 + 该技能位的「快速冷却」,合计最多 -60%
-        const red = Math.min(0.6, ((p.tree && p.tree.cdr) || 0) + this._gv(p, key, 'faster'));
+        // 冷却缩减:天赋 + 该技能位的「快速冷却」,合计最多 -60%;暗金遗物【时空怀表】额外 -18%
+        const relicCdr = (p.relics && p.relics.includes('chrono_watch')) ? 0.18 : 0;
+        const red = Math.min(0.65, ((p.tree && p.tree.cdr) || 0) + this._gv(p, key, 'faster') + relicCdr);
         const cd = base * this._getCDMultiplier(sk.level) * (1 - red);
         return flat ? Math.max(1, cd - flat) : cd;
     }
@@ -6827,6 +6919,24 @@ class Game {
         if (p.spec === 'frost' && p.awakened && target.stunTimer > 0) dmg *= 1.6;
         if (p.spec === 'venom') this._applyPoison(target, p, 1);
         if (t.poisonHit) this._applyPoison(target, p, 1);
+        // 暗金遗物【死神斗篷】:生命低于 35% 时伤害提升 50%
+        if (p.relics && p.relics.includes('reaper_cloak') && p.currentHealth < p.maxHealth * 0.35) {
+            dmg *= 1.5;
+        }
+        // 暗金遗物【雷神指环】:每第 3 次攻击/技能召唤天雷轰顶
+        if (p.relics && p.relics.includes('thunder_ring')) {
+            p._relicThunderCount = ((p._relicThunderCount || 0) + 1) % 3;
+            if (p._relicThunderCount === 0) {
+                const tx = target.x + target.size / 2, ty = target.y + target.size / 2;
+                const boltDmg = p.attack * 1.2;
+                this.pendingActions.push({ delay: 0.05, fn: () => {
+                    this._hitAround(tx, ty, 80, boltDmg);
+                    this.effects.push({ type: 'shockwave', x: tx, y: ty, radius: 6, maxRadius: 80, color: '#ffe14d', ttl: 0.3, maxTtl: 0.3 });
+                    this.effects.push({ type: 'lightning', pts: [[tx, ty - 120], [tx, ty]], color: '#ffe14d', ttl: 0.18, maxTtl: 0.18 });
+                    this.spawnParticles(tx, ty, '#fff59d', 10, 1.5, 4, 2, 4, 0.03);
+                }});
+            }
+        }
         // 智慧基石「时空裂隙 / 奥术异化」(iK):命中附加基于法力上限的魔法裂解真实伤害
         if (p.treeNodes && p.treeNodes.has('iK') && p.maxMana) {
             const manaDmg = p.maxMana * 0.8;
@@ -7918,6 +8028,10 @@ class Game {
         if (e && e.elite) {
             this._eliteReward(e);
             this.affixEliteKills = (this.affixEliteKills || 0) + 1;
+            // 词缀精英被击破: 18% 概率爆出永久暗金遗物
+            if (Math.random() < 0.18) {
+                this._dropRelic(e.x + e.size / 2, e.y + e.size / 2);
+            }
             // 剧毒词缀:死亡时原地留下一滩持续 4 秒的腐蚀毒雾洼地
             if (e.affix === 'venom') {
                 const cx = e.x + e.size / 2, cy = e.y + e.size / 2;
@@ -7939,6 +8053,15 @@ class Game {
         }
         if (this.player.lifeStealPerKill) {
             this.player.heal(this.player.lifeStealPerKill);
+        }
+        // 暗金遗物【吸血鬼獠牙】:每次击杀回复 2 点生命,溢出转为护盾
+        if (this.player.relics && this.player.relics.includes('vampire_fang')) {
+            const oldHp = this.player.currentHealth;
+            this.player.heal(2);
+            if (this.player.currentHealth >= this.player.maxHealth && oldHp >= this.player.maxHealth) {
+                const cap = this.player.maxHealth * 0.35;
+                this.player.shield = Math.min(cap, (this.player.shield || 0) + 2);
+            }
         }
         this.player.gainRage(20);
         if (this.player.gainUltCharge) this.player.gainUltCharge(6);
@@ -11009,9 +11132,10 @@ class Player {
         this.lastHitInfo = null;        // 最近一次受击信息 {src, dmg}
     }
 
-    // 冲刺实际冷却(天赋「疾风连击」减免)
+    // 冲刺实际冷却(天赋「疾风连击」减免;暗金遗物【时空怀表】额外缩减 18%)
     dashCdTotal() {
-        return this.dashMaxCooldown * (1 - ((this.tree && this.tree.dashCdr) || 0));
+        const relicCdr = (this.relics && this.relics.includes('chrono_watch')) ? 0.18 : 0;
+        return this.dashMaxCooldown * Math.max(0.35, 1 - ((this.tree && this.tree.dashCdr) || 0) - relicCdr);
     }
     
     update(keys, width, height) {
@@ -11152,9 +11276,13 @@ class Player {
     // pct:额外按最大生命百分比的真实伤害(无视防御/减伤值,护盾只能挡一半)
     takeDamage(damage, src = '其他伤害', pct = 0) {
         const t = this.tree || {};
-        // 天赋「疾风之舞」:几率完全闪避
-        if (t.evade && Math.random() < t.evade) { this._evadeFx = true; return 0; }
-        const flatReduction = this.flatDamageReduction || 0;
+        // 天赋「疾风之舞」与暗金遗物【死神斗篷】(低血量闪避加成):几率完全闪避
+        const reaperEvade = (this.relics && this.relics.includes('reaper_cloak') && this.currentHealth < this.maxHealth * 0.35) ? 0.25 : 0;
+        const totalEvade = (t.evade || 0) + reaperEvade;
+        if (totalEvade > 0 && Math.random() < totalEvade) { this._evadeFx = true; return 0; }
+        // 暗金遗物【狂徒铠甲】:受到的所有伤害强制减免 5 点
+        const relicFlatRed = (this.relics && this.relics.includes('warmog_vest')) ? 5 : 0;
+        const flatReduction = (this.flatDamageReduction || 0) + relicFlatRed;
         const gear = this.gear && GEARS[this.gear.type];
         const gearDef = gear ? ((this.gear.level === 2 && gear.evoDefBonus) ? gear.evoDefBonus : (gear.defBonus || 0)) : 0;
         const def = this.defense * Math.max(0, 1 + (t.defPct || 0));
@@ -12480,7 +12608,11 @@ class Item {
         // 技能石:按属性系配色,地上停留 15 秒
         this.gem = type.startsWith('gem_') && GEMS[type.slice(4)] ? type.slice(4) : null;
         const gm = this.gem && GEMS[this.gem];
-        const c = gd ? { color: gd.color, icon: gd.icon, rarity: 'epic', duration: 12 }
+        // 永久暗金遗物:地上停留 25 秒
+        this.relic = type.startsWith('relic_') && RELICS[type.slice(6)] ? type.slice(6) : null;
+        const rl = this.relic && RELICS[this.relic];
+        const c = rl ? { color: rl.color, icon: rl.icon, rarity: 'epic', duration: 25 }
+            : gd ? { color: gd.color, icon: gd.icon, rarity: 'epic', duration: 12 }
             : gm ? { color: gm.color, icon: gm.icon, rarity: 'rare', duration: 15 }
             : (cfg[type] || cfg.potion);
         this.color = c.color;
