@@ -240,7 +240,7 @@ const nextEntityId = () => ++_entityIdSeq;
 // 联机快照数值量化,缩小网络包
 const q1 = v => Math.round(v * 10) / 10;
 const q2 = v => Math.round(v * 100) / 100;
-const MP_ENEMY_TYPES = ['chaser', 'patroller', 'giant', 'gunner', 'dasher', 'bomber', 'treasure'];
+const MP_ENEMY_TYPES = ['chaser', 'patroller', 'giant', 'gunner', 'dasher', 'bomber', 'treasure', 'healer'];
 
 // 随机事件(两次魔王之间触发,由 host/单人调度,经快照 ev 下发给 guest)
 const GAME_EVENTS = {
@@ -526,7 +526,7 @@ const Sound = {
     _last: {},
     _noiseBuf: null,
     // 同名音效最短间隔(秒),避免一帧内多次击杀叠成噪音
-    minGap: { kill: 0.05, skill: 0.08, pickup: 0.06, hurt: 0.1, dash: 0.12, fuse: 0.2, bomb: 0.08, meteor: 0.1 },
+    minGap: { kill: 0.05, skill: 0.08, pickup: 0.06, hurt: 0.1, dash: 0.12, fuse: 0.2, bomb: 0.08, meteor: 0.1, enemyHeal: 0.25 },
 
     init() {
         if (this.ctx) {
@@ -692,6 +692,10 @@ const Sound = {
                 this._noise(0.35, 0.22, 'lowpass', 700);
                 this._tone(120, 0.3, 'sine', 0.18, 0.5);
                 break;
+            case 'enemyHeal':
+                // 敌方「医」治疗脉冲:柔和上行的两声
+                [587, 880].forEach((f, i) => this._tone(f, 0.18, 'sine', 0.1, 1.3, i * 0.07));
+                break;
             case 'treasure':
                 [1047, 1319, 1568, 2093].forEach((f, i) => this._tone(f, 0.1, 'triangle', 0.14, 1, i * 0.05));
                 break;
@@ -707,6 +711,7 @@ class Game {
     static ORB_SPIN = 4.2;    // 烈焰法球转速(弧度/秒)
     static ORB_RADIUS = 58;   // 烈焰法球环绕半径
     static COMBO_WINDOW = 3;  // 连杀间隔上限(秒)
+    static TALENT_REROLLS = 2; // 每局天赋「换一批」基础次数
     // 自动画质档位:持续掉帧时逐级降低画布分辨率上限与粒子数量(本次打开页面内不再回升,避免来回切换)
     static PERF_FRAME_MS = 22;  // 平滑后的帧间隔超过它(约 45 帧以下)视为掉帧
     static QUALITY = [{ dpr: 2, fx: 1 }, { dpr: 1.5, fx: 0.6 }, { dpr: 1, fx: 0.4 }];
@@ -1136,6 +1141,7 @@ class Game {
                 if ((buildKey || e.key === 'Escape') && !e.repeat) this.closeBuild();
                 return;
             }
+            if (this.showingPotentialMenu && !this.showingClassSelection && !e.repeat) { this._talentMenuKey(e.key); return; }
             if (buildKey && !e.repeat && e.target.tagName !== 'INPUT') { this.openBuild(); return; }
             if (e.key === 'p' || e.key === 'P' || e.key === 'Escape') {
                 if (this.isRunning) this.togglePause();
@@ -1705,7 +1711,8 @@ class Game {
                     Math.ceil(e.currentHealth), Math.ceil(e.maxHealth), (e.stunTimer > 0 ? 1 : 0) | (e._mpHit ? 2 : 0) | (e.elite ? 4 : 0) | (e.poison > 0 ? 8 : 0) | (e.burnT > 0 ? 16 : 0)];
                 e._mpHit = false;
                 if (e.type === 'gunner') row.push(q2(e.aimAngle || 0), q2(e.shootTimer || 0), q2(e.shootInterval || 1));
-                else if (e.type === 'dasher' || e.type === 'bomber') row.push(e.state, q2(e.stateTimer), q2(e.stateDur), q2(e.dashAngle), q1(e.type === 'dasher' ? e.dashDist : e.blastRadius));
+                else if (e.type === 'dasher' || e.type === 'bomber' || e.type === 'healer') row.push(e.state, q2(e.stateTimer), q2(e.stateDur), q2(e.dashAngle),
+                    q1(e.type === 'dasher' ? e.dashDist : e.type === 'bomber' ? e.blastRadius : e.healRadius));
                 return row;
             }),
             boss: this.boss ? [q1(this.boss.x), q1(this.boss.y), Math.ceil(this.boss.currentHealth),
@@ -1850,9 +1857,12 @@ class Game {
                         if (!isNew && r[7] !== e.state) {
                             if (e.type === 'dasher' && r[7] === 2) Sound.play('dash');
                             if (e.type === 'bomber' && r[7] === 1) Sound.play('fuse');
+                            if (e.type === 'healer' && r[7] === 0 && e.stateTimer < 0.2) Sound.play('enemyHeal'); // 引导完成(被打断时计时还长)
                         }
                         e.state = r[7]; e.stateTimer = r[8]; e.stateDur = r[9]; e.dashAngle = r[10];
-                        if (e.type === 'dasher') e.dashDist = r[11]; else e.blastRadius = r[11];
+                        if (e.type === 'dasher') e.dashDist = r[11];
+                        else if (e.type === 'bomber') e.blastRadius = r[11];
+                        else e.healRadius = r[11];
                     }
                 }
             });
@@ -4415,6 +4425,10 @@ class Game {
                 this.spawnParticles(s.x, s.y, '#ff9800', 5, 2, 4, 1, 3, 0.07);
                 e.pendingShot = null;
             }
+            if (e.pendingHeal) {
+                e.pendingHeal = false;
+                this._healerPulse(e);
+            }
             // 毒死/烧死的敌人记在施加者名下
             const poisoned = this._tickPoison(e), burned = this._tickBurn(e);
             if (poisoned || burned || e.currentHealth <= 0) {
@@ -4425,6 +4439,19 @@ class Game {
             }
         }
         if (this.boss && this.bossState === 'active') { this._tickPoison(this.boss); this._tickBurn(this.boss); }
+    }
+
+    // 医疗兵治疗脉冲:范围内受伤的其他敌人回复 25% 最大生命(不含宝藏方块与自身)
+    _healerPulse(h) {
+        const cx = h.x + h.size / 2, cy = h.y + h.size / 2, r = h.healRadius || 140;
+        for (const o of this.enemies) {
+            if (o === h || o.type === 'treasure' || o.currentHealth <= 0 || o.currentHealth >= o.maxHealth) continue;
+            if (Math.hypot(o.x + o.size / 2 - cx, o.y + o.size / 2 - cy) > r + o.size / 2) continue;
+            o.currentHealth = Math.min(o.maxHealth, o.currentHealth + o.maxHealth * 0.25);
+            this.spawnParticles(o.x + o.size / 2, o.y + o.size / 2, '#69f0ae', 4, 0.5, 1.6, 2, 3.5, 0.04);
+        }
+        this.effects.push({ type: 'shockwave', x: cx, y: cy, radius: 8, maxRadius: r, color: '#69f0ae', ttl: 0.4, maxTtl: 0.4 });
+        Sound.play('enemyHeal');
     }
 
     // 离 (x,y) 最近的存活玩家(单人/guest 恒为本机玩家)
@@ -4657,6 +4684,8 @@ class Game {
             const pool = [['chaser', 44], ['patroller', 24], ['gunner', 15], ['giant', 5]];
             if (this.gameTime >= 30) pool.push(['dasher', 8]);
             if (this.gameTime >= 50) pool.push(['bomber', 8]);
+            // 医疗兵 70 秒后加入,场上最多 3 个(太多会把战斗拖成消耗战)
+            if (this.gameTime >= 70 && this.enemies.filter(e => e.type === 'healer').length < 3) pool.push(['healer', 6]);
             let roll = Math.random() * pool.reduce((a, w) => a + w[1], 0);
             let type = pool[0][0];
             for (const [t, w] of pool) { if ((roll -= w) < 0) { type = t; break; } }
@@ -4942,15 +4971,19 @@ class Game {
     }
 
     updateParticles() {
-        for (let i = this.particles.length - 1; i >= 0; i--) {
-            const p = this.particles[i];
+        // 原地压缩:粒子多时 splice 逐个删除是 O(n²)
+        const ps = this.particles;
+        let n = 0;
+        for (let i = 0; i < ps.length; i++) {
+            const p = ps[i];
             p.x += p.vx;
             p.y += p.vy;
             p.vy += 0.08;
             p.vx *= 0.96;
             p.life -= p.decay;
-            if (p.life <= 0) this.particles.splice(i, 1);
+            if (p.life > 0) ps[n++] = p;
         }
+        ps.length = n;
     }
     
     explodeBomb(x, y, radius) {
@@ -5968,7 +6001,12 @@ class Game {
 
     // 统一击杀结算入口:替代旧的 score+=10; exp+=5; checkLevelUp() 三连
     _onEnemyKilled(e) {
-        if (e) this._flushDn(e, true); // 致命一击的数字(尸体马上就从 enemies 里移除了)
+        if (e) {
+            this._flushDn(e, true); // 致命一击的数字(尸体马上就从 enemies 里移除了)
+            // 碎裂:方块裂成四块飞散(特效随快照同步给 guest)
+            this.effects.push({ type: 'shatter', x: e.x + e.size / 2, y: e.y + e.size / 2, s: e.size, color: e.color,
+                                ttl: 0.5, maxTtl: 0.5 });
+        }
         // 被击杀的自爆者殉爆(稍等一帧,避免在调用方遍历 enemies 时改动数组)
         if (e && e.type === 'bomber' && !e.exploded) {
             e.exploded = true;
@@ -6474,6 +6512,7 @@ class Game {
             this.isPaused = true;
             this.showingPotentialMenu = true;
             this.currentTalentChoices = this._rollTalentChoices(3);
+            this._talentDealT = performance.now();
         }
     }
 
@@ -6521,8 +6560,23 @@ class Game {
         else this.player.acquiredTalents.push({ id: talent.id, count: 1 });
     }
 
+    // 天赋卡「换一批」剩余次数:每局 2 次,每击退一次魔王 +1(各端按本机玩家计)
+    _rerollsLeft() {
+        return Math.max(0, Game.TALENT_REROLLS + (this.runBossRepels || 0) - (this.player.rerollsUsed || 0));
+    }
+
     handlePotentialChoice(choice) {
-        // choice: 0 = 跳过, 1/2/3 = 天赋卡索引(1-based)
+        // choice: -1 = 换一批, 0 = 跳过, 1/2/3 = 天赋卡索引(1-based)
+        if (choice === -1) {
+            if (this._rerollsLeft() <= 0) return;
+            const next = this._rollTalentChoices(3);
+            if (next.length === 0) return;
+            this.player.rerollsUsed = (this.player.rerollsUsed || 0) + 1;
+            this.currentTalentChoices = next;
+            this._talentDealT = performance.now();
+            Sound.play('whoosh');
+            return;
+        }
         if (choice === 0) {
             this._closeTalentMenu();
             return;
@@ -6546,6 +6600,7 @@ class Game {
         // 还有剩余点数 → 重抽继续选;否则关闭
         if (this.player.potentialPoints > 0) {
             this.currentTalentChoices = this._rollTalentChoices(3);
+            this._talentDealT = performance.now();
             if (this.currentTalentChoices.length === 0) this._closeTalentMenu();
         } else {
             this._closeTalentMenu();
@@ -6556,6 +6611,15 @@ class Game {
         this.showingPotentialMenu = false;
         this.isPaused = false;
         this.currentTalentChoices = [];
+    }
+
+    // 键盘选天赋:1/2/3 选卡,R 换一批,0 / X 跳过
+    _talentMenuKey(key) {
+        if (key >= '1' && key <= '3') {
+            const i = key.charCodeAt(0) - 48;
+            if (i <= this.currentTalentChoices.length) this.handlePotentialChoice(i);
+        } else if (key === 'r' || key === 'R') this.handlePotentialChoice(-1);
+        else if (key === '0' || key === 'x' || key === 'X') this.handlePotentialChoice(0);
     }
     
     renderPotentialMenu() {
@@ -6628,6 +6692,13 @@ class Game {
             const borderColor = rarityColor[t.rarity] || '#888';
 
             ctx.save();
+            // 发牌动画:新一批卡片依次上浮淡入(命中区按最终位置注册)
+            const deal = Math.max(0, Math.min(1, ((performance.now() - (this._talentDealT || 0)) / 1000 - i * 0.06) / 0.22));
+            if (deal < 1) {
+                const ease = 1 - (1 - deal) * (1 - deal);
+                ctx.globalAlpha = ease;
+                ctx.translate(0, (1 - ease) * 24);
+            }
             // 卡牌背景
             const cardGrad = ctx.createLinearGradient(cx, cy, cx, cy + cardH);
             cardGrad.addColorStop(0, 'rgba(20, 30, 55, 0.95)');
@@ -6718,7 +6789,8 @@ class Game {
         // 跳过按钮
         const skipW = Math.min(140, MW * 0.35);
         const skipH = Math.max(36, Math.min(44, MH * 0.075));
-        const skipX = (MW - skipW) / 2;
+        const btnGap = Math.min(16, MW * 0.04);
+        const skipX = (MW - skipW * 2 - btnGap) / 2;
         let skipY;
         if (portrait || MW < 480) {
             skipY = startY + stepY * n + Math.max(8, MH * 0.015);
@@ -6727,6 +6799,32 @@ class Game {
             skipY = startY + cardH + Math.max(16, MH * 0.04);
         }
         this.drawButton(skipX, skipY, skipW, skipH, '#78909c', '跳过', 0);
+        const rr = this._rerollsLeft();
+        if (rr > 0) this.drawButton(skipX + skipW + btnGap, skipY, skipW, skipH, '#26a69a', `🔄 换一批 (${rr})`, -1);
+        else {
+            // 次数用完:灰色占位,不注册命中区
+            ctx.save();
+            ctx.globalAlpha = 0.45;
+            ctx.strokeStyle = '#78909c';
+            ctx.lineWidth = 1.5;
+            roundRect(ctx, skipX + skipW + btnGap, skipY, skipW, skipH, 10);
+            ctx.stroke();
+            ctx.fillStyle = '#b0bec5';
+            ctx.font = `bold ${Math.min(14, skipW * 0.1)}px Arial`;
+            ctx.textAlign = 'center';
+            ctx.textBaseline = 'middle';
+            ctx.fillText('换一批 (0)', skipX + skipW * 1.5 + btnGap, skipY + skipH / 2);
+            ctx.restore();
+        }
+        if (!(('ontouchstart' in window) || navigator.maxTouchPoints > 0)) {
+            ctx.save();
+            ctx.fillStyle = 'rgba(200, 232, 255, 0.45)';
+            ctx.font = `${Math.max(9, subFontSize - 3)}px Arial`;
+            ctx.textAlign = 'center';
+            ctx.textBaseline = 'top';
+            ctx.fillText('键盘:1 / 2 / 3 选择  ·  R 换一批  ·  0 跳过', MW / 2, skipY + skipH + 8);
+            ctx.restore();
+        }
 
         // 已获得天赋小列表(底部)
         if (this.player.acquiredTalents.length > 0) {
@@ -7002,12 +7100,13 @@ class Game {
         const ctx = this.ctx;
         ctx.save();
         ctx.shadowBlur = 0;
+        // 方块碎屑(fillRect):贴合方块画风,比逐个 arc 路径快 3~5 倍
+        let color = null;
         for (const p of this.particles) {
             ctx.globalAlpha = p.life;
-            ctx.fillStyle = p.color;
-            ctx.beginPath();
-            ctx.arc(p.x, p.y, p.size * p.life, 0, Math.PI * 2);
-            ctx.fill();
+            if (p.color !== color) { color = p.color; ctx.fillStyle = color; }
+            const h = p.size * p.life * 0.85;
+            ctx.fillRect(p.x - h, p.y - h, h * 2, h * 2);
         }
         ctx.restore();
     }
@@ -7775,6 +7874,33 @@ class Game {
                 ctx.beginPath();
                 ctx.arc(fx.x, fx.y, fx.radius, 0, Math.PI * 2);
                 ctx.fill();
+            } else if (fx.type === 'shatter') {
+                // 击杀碎裂:先白闪一下,再裂成四块朝四角飞散、旋转、下坠并淡出(纯填充,无 shadowBlur)
+                const t = 1 - alpha, s = fx.s, half = s / 2;
+                if (t < 0.18) {
+                    ctx.globalAlpha = (1 - t / 0.18) * 0.7;
+                    ctx.fillStyle = '#ffffff';
+                    ctx.fillRect(fx.x - half, fx.y - half, s, s);
+                }
+                const piece = half * (1 - 0.45 * t), fly = s * 0.25 + s * 1.1 * t * (2 - t), drop = 70 * t * t;
+                ctx.globalAlpha = Math.min(1, alpha * 1.6);
+                ctx.fillStyle = fx.color;
+                ctx.strokeStyle = 'rgba(255,255,255,0.55)';
+                ctx.lineWidth = 1;
+                ctx.beginPath();
+                for (let k = 0; k < 4; k++) {
+                    const sx = k & 1 ? 1 : -1, sy = k & 2 ? 1 : -1;
+                    const cx = fx.x + sx * fly, cy = fx.y + sy * fly + drop;
+                    const ang = sx * sy * t * (0.6 + 1.8 * t), h = piece / 2;
+                    const c = Math.cos(ang) * h, sn = Math.sin(ang) * h;
+                    ctx.moveTo(cx - c + sn, cy - sn - c);
+                    ctx.lineTo(cx + c + sn, cy + sn - c);
+                    ctx.lineTo(cx + c - sn, cy + sn + c);
+                    ctx.lineTo(cx - c - sn, cy - sn + c);
+                    ctx.closePath();
+                }
+                ctx.fill();
+                ctx.stroke();
             } else if (fx.type === 'ring') {
                 ctx.globalAlpha = alpha * 0.85;
                 ctx.strokeStyle = fx.color;
@@ -8675,6 +8801,7 @@ class Player {
 
         // 天赋(按玩家存储;联机时每个 guest 各有一份)
         this.acquiredTalents = [];      // [{ id, count }]
+        this.rerollsUsed = 0;           // 天赋卡「换一批」已用次数(见 Game._rerollsLeft)
         this.autoAttackTimer = 0;
         this.autoAttackInterval = 0.6;
         this.warriorSkillDmgMult = 1;
@@ -9003,9 +9130,11 @@ class Player {
 }
 
 class Enemy {
+    static SPAWN_IN = 0.5;
     static INTROS = {
         dasher: { text: '新敌人「冲」:蓄力后直线冲刺,看准路线侧身躲开', color: '#ffe57f' },
-        bomber: { text: '新敌人「爆」:贴身会自爆,先打爆它还能炸伤周围敌人', color: '#ff80ab' }
+        bomber: { text: '新敌人「爆」:贴身会自爆,先打爆它还能炸伤周围敌人', color: '#ff80ab' },
+        healer: { text: '新敌人「医」:躲在远处给周围敌人回血,优先打掉它', color: '#69f0ae' }
     };
 
     constructor(x, y, type, difficulty) {
@@ -9053,6 +9182,8 @@ class Enemy {
         this.blastRadius = 0;
 
         this.stunTimer = 0;
+        // 出场时刻(真实时间,纯视觉):炮手直接刷在场内,用淡入 + 收缩光圈提示,不再凭空蹦出来
+        this.bornAt = performance.now();
 
         // 受击反馈:hitFlash>0 时白闪;降为负值时作为再次闪白的间隔(持续伤害时呈闪烁而非常亮)
         this.hitFlash = -1;
@@ -9135,6 +9266,17 @@ class Enemy {
                 this.wanderDir = Math.random() * Math.PI * 2;
                 this.wanderOff = 0;
                 break;
+            case 'healer': // 医疗兵:与玩家保持距离,定期引导治疗脉冲给周围敌人回血;被控会打断
+                this.size = 26;
+                this.speed = Math.min(3.6, 1.2 * this.difficulty);
+                this.maxHealth = 45 * this.difficulty;
+                this.currentHealth = this.maxHealth;
+                this.attack = 6 * this.difficulty;
+                this.defense = 2 * this.difficulty;
+                this.color = '#00e676';
+                this.healRadius = 140;
+                this.healCD = 2 + Math.random() * 1.5;
+                break;
             default: // 默认追击者
                 this.type = 'chaser';
                 this.size = 30;
@@ -9154,6 +9296,10 @@ class Enemy {
             if (this.type === 'dasher' && (this.state === 1 || this.state === 2)) {
                 this.state = 0;
                 this.dashCD = 1;
+            }
+            if (this.type === 'healer' && this.state === 1) {
+                this.state = 0;
+                this.healCD = 1.2;
             }
             return;
         }
@@ -9179,7 +9325,53 @@ class Enemy {
             case 'treasure':
                 this.updateTreasure(playerX, playerY, width, height, playerSize);
                 break;
+            case 'healer':
+                this.updateHealer(playerX, playerY, width, height, playerSize);
+                break;
         }
+    }
+
+    // 医疗兵:保持在 190~260px 外绕圈走位(太近就跑),冷却好了站定引导 0.9 秒,结束时由 Game 结算治疗脉冲
+    updateHealer(playerX, playerY, width, height, playerSize) {
+        const inside = this.x > 0 && this.y > 0 && this.x < width - this.size && this.y < height - this.size;
+        if (!inside) {
+            // 刚从场外刷出:先走进场地
+            const cx = width / 2 - this.x, cy = height / 2 - this.y, d = Math.hypot(cx, cy) || 1;
+            this.x += cx / d * this.speed;
+            this.y += cy / d * this.speed;
+            return;
+        }
+        if (this.state === 1) {
+            this.stateTimer -= DT;
+            if (this.stateTimer <= 0) {
+                this.state = 0;
+                this.pendingHeal = true;
+                this.healCD = 3.5 + Math.random();
+            }
+            return;
+        }
+        this.healCD -= DT;
+        if (this.healCD <= 0) {
+            this._setState(1, 0.9);
+            return;
+        }
+        const { dx, dy, dist } = this._toTarget(playerX, playerY, playerSize);
+        const d = dist || 1;
+        let ax, ay;
+        if (dist < 190) { ax = -dx / d; ay = -dy / d; }
+        else if (dist > 260) { ax = dx / d; ay = dy / d; }
+        else { ax = -dy / d * this.patrolDirection * 0.7; ay = dx / d * this.patrolDirection * 0.7; }
+        // 贴墙时往场内推,避免被逼进角落原地抖动
+        const m = 50;
+        if (this.x < m) ax += (m - this.x) / m * 1.5;
+        if (this.x > width - this.size - m) ax -= (this.x - (width - this.size - m)) / m * 1.5;
+        if (this.y < m) ay += (m - this.y) / m * 1.5;
+        if (this.y > height - this.size - m) ay -= (this.y - (height - this.size - m)) / m * 1.5;
+        const len = Math.hypot(ax, ay);
+        if (len < 0.05) return;
+        const sp = this.speed * Math.min(1, len);
+        this.x = Math.max(0, Math.min(width - this.size, this.x + ax / len * sp));
+        this.y = Math.max(0, Math.min(height - this.size, this.y + ay / len * sp));
     }
 
     // 精英化:体型 ×1.3、血量 ×3、攻防略升,画金框皇冠(guest 只用到体型与标记)
@@ -9459,10 +9651,25 @@ class Enemy {
     // 第 1 遍:本体(炮手含炮管、炮口火花、"炮"字)+ 受击白闪。血条见 renderBars,星星/冰封见 renderOverlays。
     // 由 Game._renderEnemies 调用,调用前已关闭 imageSmoothing
     render(ctx, snap) {
+        const fadeIn = this.type === 'gunner' ? this.spawnProgress() : 1;
+        if (fadeIn < 1) {
+            const a = ctx.globalAlpha;
+            ctx.globalAlpha = a * fadeIn * fadeIn;
+            this._renderBody(ctx, snap);
+            ctx.globalAlpha = a;
+        } else this._renderBody(ctx, snap);
+    }
+
+    // 炮手出场进度 0→1(Enemy.SPAWN_IN 秒)
+    spawnProgress() {
+        return Math.min(1, (performance.now() - this.bornAt) / 1000 / Enemy.SPAWN_IN);
+    }
+
+    _renderBody(ctx, snap) {
         // 本体(渐变 + 光晕 + 描边 + 文字)按类型缓存,避免每帧 shadowBlur
         SpriteCache.drawPx(ctx, Enemy.bodySprite(this.type, this.size), this.x, this.y, snap);
         if (this.type === 'gunner') this._renderGunnerTop(ctx, snap);
-        if (this.state === 1 && (this.type === 'bomber' || this.type === 'dasher')) this._renderChargePulse(ctx, snap);
+        if (this.state === 1 && (this.type === 'bomber' || this.type === 'dasher' || this.type === 'healer')) this._renderChargePulse(ctx, snap);
         this._renderHitFlash(ctx, snap);
     }
 
@@ -9479,6 +9686,18 @@ class Enemy {
     // 第 0 遍:地面预警(冲锋者的冲刺路线、自爆者的爆炸范围),画在所有敌人身下。只有填充/描边,无 shadowBlur
     static renderTelegraphs(ctx, enemies) {
         for (const e of enemies) {
+            if (e.type === 'gunner') {
+                // 炮手出场:橙色光圈向落点收缩
+                const k = e.spawnProgress();
+                if (k >= 1) continue;
+                const cx = e.x + e.size / 2, cy = e.y + e.size / 2;
+                ctx.strokeStyle = `rgba(255,152,0,${0.9 * (1 - k)})`;
+                ctx.lineWidth = 2 + 3 * (1 - k);
+                ctx.beginPath();
+                ctx.arc(cx, cy, e.size * (0.55 + 1.6 * (1 - k)), 0, Math.PI * 2);
+                ctx.stroke();
+                continue;
+            }
             if (e.state !== 1) continue;
             const cx = e.x + e.size / 2, cy = e.y + e.size / 2;
             const p = Math.max(0, Math.min(1, 1 - e.stateTimer / (e.stateDur || 1)));
@@ -9495,6 +9714,24 @@ class Enemy {
                 ctx.lineWidth = 1.5;
                 ctx.strokeRect(0, -w / 2, len, w);
                 ctx.restore();
+            } else if (e.type === 'healer') {
+                // 治疗范围:绿色圈由内向外充满,打断它就不会回血
+                const r = e.healRadius || 140;
+                ctx.fillStyle = 'rgba(0,230,118,0.07)';
+                ctx.beginPath();
+                ctx.arc(cx, cy, r, 0, Math.PI * 2);
+                ctx.fill();
+                ctx.fillStyle = 'rgba(105,240,174,0.18)';
+                ctx.beginPath();
+                ctx.arc(cx, cy, r * p, 0, Math.PI * 2);
+                ctx.fill();
+                ctx.strokeStyle = `rgba(105,240,174,${0.35 + 0.5 * p})`;
+                ctx.lineWidth = 1.5;
+                ctx.setLineDash([6, 6]);
+                ctx.beginPath();
+                ctx.arc(cx, cy, r, 0, Math.PI * 2);
+                ctx.stroke();
+                ctx.setLineDash([]);
             } else if (e.type === 'bomber') {
                 const r = e.blastRadius;
                 ctx.fillStyle = 'rgba(255,64,129,0.12)';
@@ -9645,10 +9882,10 @@ class Enemy {
                 g.stroke();
                 return;
             }
-            const glowColors = { chaser: '#ff1744', patroller: '#2979ff', giant: '#d500f9', dasher: '#ffd600', bomber: '#ff4081', treasure: '#ffd740' };
-            const lightColors = { chaser: '#ff6b6b', patroller: '#64b5f6', giant: '#e040fb', dasher: '#fff59d', bomber: '#ff80ab', treasure: '#fffde7' };
-            const darkColors = { chaser: '#b71c1c', patroller: '#0d47a1', giant: '#6a0080', dasher: '#f57f17', bomber: '#880e4f', treasure: '#c79100' };
-            const labels = { chaser: '追', patroller: '巡', giant: '巨', dasher: '冲', bomber: '爆', treasure: '宝' };
+            const glowColors = { chaser: '#ff1744', patroller: '#2979ff', giant: '#d500f9', dasher: '#ffd600', bomber: '#ff4081', treasure: '#ffd740', healer: '#00e676' };
+            const lightColors = { chaser: '#ff6b6b', patroller: '#64b5f6', giant: '#e040fb', dasher: '#fff59d', bomber: '#ff80ab', treasure: '#fffde7', healer: '#b9f6ca' };
+            const darkColors = { chaser: '#b71c1c', patroller: '#0d47a1', giant: '#6a0080', dasher: '#f57f17', bomber: '#880e4f', treasure: '#c79100', healer: '#00695c' };
+            const labels = { chaser: '追', patroller: '巡', giant: '巨', dasher: '冲', bomber: '爆', treasure: '宝', healer: '医' };
             const glow = glowColors[type] || '#ff1744';
             const r = type === 'giant' ? 10 : 6;
 
