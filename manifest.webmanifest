@@ -1,0 +1,10 @@
+{
+  "name": "方块快跑",
+  "short_name": "方块快跑",
+  "start_url": "./index.html",
+  "scope": "./",
+  "display": "fullscreen",
+  "orientation": "landscape",
+  "background_color": "#050a10",
+  "theme_color": "#050a10"
+}

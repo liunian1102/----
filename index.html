@@ -2,7 +2,14 @@
 <html lang="zh-CN">
 <head>
     <meta charset="UTF-8">
-    <meta name="viewport" content="width=device-width, initial-scale=1.0, user-scalable=no">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0, user-scalable=no, viewport-fit=cover">
+    <meta name="theme-color" content="#050a10">
+    <!-- 「添加到主屏幕」后全屏横屏打开(iPhone 不支持网页内全屏,靠这个获得沉浸体验) -->
+    <meta name="mobile-web-app-capable" content="yes">
+    <meta name="apple-mobile-web-app-capable" content="yes">
+    <meta name="apple-mobile-web-app-status-bar-style" content="black-translucent">
+    <meta name="apple-mobile-web-app-title" content="方块快跑">
+    <link rel="manifest" href="manifest.webmanifest">
     <title>方块快跑</title>
     <link rel="stylesheet" href="style.css">
 </head>
@@ -26,6 +33,7 @@
                     <button id="openProgress" class="mp-btn mp-btn-ghost">成就与外观</button>
                 </div>
                 <button id="openControl" class="mp-btn mp-btn-ghost mp-control-btn">操控方式:<span id="controlLabel">摇杆</span></button>
+                <button id="immersiveToggle" class="mp-btn mp-btn-ghost mp-control-btn" style="display:none">横屏全屏:<span id="immersiveLabel">开</span></button>
             </div>
             <div id="mpStatus" class="mp-status"></div>
             <div id="mpLobby" class="mp-lobby" style="display:none">
@@ -35,6 +43,15 @@
                 <div id="mpWaitMsg" class="mp-wait-msg" style="display:none">等待房主开始游戏...</div>
             </div>
         </div>
+    </div>
+
+    <!-- 沉浸模式下局中竖屏时的提示(游戏已自动暂停) -->
+    <div id="rotateHint" class="rotate-hint" style="display:none">
+        <div class="rotate-phone">📱</div>
+        <div class="rotate-title">请将手机横过来</div>
+        <div class="rotate-sub">横屏全屏视野更大,游戏已暂停</div>
+        <button id="rotateFullscreen" class="mp-btn mp-btn-primary">进入横屏全屏</button>
+        <div class="rotate-note">如果没有反应,请关闭手机的竖屏锁定后旋转手机;大厅「横屏全屏」可关闭此模式</div>
     </div>
 
     <!-- 首次游玩提示(只自动弹出一次,大厅「玩法说明」可再次打开) -->

@@ -19,6 +19,7 @@ html, body {
     left: 0;
     width: 100vw;
     height: 100vh;
+    height: 100dvh; /* 手机浏览器地址栏收起/展开时按实际可见高度铺满 */
     display: block;
     background: #050a10;
     touch-action: none;
@@ -971,3 +972,32 @@ kbd {
     .dmg-break .db-list { grid-template-columns: repeat(3, minmax(0, 1fr)); }
     .game-over-btns { margin-top: 8px; }
 }
+
+/* ── 沉浸式横屏:竖屏提示 ── */
+.rotate-hint {
+    position: fixed;
+    inset: 0;
+    z-index: 50;
+    display: flex;
+    flex-direction: column;
+    align-items: center;
+    justify-content: center;
+    gap: 14px;
+    padding: 24px;
+    text-align: center;
+    background: rgba(5, 10, 16, 0.94);
+    color: #c8e8ff;
+}
+.rotate-phone {
+    font-size: 64px;
+    animation: rotate-phone 1.8s ease-in-out infinite;
+}
+@keyframes rotate-phone {
+    0%, 20% { transform: rotate(0deg); }
+    50%, 80% { transform: rotate(-90deg); }
+    100% { transform: rotate(0deg); }
+}
+.rotate-title { font-size: 1.3em; font-weight: bold; color: #4dd0e1; }
+.rotate-sub { font-size: 0.9em; opacity: 0.8; }
+.rotate-hint .mp-btn { width: auto; padding: 12px 28px; }
+.rotate-note { font-size: 0.75em; opacity: 0.55; max-width: 280px; line-height: 1.5; }
