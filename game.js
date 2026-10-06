@@ -164,7 +164,8 @@ const SpriteCache = {
 const DIFF_MODES = {
     easy:   { name: '轻松', color: '#69f0ae', start: 1,   ramp: 140, cap: 3, score: 0.6, desc: '敌人成长更慢、上限更低,分数 ×0.6' },
     normal: { name: '普通', color: '#4fc3f7', start: 1,   ramp: 90,  cap: 4, score: 1,   desc: '标准体验' },
-    hard:   { name: '噩梦', color: '#ff5252', start: 1.5, ramp: 60,  cap: 4, score: 1.5, desc: '开局更强、更快到顶,分数 ×1.5' }
+    hard:   { name: '噩梦', color: '#ff5252', start: 1.5, ramp: 60,  cap: 4, score: 1.5, desc: '开局更强、更快到顶,分数 ×1.5' },
+    abyss:  { name: '无尽深渊', color: '#ba68c8', start: 1.2, ramp: 50,  cap: 8, score: 2.2, desc: '阶梯式爬塔试炼,层层高压怪潮,守门魔王与深渊传送门' }
 };
 const DIFF_KEYS = Object.keys(DIFF_MODES);
 const diffDef = k => DIFF_MODES[k] || DIFF_MODES.normal;
@@ -2106,6 +2107,8 @@ class Game {
             mt: this.meteors.map(m => [m.id, q1(m.x), q1(m.y), q1(m.r), q2(m.t), m.dur]),
             tp: (this.tacticalPings || []).map(t => [t.id, q1(t.x), q1(t.y), t.type, q1(t.timer)]),
             hz: (this.hazards || []).map(h => [h.id, q1(h.x), q1(h.y), h.type, h.hp, q1(h.timer || 0)]),
+            af: this.abyssFloor || 1,
+            ap: this.abyssPortal ? [q1(this.abyssPortal.x), q1(this.abyssPortal.y), this.abyssPortal.radius] : null,
             tk: this.treasureKills, ek: this.eliteKills, dm: this.diffMode,
             ef: this._mpTakeNewEffects(),
             fx: this._mpFx.splice(0),
@@ -2478,6 +2481,14 @@ class Game {
                     hitFlash: 0
                 };
             });
+        }
+
+        // 同步无尽深渊模式状态 (层数与传送门)
+        if (snapshot.af !== undefined) this.abyssFloor = snapshot.af;
+        if (snapshot.ap) {
+            this.abyssPortal = { x: snapshot.ap[0], y: snapshot.ap[1], radius: snapshot.ap[2] || 45 };
+        } else {
+            this.abyssPortal = null;
         }
     }
 
@@ -3165,6 +3176,59 @@ class Game {
         ctx.restore();
     }
 
+    // 🌀 渲染无尽深渊折跃传送门 (暗紫色旋转黑洞结界 + 传送符文与浮动光标)
+    _renderAbyssPortal(ctx) {
+        if (!this.abyssPortal) return;
+        const p = this.abyssPortal;
+        const t = this.bgTime;
+        const pulse = 0.5 + 0.5 * Math.sin(t * 5);
+        ctx.save();
+        ctx.translate(p.x, p.y);
+
+        // 外层深渊暗紫引力光晕
+        ctx.shadowBlur = 24 + 10 * pulse;
+        ctx.shadowColor = '#ba68c8';
+        ctx.fillStyle = 'rgba(74, 20, 140, 0.25)';
+        ctx.beginPath();
+        ctx.arc(0, 0, p.radius * (1.2 + 0.1 * pulse), 0, Math.PI * 2);
+        ctx.fill();
+
+        // 旋转传送门光圈
+        ctx.strokeStyle = `rgba(225, 190, 231, ${0.7 + 0.3 * pulse})`;
+        ctx.lineWidth = 3;
+        ctx.setLineDash([10, 8]);
+        ctx.lineDashOffset = -t * 30;
+        ctx.beginPath();
+        ctx.arc(0, 0, p.radius, 0, Math.PI * 2);
+        ctx.stroke();
+        ctx.setLineDash([]);
+
+        // 核心旋转黑洞
+        ctx.fillStyle = '#120024';
+        ctx.beginPath();
+        ctx.arc(0, 0, p.radius * 0.7, 0, Math.PI * 2);
+        ctx.fill();
+
+        ctx.strokeStyle = '#e040fb';
+        ctx.lineWidth = 2;
+        ctx.beginPath();
+        ctx.arc(0, 0, p.radius * 0.7, t * 4, t * 4 + Math.PI * 2);
+        ctx.stroke();
+
+        // 浮动传送图标与文字
+        ctx.font = '24px Arial';
+        ctx.textAlign = 'center';
+        ctx.textBaseline = 'middle';
+        ctx.fillText('🌀', 0, Math.sin(t * 3) * 4);
+
+        ctx.font = 'bold 12px Arial';
+        ctx.fillStyle = '#f3e5f5';
+        ctx.shadowBlur = 6;
+        ctx.shadowColor = '#000000';
+        ctx.fillText(`踏入进入第 ${this.abyssFloor + 1} 层`, 0, p.radius + 18);
+        ctx.restore();
+    }
+
     // 职业状态光环:觉醒玩家身边转动的职业色虚线环;弓手站定专注时脚下一圈瞄准刻度
     _renderClassAura(p, cls, awakened, still) {
         if (!cls) return;
@@ -3732,6 +3796,7 @@ class Game {
             this._updateEvents();
             this._updateTacticalPings();
             this._updateHazards();
+            this._updateAbyssMode();
             this._tickPendingActions();
             this.checkCollisions();
             this._checkLocalDeath(); // 兜底:任何来源把血量打到 0 都能结算复活/扣命
@@ -5700,6 +5765,10 @@ class Game {
         this.tacticalPings = [];      // 联机快捷战术标记列表
         this.hazards = [];            // 战场动态环境交互物体 (易燃桶/电浆水晶/冰泉)
         this.hazardSpawnTimer = 6;
+        // 🌀 无尽深渊模式层数与传送门
+        this.abyssFloor = 1;
+        this.abyssKillsThisFloor = 0;
+        this.abyssPortal = null;
         this.treasureKills = 0;
         this.eliteKills = 0;
         this.affixEliteKills = 0;
@@ -5752,6 +5821,69 @@ class Game {
         const type = pool[Math.floor(Math.random() * pool.length)];
         if (this.bossTimer < GAME_EVENTS[type].dur + 4) { this.eventTimer = 2; return; }
         this._startEvent(type);
+    }
+
+    // ── 🌀 终极无尽深渊试炼模式驱动 ──
+    _updateAbyssMode() {
+        if (this.diffMode !== 'abyss') return;
+        const targetKills = 12 + this.abyssFloor * 4;
+
+        // 当前层目标达成且尚无传送门:召唤深渊折跃传送门
+        if (this.abyssKillsThisFloor >= targetKills && !this.abyssPortal && (!this.boss || this.bossState !== 'active')) {
+            const cx = this.width / 2, cy = this.height / 2;
+            this.abyssPortal = { x: cx, y: cy, radius: 45, spawnTimer: 0.6 };
+            this.effects.push({ type: 'shockwave', x: cx, y: cy, radius: 10, maxRadius: 180, color: '#ba68c8', ttl: 0.6, maxTtl: 0.6 });
+            this.spawnBurstRing(cx, cy, 80, '#e1bee7', 25);
+            Sound.play('bossSpawn');
+            this._showFloatingText(`🌀 深渊第 ${this.abyssFloor} 层突破! 传送门开启!`, this.width / 2, this.height * 0.28, '#e1bee7');
+        }
+
+        // 玩家靠近传送门:生成稳定后踏入进入下一层
+        if (this.abyssPortal) {
+            if (this.abyssPortal.spawnTimer > 0) {
+                this.abyssPortal.spawnTimer -= DT;
+            } else {
+                const p = this.player;
+                const dist = Math.hypot(p.x + p.size / 2 - this.abyssPortal.x, p.y + p.size / 2 - this.abyssPortal.y);
+                if (dist <= this.abyssPortal.radius + p.size / 2) {
+                    this._enterNextAbyssFloor();
+                }
+            }
+        }
+    }
+
+    _enterNextAbyssFloor() {
+        this.abyssPortal = null;
+        this.abyssFloor++;
+        this.abyssKillsThisFloor = 0;
+        // 阶梯式提升深渊难度
+        this.difficulty = 1.2 + (this.abyssFloor - 1) * 0.45;
+        this.screenShake = Math.max(this.screenShake, 0.45);
+        Sound.play('riftWin');
+
+        const cx = this.width / 2, cy = this.height / 2;
+        this.effects.push({ type: 'shockwave', x: cx, y: cy, radius: 15, maxRadius: this.width * 0.9, color: '#ba68c8', ttl: 0.7, maxTtl: 0.7 });
+        this.spawnParticles(cx, cy, '#ba68c8', 45, 2.5, 8, 2, 6, 0.04);
+
+        // 每层突破奖励丰厚经验与分数
+        this.exp += 30 + this.abyssFloor * 10;
+        this.score += 500 * this.abyssFloor * (this.scoreMult || 1);
+        this.checkLevelUp();
+
+        // 每 3 层必定直接降临强化的深渊守门魔王!
+        if (this.abyssFloor % 3 === 0) {
+            this._showFloatingText(`💀 守门魔王降临 (第 ${this.abyssFloor} 层)!`, this.width / 2, this.height * 0.35, '#ff1744');
+            this._spawnBoss();
+            if (this.boss) {
+                this.boss.speed *= 1.2;
+                this.boss.attack *= 1.25;
+            }
+        } else {
+            this._showFloatingText(`🌀 进入深渊 第 ${this.abyssFloor} 层!`, this.width / 2, this.height * 0.35, '#e1bee7');
+            // 掉落补给与概率掉落暗金遗物
+            this._dropGear(cx - 30, cy);
+            if (Math.random() < 0.4) this._dropRelic(cx + 30, cy);
+        }
     }
 
     // 更新剧毒精英死后留下的腐蚀洼地
@@ -8365,6 +8497,10 @@ class Game {
         const dist = Math.sqrt(dx * dx + dy * dy);
         if (dist <= 0) return;
 
+        // 远程武器动态后坐力微反冲 (Recoil Impulse)
+        this.player.vx -= (dx / dist) * 1.5;
+        this.player.vy -= (dy / dist) * 1.5;
+
         // 弓手:疾矢(投射物速度倍率),多重射击(扇形多发),箭无虚发(穿透)
         const baseSpeed = 7;
         const speed = baseSpeed * (cls === 'archer' ? (this.player.archerProjSpeedMult || 1) : 1);
@@ -8455,6 +8591,10 @@ class Game {
     }
 
     _warriorMeleeAttack() {
+        // 近战出刀物理向前踏步冲量 (Forward Pushback)
+        this.player.vx += (this.player.faceX || 1) * 2.2;
+        this.player.vy += (this.player.faceY || 0) * 2.2;
+
         const pcx = this.player.x + this.player.size / 2;
         const pcy = this.player.y + this.player.size / 2;
         const range = this._aoe(80);
@@ -8543,6 +8683,8 @@ class Game {
         Sound.play('kill');
         // 击杀计数随玩家快照下发,本机据此触发击杀顿帧/震动(guest 也能拿到自己的击杀反馈)
         this.player.killCount = (this.player.killCount || 0) + 1;
+        // 🌀 无尽深渊模式:当前层击杀数累加
+        if (this.diffMode === 'abyss') this.abyssKillsThisFloor = (this.abyssKillsThisFloor || 0) + 1;
         const horde = this.event && this.event.type === 'horde' ? 2 : 1;
         const greedBlood = (this.player.greedContract === 'blood') ? 2 : 1;
         const comboMult = this._registerCombo(e);
@@ -9868,6 +10010,7 @@ class Game {
         this._renderSoulBeacons(ctx);
         this._renderTacticalPings(ctx);
         this._renderHazards(ctx);
+        this._renderAbyssPortal(ctx);
 
         this.player.render(this.ctx);
         this._renderBlessAura(this.player);
@@ -10179,8 +10322,8 @@ class Game {
         ctx.globalAlpha = 1;
 
         ctx.textAlign = 'right';
-        ctx.fillStyle = '#00e5ff';
-        ctx.fillText(`Lv${this.level}`, x + w - 8, y + 14);
+        ctx.fillStyle = this.diffMode === 'abyss' ? '#e040fb' : '#00e5ff';
+        ctx.fillText(this.diffMode === 'abyss' ? `🌀${this.abyssFloor}层` : `Lv${this.level}`, x + w - 8, y + 14);
 
         // 经验条
         const ex = x + 8, ey = y + 25, ew = w - 16, eh = 5;
