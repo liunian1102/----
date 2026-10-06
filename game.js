@@ -1942,6 +1942,7 @@ class Game {
             bt: this.bossState === 'idle' ? q1(this.bossTimer) : 0,
             mt: this.meteors.map(m => [m.id, q1(m.x), q1(m.y), q1(m.r), q2(m.t), m.dur]),
             tp: (this.tacticalPings || []).map(t => [t.id, q1(t.x), q1(t.y), t.type, q1(t.timer)]),
+            hz: (this.hazards || []).map(h => [h.id, q1(h.x), q1(h.y), h.type, h.hp, q1(h.timer || 0)]),
             tk: this.treasureKills, ek: this.eliteKills, dm: this.diffMode,
             ef: this._mpTakeNewEffects(),
             fx: this._mpFx.splice(0),
@@ -2292,6 +2293,26 @@ class Game {
                 return {
                     id: row[0], x: row[1], y: row[2], type: row[3], timer: row[4], maxTimer: 6.0,
                     icon: info.icon, color: info.color, text: info.text
+                };
+            });
+        }
+
+        // 同步战场动态环境交互物体 (易燃桶/电浆水晶/冰泉)
+        if (snapshot.hz) {
+            const byId = new Map((this.hazards || []).map(h => [h.id, h]));
+            this.hazards = snapshot.hz.map(row => {
+                const existing = byId.get(row[0]);
+                if (existing) {
+                    existing.hp = row[4];
+                    existing.timer = row[5];
+                    return existing;
+                }
+                return {
+                    id: row[0], x: row[1], y: row[2], type: row[3], hp: row[4],
+                    maxHp: row[3] === 'barrel' ? 3 : 1,
+                    size: row[3] === 'spring' ? 50 : 32,
+                    timer: row[5] || Infinity,
+                    hitFlash: 0
                 };
             });
         }
@@ -2893,6 +2914,94 @@ class Game {
         ctx.restore();
     }
 
+    // 渲染战场动态环境交互物体 (易燃桶/电浆水晶/冰泉)
+    _renderHazards(ctx) {
+        if (!this.hazards || !this.hazards.length) return;
+        const t = this.bgTime;
+        ctx.save();
+        for (const h of this.hazards) {
+            ctx.save();
+            ctx.translate(h.x, h.y);
+            if (h.type === 'barrel') {
+                // 高爆易燃桶:暗红金属圆柱 + 铁箍 + 火焰标记 + 耐久红条
+                const flash = h.hitFlash > 0 ? 0.7 : 0;
+                ctx.fillStyle = flash > 0 ? '#ffffff' : '#d84315';
+                ctx.strokeStyle = '#3e2723';
+                ctx.lineWidth = 2;
+                roundRect(ctx, -14, -18, 28, 36, 5);
+                ctx.fill();
+                ctx.stroke();
+
+                // 黑色金属铁箍
+                ctx.fillStyle = '#212121';
+                ctx.fillRect(-14, -8, 28, 4);
+                ctx.fillRect(-14, 4, 28, 4);
+
+                // 中央火焰警示
+                ctx.font = '14px Arial';
+                ctx.textAlign = 'center';
+                ctx.textBaseline = 'middle';
+                ctx.fillText('🔥', 0, 0);
+
+                // 耐久小槽
+                if (h.hp < h.maxHp) {
+                    ctx.fillStyle = 'rgba(0,0,0,0.6)';
+                    ctx.fillRect(-14, -25, 28, 3);
+                    ctx.fillStyle = '#ff1744';
+                    ctx.fillRect(-14, -25, 28 * (h.hp / h.maxHp), 3);
+                }
+            } else if (h.type === 'crystal') {
+                // 电浆充能水晶:悬浮菱形晶柱 + 旋转电弧
+                const bob = Math.sin(t * 4 + h.id) * 4;
+                ctx.translate(0, bob);
+                ctx.shadowBlur = 12;
+                ctx.shadowColor = '#00e5ff';
+                ctx.fillStyle = '#00e5ff';
+                ctx.beginPath();
+                ctx.moveTo(0, -18);
+                ctx.lineTo(12, 0);
+                ctx.lineTo(0, 18);
+                ctx.lineTo(-12, 0);
+                ctx.closePath();
+                ctx.fill();
+                ctx.strokeStyle = '#ffffff';
+                ctx.lineWidth = 1.5;
+                ctx.stroke();
+                // 环绕电浆环
+                ctx.strokeStyle = 'rgba(0, 229, 255, 0.6)';
+                ctx.lineWidth = 2;
+                ctx.setLineDash([4, 4]);
+                ctx.beginPath();
+                ctx.arc(0, 0, 20, t * 5, t * 5 + Math.PI * 2);
+                ctx.stroke();
+            } else if (h.type === 'spring') {
+                // 极寒护盾冰泉:地面旋转冰霜水雾漩涡
+                const r = h.size / 2;
+                const alpha = Math.min(1, h.timer / 2) * 0.45;
+                const grad = ctx.createRadialGradient(0, 0, 4, 0, 0, r);
+                grad.addColorStop(0, `rgba(128, 216, 255, ${alpha * 0.9})`);
+                grad.addColorStop(0.7, `rgba(64, 196, 255, ${alpha * 0.4})`);
+                grad.addColorStop(1, 'rgba(0, 176, 255, 0)');
+                ctx.fillStyle = grad;
+                ctx.beginPath();
+                ctx.arc(0, 0, r, 0, Math.PI * 2);
+                ctx.fill();
+                ctx.strokeStyle = `rgba(178, 235, 242, ${alpha * 0.8})`;
+                ctx.lineWidth = 1.5;
+                ctx.setLineDash([6, 6]);
+                ctx.beginPath();
+                ctx.arc(0, 0, r - 3, -t * 3, -t * 3 + Math.PI * 2);
+                ctx.stroke();
+                ctx.font = '16px Arial';
+                ctx.textAlign = 'center';
+                ctx.textBaseline = 'middle';
+                ctx.fillText('⛲', 0, 0);
+            }
+            ctx.restore();
+        }
+        ctx.restore();
+    }
+
     // 职业状态光环:觉醒玩家身边转动的职业色虚线环;弓手站定专注时脚下一圈瞄准刻度
     _renderClassAura(p, cls, awakened, still) {
         if (!cls) return;
@@ -3435,6 +3544,7 @@ class Game {
             this._updateBoss();
             this._updateEvents();
             this._updateTacticalPings();
+            this._updateHazards();
             this._tickPendingActions();
             this.checkCollisions();
             this._checkLocalDeath(); // 兜底:任何来源把血量打到 0 都能结算复活/扣命
@@ -5348,6 +5458,8 @@ class Game {
         this.meteors = [];            // { id, x, y, r, t, dur }:t 为落地倒计时
         this.toxicPuddles = [];       // 剧毒精英死亡留下的腐蚀毒雾洼地
         this.tacticalPings = [];      // 联机快捷战术标记列表
+        this.hazards = [];            // 战场动态环境交互物体 (易燃桶/电浆水晶/冰泉)
+        this.hazardSpawnTimer = 6;
         this.treasureKills = 0;
         this.eliteKills = 0;
         this.affixEliteKills = 0;
@@ -5422,6 +5534,108 @@ class Game {
                         pl.takeDamage(pl.maxHealth * 0.04, '剧毒沼泽', 0.03);
                         this.spawnParticles(pcx, pcy, '#69f0ae', 3, 1, 2, 1, 2.5, 0.03);
                     }
+                }
+            }
+        }
+    }
+
+    // ── 战场动态环境交互体系 (易燃桶/电浆水晶/冰泉) ──
+    _spawnHazard() {
+        if (!this.hazards) this.hazards = [];
+        if (this.hazards.length >= 4) return;
+        const types = ['barrel', 'crystal', 'spring'];
+        const type = types[Math.floor(Math.random() * types.length)];
+        const m = 100;
+        let x = m + Math.random() * (this.width - m * 2);
+        let y = m + Math.random() * (this.height - m * 2);
+        const id = nextEntityId();
+
+        const h = {
+            id, type, x, y,
+            size: type === 'spring' ? 50 : 32,
+            hp: type === 'barrel' ? 3 : type === 'crystal' ? 1 : Infinity,
+            maxHp: type === 'barrel' ? 3 : 1,
+            timer: type === 'spring' ? 22 : Infinity,
+            hitFlash: 0
+        };
+        this.hazards.push(h);
+        this.spawnBurstRing(x, y, 30, type === 'barrel' ? '#ff5722' : type === 'crystal' ? '#00e5ff' : '#80d8ff', 12);
+    }
+
+    _updateHazards() {
+        if (!this.hazards) this.hazards = [];
+        this.hazardSpawnTimer = (this.hazardSpawnTimer || 6) - DT;
+        if (this.hazardSpawnTimer <= 0) {
+            this.hazardSpawnTimer = 8 + Math.random() * 5;
+            this._spawnHazard();
+        }
+
+        for (let i = this.hazards.length - 1; i >= 0; i--) {
+            const h = this.hazards[i];
+            if (h.hitFlash > 0) h.hitFlash = Math.max(0, h.hitFlash - DT * 4);
+            if (h.type === 'spring') {
+                h.timer -= DT;
+                if (h.timer <= 0) {
+                    this.hazards.splice(i, 1);
+                    continue;
+                }
+                const hcx = h.x, hcy = h.y, r = h.size / 2;
+                // 玩家踩入冰泉:获得每秒 5% 护盾充能
+                for (const pl of this._livingPlayers()) {
+                    const pcx = pl.x + pl.size / 2, pcy = pl.y + pl.size / 2;
+                    if (Math.hypot(pcx - hcx, pcy - hcy) <= r + pl.size / 2) {
+                        pl.shield = Math.min(pl.maxHealth * 0.4, (pl.shield || 0) + pl.maxHealth * 0.05 * DT);
+                        pl._frostSlowTimer = 0; // 清除减速
+                    }
+                }
+                // 敌人踩入冰泉:降低 40% 移动速度
+                for (const e of this.enemies) {
+                    const ecx = e.x + e.size / 2, ecy = e.y + e.size / 2;
+                    if (Math.hypot(ecx - hcx, ecy - hcy) <= r + e.size / 2) {
+                        e.speed = Math.max(0.8, e.speed * 0.6);
+                    }
+                }
+            }
+        }
+    }
+
+    // 弹体/技能命中环境物体
+    _damageHazard(h, dmg = 1) {
+        if (h.hp === Infinity) return;
+        h.hp -= 1;
+        h.hitFlash = 0.15;
+        if (h.hp <= 0) {
+            const idx = this.hazards.indexOf(h);
+            if (idx >= 0) this.hazards.splice(idx, 1);
+
+            const hcx = h.x, hcy = h.y;
+            if (h.type === 'barrel') {
+                // 易燃桶引爆:140px 范围烈焰冲击波,重创并眩晕周围敌人
+                Sound.play('bomb');
+                this.screenShake = Math.max(this.screenShake, 0.4);
+                this.effects.push({ type: 'shockwave', x: hcx, y: hcy, radius: 10, maxRadius: 140, color: '#ff3d00', ttl: 0.5, maxTtl: 0.5 });
+                this.spawnBurstRing(hcx, hcy, 100, '#ff9100', 25);
+                this.spawnParticles(hcx, hcy, '#ff3d00', 35, 2, 7, 2, 5, 0.04);
+                const explDmg = this._computeAttackDamage(this.player.attack) * 3.5;
+                this._hitAround(hcx, hcy, 140, explDmg);
+                for (const e of this.enemies) {
+                    if (Math.hypot(e.x + e.size / 2 - hcx, e.y + e.size / 2 - hcy) <= 140) {
+                        e.stunTimer = Math.max(e.stunTimer || 0, 0.8);
+                        this._knockbackFrom(e, hcx, hcy, 8);
+                    }
+                }
+            } else if (h.type === 'crystal') {
+                // 电浆水晶过载:向周围 5 个敌人发射高压连锁电弧并定身 1.5s
+                Sound.play('cdReady');
+                this.effects.push({ type: 'shockwave', x: hcx, y: hcy, radius: 8, maxRadius: 180, color: '#00e5ff', ttl: 0.4, maxTtl: 0.4 });
+                const targets = this._findClosestEnemies(5);
+                const zapDmg = this._computeAttackDamage(this.player.attack) * 2.2;
+                for (const t of targets) {
+                    const tx = t.x + t.size / 2, ty = t.y + t.size / 2;
+                    this.effects.push({ type: 'lightning', pts: [[hcx, hcy], [tx, ty]], color: '#00e5ff', ttl: 0.22, maxTtl: 0.22 });
+                    this._dealDamage(t, zapDmg);
+                    t.stunTimer = Math.max(t.stunTimer || 0, 1.5);
+                    this.spawnParticles(tx, ty, '#80d8ff', 8, 1, 3, 1, 3, 0.04);
                 }
             }
         }
@@ -6273,6 +6487,21 @@ class Game {
                     }
                 }
             }
+
+            // 投射物 vs 战场环境交互物体 (易燃桶/电浆水晶)
+            if (!hit && this.hazards && this.hazards.length) {
+                const pSize = proj.size || 8;
+                for (const h of this.hazards) {
+                    if (h.hp === Infinity) continue;
+                    const hSize = h.size || 32;
+                    if (Math.hypot(proj.x + pSize / 2 - h.x, proj.y + pSize / 2 - h.y) <= (pSize + hSize) * 0.5) {
+                        this._damageHazard(h, proj.damage || 1);
+                        hit = true;
+                        break;
+                    }
+                }
+            }
+
             if (hit) this.projectiles.splice(i, 1);
             if (splashAt) this._projSplash(proj, splashAt);
             this._ctx = prevCtx;
@@ -7096,7 +7325,9 @@ class Game {
     _addDmgNum(id, x, y, v, k) {
         if (this.dmgNums.length >= Game.DN_MAX) this.dmgNums.shift().dead = true;
         if (id == null) id = this._dnSeq = ((this._dnSeq || 0) + 1) % 1e6;
-        const n = { id, x, y, v, k, t: 0, pop: 1, _dirty: true };
+        // 暴击伤害 (k === 1): 赋予向左或向右随机斜向抛出速度
+        const vx = k === 1 ? (Math.random() - 0.5) * 55 : 0;
+        const n = { id, x, y, v, k, t: 0, pop: 1, vx, _dirty: true };
         this.dmgNums.push(n);
         return n;
     }
@@ -7108,7 +7339,7 @@ class Game {
             const n = a[i];
             n.t += DT;
             if (n.pop > 0) n.pop = Math.max(0, n.pop - DT * 6);
-            if (n.t < (n.k === 1 ? 0.9 : 0.7)) a[j++] = n;
+            if (n.t < (n.k === 1 ? 0.95 : 0.7)) a[j++] = n;
             else n.dead = true;
         }
         a.length = j;
@@ -7142,18 +7373,43 @@ class Game {
         ctx.textAlign = 'center';
         ctx.textBaseline = 'middle';
         ctx.lineJoin = 'round';
-        ctx.lineWidth = 3;
-        ctx.strokeStyle = 'rgba(0, 0, 0, 0.8)';
         for (const n of this.dmgNums) {
-            const life = n.k === 1 ? 0.9 : 0.7, u = n.t / life;
-            ctx.globalAlpha = u < 0.6 ? 1 : Math.max(0, 1 - (u - 0.6) / 0.4);
-            const rise = (n.k === 2 ? 16 : 26) * (1 - (1 - u) * (1 - u));
-            const base = n.k === 2 ? 10 : Math.min(21, 11 + Math.log10(Math.max(1, n.v)) * 3) * (n.k === 1 ? 1.35 : 1);
-            ctx.font = `bold ${Math.round(base * (1 + 0.4 * n.pop))}px Arial`;
+            const life = n.k === 1 ? 0.95 : 0.7, u = n.t / life;
+            ctx.globalAlpha = u < 0.65 ? 1 : Math.max(0, 1 - (u - 0.65) / 0.35);
+
+            let drawX = n.x, drawY = n.y;
+            if (n.k === 1) {
+                // 暴击伤害:带有向斜上方的重力抛物线弹跳弧(Juicy Arc)
+                const arcY = -48 * (1 - Math.pow(1 - u, 1.8)) + (u * u * 16);
+                drawX += (n.vx || 0) * u;
+                drawY += arcY;
+            } else {
+                const rise = (n.k === 2 ? 16 : 26) * (1 - (1 - u) * (1 - u));
+                drawY -= rise;
+            }
+
+            const base = n.k === 2 ? 10 : Math.min(22, 11 + Math.log10(Math.max(1, n.v)) * 3) * (n.k === 1 ? 1.45 : 1);
+            const scale = 1 + 0.45 * n.pop;
+            ctx.font = `bold ${Math.round(base * scale)}px Arial`;
             const txt = Game.fmtDmg(n.v) + (n.k === 1 ? '!' : '');
-            ctx.strokeText(txt, n.x, n.y - rise);
-            ctx.fillStyle = n.k === 1 ? '#ffd740' : n.k === 2 ? '#c6ff00' : '#ffffff';
-            ctx.fillText(txt, n.x, n.y - rise);
+
+            // 暴击金红发光双层描边
+            if (n.k === 1) {
+                ctx.lineWidth = 4;
+                ctx.strokeStyle = 'rgba(183, 28, 28, 0.9)';
+                ctx.strokeText(txt, drawX, drawY);
+                ctx.fillStyle = '#ffeb3b';
+                ctx.shadowBlur = 10;
+                ctx.shadowColor = '#ffd700';
+                ctx.fillText(txt, drawX, drawY);
+                ctx.shadowBlur = 0;
+            } else {
+                ctx.lineWidth = 3;
+                ctx.strokeStyle = 'rgba(0, 0, 0, 0.8)';
+                ctx.strokeText(txt, drawX, drawY);
+                ctx.fillStyle = n.k === 2 ? '#c6ff00' : '#ffffff';
+                ctx.fillText(txt, drawX, drawY);
+            }
         }
         ctx.restore();
     }
@@ -9330,6 +9586,7 @@ class Game {
         this._renderGreedAltar(ctx);
         this._renderSoulBeacons(ctx);
         this._renderTacticalPings(ctx);
+        this._renderHazards(ctx);
 
         this.player.render(this.ctx);
         this._renderBlessAura(this.player);
