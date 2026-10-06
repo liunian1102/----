@@ -69,8 +69,8 @@ const CLASS_SPECS = {
           desc: '圣光打击变为审判之锤:晕眩目标周围所有敌人;圣锤普攻伤害 +50%',
           awaken: '每第 4 次圣锤召唤天降圣光柱(3 倍伤害)' },
         { id: 'protector', name: '守护者', icon: '✚', q: '圣', e: '护',
-          desc: '护盾上限翻倍;圣锤附加 5% 最大生命 + 50% 当前护盾伤害;神圣光环半径扩大、按最大生命灼烧并治疗队友',
-          awaken: '圣光反击:受到攻击时对周围敌人反弹 1.5 倍伤害;光环内玩家减伤 50%,光环持续 +3 秒' }
+          desc: '护盾上限翻倍;圣锤附加 3% 最大生命 + 30% 当前护盾伤害;神圣光环半径扩大、按最大生命灼烧并治疗队友',
+          awaken: '圣光反击:受到攻击时对周围敌人反弹 1.2 倍伤害;光环内玩家减伤 50%,光环持续 +3 秒' }
     ]
 };
 function specDef(p) {
@@ -171,6 +171,11 @@ const diffDef = k => DIFF_MODES[k] || DIFF_MODES.normal;
 
 const maxEnemiesFor = difficulty => Math.floor(40 + 10 * difficulty);
 
+// 后期狂化:难度封顶后,新刷出的敌人生命继续按时间成长(每 ramp×3 秒 +100%,最多 ×3;攻击按一半成长),
+// 避免成型后的构筑在后期无敌;速度不再加,保持可躲
+const DIFF_CAP_TIME = dm => (dm.cap - dm.start) * dm.ramp;
+const lateMultFor = (gameTime, dm) => Math.min(3, 1 + Math.max(0, gameTime - DIFF_CAP_TIME(dm)) / (dm.ramp * 3));
+
 // 大厅卡片上的最高纪录
 function updateBestScoreLabel() {
     const el = document.getElementById('bestScore');
@@ -257,8 +262,8 @@ const DMG_SRC_INFO = {
     body: { name: '碰撞', color: '#ef9a9a' }, other: { name: '其他', color: '#90a4ae' }
 };
 // 敌人中文名(死亡结算「致命一击」来源显示)
-const ENEMY_NAMES = { chaser: '追击者', patroller: '巡逻者', giant: '巨人', gunner: '炮手', dasher: '冲锋者', bomber: '自爆方块', treasure: '宝藏方块', healer: '医疗兵', splitter: '分裂者', shard: '碎片' };
-const MP_ENEMY_TYPES = ['chaser', 'patroller', 'giant', 'gunner', 'dasher', 'bomber', 'treasure', 'healer', 'splitter', 'shard'];
+const ENEMY_NAMES = { chaser: '追击者', patroller: '巡逻者', giant: '巨人', gunner: '炮手', dasher: '冲锋者', bomber: '自爆方块', treasure: '宝藏方块', healer: '医疗兵', splitter: '分裂者', shard: '碎片', reaper: '噬魂者' };
+const MP_ENEMY_TYPES = ['chaser', 'patroller', 'giant', 'gunner', 'dasher', 'bomber', 'treasure', 'healer', 'splitter', 'shard', 'reaper'];
 
 // 随机事件(两次魔王之间触发,由 host/单人调度,经快照 ev 下发给 guest)
 const GAME_EVENTS = {
@@ -1609,6 +1614,8 @@ class Game {
         this.score = 0;
         this.gameTime = 0;
         this.difficulty = 1;
+        this.lateMult = 1;
+        this._lateAnnounced = false;
         this.enemyFreezeTimer = 0;
         this.gearTimer = 20;
         this.gemTimer = 30;
@@ -2881,6 +2888,12 @@ class Game {
             // 难度更平缓且封顶，避免后期速度碾压必死
             const dm = diffDef(this.diffMode);
             this.difficulty = Math.min(dm.cap, dm.start + this.gameTime / dm.ramp);
+            this.lateMult = lateMultFor(this.gameTime, dm);
+            if (this.lateMult > 1 && !this._lateAnnounced) {
+                this._lateAnnounced = true;
+                this.effects.push({ type: 'floatText', text: '敌潮狂化:之后的敌人生命与攻击会持续成长', x: this.width / 2, y: this.height * 0.3,
+                    color: '#ff5252', ttl: 2.6, maxTtl: 2.6 });
+            }
 
             // 计时器随暂停一起停（按帧推进，不再用 setTimeout）
             if (this.enemyFreezeTimer > 0) this.enemyFreezeTimer -= DT;
@@ -3304,7 +3317,7 @@ class Game {
                 if (this.player.holyAuraTimer <= 0) {
                     this.player.holyAuraActive = false;
                 } else {
-                    this.player.heal(this.player.maxHealth * 0.1 * DT);
+                    this.player.heal(this.player.maxHealth * 0.07 * DT);
                     const pcx = this.player.x + this.player.size / 2;
                     const pcy = this.player.y + this.player.size / 2;
                     const auraR = this._auraRadius(this.player);
@@ -3316,9 +3329,9 @@ class Game {
                             if (this.player.awakened) ally.auraGuard = 0.1;
                         }
                     }
-                    // 守护者:光环额外按最大生命灼烧(每秒 12%)
+                    // 守护者:光环额外按最大生命灼烧(每秒 7%)
                     const auraDmgTick = (this._computeAttackDamage(this.player.attack) * 0.5 * (this.player.paladinSkillDmgMult || 1)
-                        + (this.player.spec === 'protector' ? this.player.maxHealth * 0.12 : 0)) * DT
+                        + (this.player.spec === 'protector' ? this.player.maxHealth * 0.07 : 0)) * DT
                         * this._buildDmgMult(this.player, 'e');
                     let auraHits = 0;
                     for (let i = this.enemies.length - 1; i >= 0; i--) {
@@ -3372,12 +3385,12 @@ class Game {
                 this._showFloatingText('圣盾爆发', pcx, p.y - 26, '#90caf9');
             }
         }
-        // 守护者觉醒「圣光反击」:把这一帧受到的攻击(护盾吸收的也算)以 1.5 倍反弹给周围敌人
+        // 守护者觉醒「圣光反击」:把这一帧受到的攻击(护盾吸收的也算)以 1.2 倍反弹给周围敌人
         if (p._reflect > 0) {
             const raw = p._reflect;
             p._reflect = 0;
             if (p.spec === 'protector' && p.awakened && p.currentHealth > 0) {
-                this._hitAround(pcx, pcy, 100, raw * 1.5 + p.maxHealth * 0.05);
+                this._hitAround(pcx, pcy, 100, raw * 1.2 + p.maxHealth * 0.03);
                 this.effects.push({ type: 'shockwave', x: pcx, y: pcy, radius: 8, maxRadius: 100, color: '#ffe082', ttl: 0.3, maxTtl: 0.3 });
                 this._showFloatingText('反击', pcx, p.y - 22, '#ffe082');
             }
@@ -3425,12 +3438,12 @@ class Game {
         g.cd = fired ? def.every : 0.1;
     }
 
-    // 荆棘之甲:受击后把这一帧受到的原始伤害 ×2(守护者再 ×1.5)+ 半个攻击力,炸向 110 范围内的敌人
+    // 荆棘之甲:受击后把这一帧受到的原始伤害 ×2(守护者再 ×1.25)+ 半个攻击力,炸向 110 范围内的敌人
     _gearThornsBurst(p, pcx, pcy) {
         const raw = p._thornsHit;
         p._thornsHit = 0;
         if (p.currentHealth <= 0) return;
-        const dmg = (raw * 2 + p.attack * 0.5) * (p.spec === 'protector' ? 1.5 : 1);
+        const dmg = (raw * 2 + p.attack * 0.5) * (p.spec === 'protector' ? 1.25 : 1);
         for (const t of this._gearTargets()) {
             const tx = t.x + t.size / 2, ty = t.y + t.size / 2;
             if (Math.hypot(tx - pcx, ty - pcy) <= 110 + t.size / 2) this._gearHit(t, dmg, '#c6ff00', pcx, pcy);
@@ -4097,7 +4110,7 @@ class Game {
             for (const enemy of this.enemies) {
                 if (enemy.contactDamage() > 0 && this.checkCollision(gp, enemy)) {
                     if (this._canHurt(gp)) {
-                        gp.takeDamage(enemy.contactDamage(), ENEMY_NAMES[enemy.type] || '敌人碰撞');
+                        gp.takeDamage(enemy.contactDamage(), ENEMY_NAMES[enemy.type] || '敌人碰撞', enemy.pctDamage());
                         gp.hurtCooldown = 0.6 + (gp.hurtCooldownBonus || 0);
                         gp.gainRage(15 + (gp.rageOnHurtBonus || 0));
                     }
@@ -4240,7 +4253,7 @@ class Game {
                 // 此处仅累计天赋触发的玩家命中伤害:_dealDamage 不进 boss,所以不重复
 
                 // 击退判定:HP 归零 或 累计伤害达标 或 时间到
-                const dmgGoal = this.bossDamageRequired * this.difficulty;
+                const dmgGoal = this._bossDmgGoal();
                 const repelled = this.boss.currentHealth <= 0
                     || this.bossDamageDealt >= dmgGoal
                     || this.bossActiveTimer >= this.bossDuration;
@@ -4283,7 +4296,7 @@ class Game {
         const b = this.boss;
         const bcx = b.x + b.size / 2, bcy = b.y + b.size / 2;
 
-        if (!b.enraged && (this.bossDamageDealt >= this.bossDamageRequired * this.difficulty * 0.5
+        if (!b.enraged && (this.bossDamageDealt >= this._bossDmgGoal() * 0.5
                 || this.bossActiveTimer >= this.bossDuration * 0.5)) {
             b.enraged = true;
             b.speed *= 1.25;
@@ -4396,7 +4409,7 @@ class Game {
             const pts = BlockBoss.summonPoints(b, this.width, this.height);
             pts.forEach(([x, y], k) => {
                 const type = b.enraged && k % 3 === 2 ? 'dasher' : 'chaser';
-                const e = new Enemy(x - 15, y - 15, type, this.difficulty);
+                const e = this._newEnemy(x - 15, y - 15, type);
                 this.enemies.push(e);
                 this.spawnBurstRing(x, y, 22, '#b388ff', 10);
             });
@@ -4470,6 +4483,9 @@ class Game {
         }
     }
 
+    static bossTierMult(tier) { return 1 + 0.3 * Math.max(0, (tier || 1) - 1); }
+    _bossDmgGoal() { return this.bossDamageRequired * this.difficulty * Game.bossTierMult(this.boss && this.boss.tier); }
+
     _spawnBoss() {
         // 在屏幕外随机一侧生成
         let x, y;
@@ -4483,6 +4499,9 @@ class Game {
         this.boss = new BlockBoss(x, y, this.difficulty, this.player.maxHealth);
         this.bossWave = (this.bossWave || 0) + 1;
         this.boss.tier = this.bossWave;
+        // 每多一只魔王,血量与击退所需伤害 +30%(后期魔王不再一碰就退)
+        this.boss.maxHealth *= Game.bossTierMult(this.boss.tier);
+        this.boss.currentHealth = this.boss.maxHealth;
         this.bossState = 'active';
         this.bossActiveTimer = 0;
         this.bossDamageDealt = 0;
@@ -4684,7 +4703,7 @@ class Game {
             y = 60 + Math.random() * (this.height - 150);
             if (players.every(p => Math.hypot(p.x - x, p.y - y) > 260)) break;
         }
-        const t = new Enemy(x, y, 'treasure', this.difficulty);
+        const t = this._newEnemy(x, y, 'treasure');
         this.enemies.push(t);
         this.spawnBurstRing(x + t.size / 2, y + t.size / 2, 30, '#ffd740', 16);
     }
@@ -4698,7 +4717,7 @@ class Game {
             for (const [t, w] of pool) { if ((roll -= w) < 0) { type = t; break; } }
             this._introduceEnemy(type);
             const { x, y } = this._edgeSpawnPos();
-            const e = new Enemy(x, y, type, this.difficulty);
+            const e = this._newEnemy(x, y, type);
             e.makeElite();
             this.enemies.push(e);
         }
@@ -4960,6 +4979,7 @@ class Game {
         for (let k = 0; k < 3; k++) {
             const a = a0 + k * Math.PI * 2 / 3;
             const s = new Enemy(cx - 8 + Math.cos(a) * 6, cy - 8 + Math.sin(a) * 6, 'shard', e.difficulty);
+            s.applyLate(e.late || 1);
             if (e.elite) { s.maxHealth *= 2; s.currentHealth = s.maxHealth; }
             s.kbX = Math.cos(a) * 7;
             s.kbY = Math.sin(a) * 7;
@@ -5064,7 +5084,7 @@ class Game {
                 if (this.player.dashTimer > 0) { if (!harmless) this._canHurt(this.player); continue; }
                 // 受击无敌帧：冷却期内不再结算玩家受伤，避免重叠时血量瞬间被掏空
                 if (this.player.hurtCooldown <= 0 && !harmless) {
-                    this.player.takeDamage(this.enemies[i].contactDamage(), ENEMY_NAMES[this.enemies[i].type] || '敌人碰撞');
+                    this.player.takeDamage(this.enemies[i].contactDamage(), ENEMY_NAMES[this.enemies[i].type] || '敌人碰撞', this.enemies[i].pctDamage());
                     this.player.hurtCooldown = 0.6 + (this.player.hurtCooldownBonus || 0);
                     this.player.gainRage(15 + (this.player.rageOnHurtBonus || 0));
                     this.spawnHitParticles(this.player.x + this.player.size / 2, this.player.y + this.player.size / 2, '#ff4444', 8);
@@ -5215,7 +5235,7 @@ class Game {
         const horde = this.event && this.event.type === 'horde';
         if (this.enemies.length >= maxEnemiesFor(this.difficulty) + (horde ? 25 : 0)) return;
         // 刷怪概率随难度上升但封顶,避免后期数量碾压
-        const spawnChance = Math.min(0.045, 0.018 + 0.008 * (this.difficulty - 1)) * (horde ? 3 : 1);
+        const spawnChance = Math.min(0.05, 0.018 + 0.008 * (this.difficulty - 1) + 0.004 * ((this.lateMult || 1) - 1)) * (horde ? 3 : 1);
         if (Math.random() < spawnChance) {
             // 加权随机;冲锋者 30 秒、自爆者 50 秒后才加入,开局保持简单
             const pool = [['chaser', 44], ['patroller', 24], ['gunner', 15], ['giant', 5]];
@@ -5225,6 +5245,8 @@ class Game {
             if (this.gameTime >= 70 && this.enemies.filter(e => e.type === 'healer').length < 3) pool.push(['healer', 6]);
             // 分裂者 90 秒后加入:死后裂成 3 块碎片
             if (this.gameTime >= 90) pool.push(['splitter', 7]);
+            // 噬魂者 120 秒后加入:按最大生命百分比造成真实伤害(无视防御、半穿护盾),专治堆血堆防;场上最多 4 个
+            if (this.gameTime >= 120 && this.enemies.filter(e => e.type === 'reaper').length < 4) pool.push(['reaper', 6]);
             let roll = Math.random() * pool.reduce((a, w) => a + w[1], 0);
             let type = pool[0][0];
             for (const [t, w] of pool) { if ((roll -= w) < 0) { type = t; break; } }
@@ -5254,8 +5276,15 @@ class Game {
                 y = Math.random() < 0.5 ? -50 : this.height + 50;
             }
 
-            this.enemies.push(new Enemy(x, y, type, this.difficulty));
+            this.enemies.push(this._newEnemy(x, y, type));
         }
+    }
+
+    // 刷出敌人并套上后期狂化倍率(guest 不走这里,血量由快照同步)
+    _newEnemy(x, y, type) {
+        const e = new Enemy(x, y, type, this.difficulty);
+        e.applyLate(this.lateMult || 1);
+        return e;
     }
     
     // 新敌种首次出场时提示一次它的打法
@@ -6500,7 +6529,7 @@ class Game {
         if (!near || Math.hypot(near.x + near.size / 2 - pcx, near.y + near.size / 2 - pcy) > range + near.size / 2) return;
         let dmg = this._computeAttackDamage(p.attack) * 0.9 * (p.autoAttackDmgMult || 1) * (p.spec === 'crusader' ? 1.5 : 1);
         // 守护者「以盾为锤」:越坦打得越疼
-        if (p.spec === 'protector') dmg += p.maxHealth * 0.05 + p.shield * 0.5;
+        if (p.spec === 'protector') dmg += p.maxHealth * 0.03 + p.shield * 0.3;
         const hits = this._hitAround(pcx, pcy, range, dmg);
         p.faith = Math.min(p.maxFaith, p.faith + 3 * hits);
         this.effects.push({ type: 'meleeSwing', x: pcx, y: pcy, radius: range, startAngle: 0, endAngle: Math.PI * 2, color: '#ffd54f', ttl: 0.22, maxTtl: 0.22 });
@@ -8397,7 +8426,7 @@ class Game {
             const subBarH = 10;
             const sby = by + barH + 6;
             const remainTime = Math.max(0, this.bossDuration - this.bossActiveTimer);
-            const dmgGoal = this.bossDamageRequired * this.difficulty;
+            const dmgGoal = this._bossDmgGoal();
             const dmgRatio = Math.min(1, this.bossDamageDealt / dmgGoal);
             // 时间进度
             ctx.fillStyle = 'rgba(0,0,0,0.6)';
@@ -9734,7 +9763,8 @@ class Player {
         ctx.restore();
     }
 
-    takeDamage(damage, src = '其他伤害') {
+    // pct:额外按最大生命百分比的真实伤害(无视防御/减伤值,护盾只能挡一半)
+    takeDamage(damage, src = '其他伤害', pct = 0) {
         const t = this.tree || {};
         // 天赋「疾风之舞」:几率完全闪避
         if (t.evade && Math.random() < t.evade) { this._evadeFx = true; return 0; }
@@ -9742,12 +9772,20 @@ class Player {
         const gear = this.gear && GEARS[this.gear.type];
         const gearDef = gear && gear.defBonus || 0;
         const def = this.defense * Math.max(0, 1 + (t.defPct || 0));
-        let actualDamage = Math.max(1, damage - def - gearDef - flatReduction);
-        if (t.dmgTaken) actualDamage *= Math.max(0.1, 1 + t.dmgTaken);
+        // 防御最多抵掉 80%:堆防不会把后期敌人的伤害压到 1 点
+        let actualDamage = Math.max(1, damage * 0.2, damage - def - gearDef - flatReduction);
+        const pctPart = pct > 0 ? this.maxHealth * pct : 0;
+        actualDamage += pctPart;
+        let mult = 1;
+        if (t.dmgTaken) mult *= Math.max(0.1, 1 + t.dmgTaken);
         // 战士被动「战意」:怒气越高越抗揍(满怒 -30%)
-        if (this.class === 'warrior') actualDamage *= 1 - 0.3 * Math.min(1, this.rage / this.maxRage);
+        if (this.class === 'warrior') mult *= 1 - 0.3 * Math.min(1, this.rage / this.maxRage);
         // 守护者觉醒:神圣光环内减伤 50%;记下原始伤害,交给 Game 反弹
-        if (this.auraGuard > 0) actualDamage *= 0.5;
+        if (this.auraGuard > 0) mult *= 0.5;
+        actualDamage *= mult;
+        // 百分比伤害有一半穿透护盾
+        const pierce = pctPart * mult * 0.5;
+        actualDamage -= pierce;
         if (this.spec === 'protector' && this.awakened) this._reflect = (this._reflect || 0) + damage;
         if (this.gear && this.gear.type === 'thorns') this._thornsHit = (this._thornsHit || 0) + damage;
         // 圣骑士护盾优先全额抵挡(不再因 Math.max(1) 强制漏 1 点)
@@ -9757,6 +9795,7 @@ class Player {
             actualDamage -= absorbed;
             if (this.shield <= 0.01) { this.shield = 0; this._shieldBroke = true; }
         }
+        actualDamage += pierce;
         // 铁卫觉醒「不屈」:致命一击保留 1 点生命并无敌 3 秒
         if (actualDamage >= this.currentHealth && this.spec === 'guardian' && this.awakened && this.undyingCd <= 0 && this.currentHealth > 1) {
             actualDamage = this.currentHealth - 1;
@@ -9891,7 +9930,8 @@ class Enemy {
         dasher: { text: '新敌人「冲」:蓄力后直线冲刺,看准路线侧身躲开', color: '#ffe57f' },
         bomber: { text: '新敌人「爆」:贴身会自爆,先打爆它还能炸伤周围敌人', color: '#ff80ab' },
         healer: { text: '新敌人「医」:躲在远处给周围敌人回血,优先打掉它', color: '#69f0ae' },
-        splitter: { text: '新敌人「裂」:被打碎会裂成三块小碎片,别被包围', color: '#84ffff' }
+        splitter: { text: '新敌人「裂」:被打碎会裂成三块小碎片,别被包围', color: '#84ffff' },
+        reaper: { text: '新敌人「蚀」:每次碰撞削去 12% 最大生命,无视防御,别让它贴身', color: '#ea80fc' }
     };
 
     constructor(x, y, type, difficulty) {
@@ -10044,6 +10084,16 @@ class Enemy {
                 this.defense = 4 * this.difficulty;
                 this.color = '#00bcd4';
                 break;
+            case 'reaper': // 噬魂者:不快但皮厚,碰撞额外造成 12% 最大生命的真实伤害
+                this.size = 30;
+                this.speed = Math.min(3.4, 1.7 * this.difficulty);
+                this.maxHealth = 80 * this.difficulty;
+                this.currentHealth = this.maxHealth;
+                this.attack = 6 * this.difficulty;
+                this.defense = 3 * this.difficulty;
+                this.color = '#aa00ff';
+                this.pctDmg = 0.12;
+                break;
             case 'shard': // 碎片:又小又快又脆,成群扑上来
                 this.size = 16;
                 this.speed = Math.min(5.5, 2.4 + 0.8 * this.difficulty);
@@ -10084,6 +10134,7 @@ class Enemy {
             case 'chaser':
             case 'splitter':
             case 'shard':
+            case 'reaper':
                 this.updateChaser(playerX, playerY);
                 break;
             case 'patroller':
@@ -10268,6 +10319,21 @@ class Enemy {
     contactDamage() {
         if (this.type === 'treasure') return 0;
         return this.attack * (this.type === 'dasher' && this.state === 2 ? 1.5 : 1);
+    }
+
+    // 碰撞附带的「最大生命百分比」真实伤害(噬魂者),由 Player.takeDamage 结算
+    pctDamage() { return this.pctDmg || 0; }
+
+    // 后期狂化:生命/攻击/爆炸伤害按倍率放大(只调一次,碎片继承母体倍率)
+    applyLate(m) {
+        if (!(m > 1) || this.late) return;
+        this.late = m;
+        this.maxHealth *= m;
+        this.currentHealth = this.maxHealth;
+        // 攻击只按一半成长:后期威胁主要来自更耐打的敌人,脆皮职业不至于被一两下秒掉
+        const am = 1 + (m - 1) * 0.5;
+        this.attack *= am;
+        if (this.blastDamage) this.blastDamage *= am;
     }
 
     updateGunner(playerX, playerY) {
@@ -10676,10 +10742,10 @@ class Enemy {
                 g.stroke();
                 return;
             }
-            const glowColors = { chaser: '#ff1744', patroller: '#2979ff', giant: '#d500f9', dasher: '#ffd600', bomber: '#ff4081', treasure: '#ffd740', healer: '#00e676', splitter: '#00e5ff', shard: '#18ffff' };
-            const lightColors = { chaser: '#ff6b6b', patroller: '#64b5f6', giant: '#e040fb', dasher: '#fff59d', bomber: '#ff80ab', treasure: '#fffde7', healer: '#b9f6ca', splitter: '#84ffff', shard: '#b2ebf2' };
-            const darkColors = { chaser: '#b71c1c', patroller: '#0d47a1', giant: '#6a0080', dasher: '#f57f17', bomber: '#880e4f', treasure: '#c79100', healer: '#00695c', splitter: '#006064', shard: '#00838f' };
-            const labels = { chaser: '追', patroller: '巡', giant: '巨', dasher: '冲', bomber: '爆', treasure: '宝', healer: '医', splitter: '裂', shard: '' };
+            const glowColors = { chaser: '#ff1744', patroller: '#2979ff', giant: '#d500f9', dasher: '#ffd600', bomber: '#ff4081', treasure: '#ffd740', healer: '#00e676', splitter: '#00e5ff', shard: '#18ffff', reaper: '#d500f9' };
+            const lightColors = { chaser: '#ff6b6b', patroller: '#64b5f6', giant: '#e040fb', dasher: '#fff59d', bomber: '#ff80ab', treasure: '#fffde7', healer: '#b9f6ca', splitter: '#84ffff', shard: '#b2ebf2', reaper: '#ce93d8' };
+            const darkColors = { chaser: '#b71c1c', patroller: '#0d47a1', giant: '#6a0080', dasher: '#f57f17', bomber: '#880e4f', treasure: '#c79100', healer: '#00695c', splitter: '#006064', shard: '#00838f', reaper: '#1a0033' };
+            const labels = { chaser: '追', patroller: '巡', giant: '巨', dasher: '冲', bomber: '爆', treasure: '宝', healer: '医', splitter: '裂', shard: '', reaper: '蚀' };
             const glow = glowColors[type] || '#ff1744';
             const r = type === 'giant' ? 10 : 6;
 
