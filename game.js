@@ -256,6 +256,8 @@ const DMG_SRC_INFO = {
     dot: { name: '持续', color: '#9ccc65' }, gear: { name: '装备', color: '#ffd54f' },
     body: { name: '碰撞', color: '#ef9a9a' }, other: { name: '其他', color: '#90a4ae' }
 };
+// 敌人中文名(死亡结算「致命一击」来源显示)
+const ENEMY_NAMES = { chaser: '追击者', patroller: '巡逻者', giant: '巨人', gunner: '炮手', dasher: '冲锋者', bomber: '自爆方块', treasure: '宝藏方块', healer: '医疗兵', splitter: '分裂者', shard: '碎片' };
 const MP_ENEMY_TYPES = ['chaser', 'patroller', 'giant', 'gunner', 'dasher', 'bomber', 'treasure', 'healer', 'splitter', 'shard'];
 
 // 随机事件(两次魔王之间触发,由 host/单人调度,经快照 ev 下发给 guest)
@@ -587,7 +589,7 @@ const Sound = {
     _last: {},
     _noiseBuf: null,
     // 同名音效最短间隔(秒),避免一帧内多次击杀叠成噪音
-    minGap: { kill: 0.05, skill: 0.08, pickup: 0.06, hurt: 0.1, dash: 0.12, fuse: 0.2, bomb: 0.08, meteor: 0.1, enemyHeal: 0.25 },
+    minGap: { kill: 0.05, skill: 0.08, pickup: 0.06, hurt: 0.1, dash: 0.12, fuse: 0.2, bomb: 0.08, meteor: 0.1, enemyHeal: 0.25, cdReady: 0.1 },
 
     init() {
         if (this.ctx) {
@@ -772,6 +774,10 @@ const Sound = {
             case 'gameOver':
                 [659, 523, 440, 349].forEach((f, i) => this._tone(f, 0.3, 'triangle', 0.18, 1, i * 0.2));
                 break;
+            case 'cdReady':
+                // 冷却就绪:柔和短促高音
+                this._tone(988, 0.08, 'sine', 0.1, 1.25);
+                break;
         }
     }
 };
@@ -910,6 +916,11 @@ class Game {
         this._mpFx = [];              // host 端：待广播的粒子生成调用
         this._mpHasOwnPos = false;
         this._sfxPrev = null;         // 音效边沿检测用的上一帧状态
+        this._dashPulse = 0;          // 本地冲刺就绪扩散环计时(秒)
+        this._qPulse = 0;             // 本地Q技能就绪扩散环计时(秒)
+        this._ePulse = 0;             // 本地E技能就绪扩散环计时(秒)
+        this.fatalBlow = null;        // 致命一击记录 {src, dmg}
+        this._critCountFrame = 0;     // 单帧暴击特效计数(限流)
         this.muteButton = null;
         this.mpServerUrl = 'ws://localhost:8080'; // 默认，可被大厅覆盖
 
@@ -1642,6 +1653,11 @@ class Game {
         this.mpSnapInterval = 50;
         this._mpFx = [];
         this._mpHasOwnPos = false;
+        this.fatalBlow = null;
+        this._dashPulse = 0;
+        this._qPulse = 0;
+        this._ePulse = 0;
+        this._critCountFrame = 0;
         this._sfxPrev = null;
         this._mpGuestLastLevel = 1;
         document.getElementById('gameOver').style.display = 'none';
@@ -2647,7 +2663,7 @@ class Game {
         const spec = p.spec && (CLASS_SPECS[p.class] || []).find(sp => sp.id === p.spec);
         if (spec) cls += ` · ${spec.name}`;
         if (p.awakened) cls += '(觉醒)';
-        return [
+        const rows = [
             ['职业', cls],
             ['等级', `Lv ${this.level}`],
             ['击杀', String(p.killCount || 0)],
@@ -2655,6 +2671,9 @@ class Game {
             ['击退魔王', `${this.runBossRepels || 0} 次`],
             ['完美闪避', `${p.dodgeCount || 0} 次`]
         ];
+        // 致命一击只在本机记录到时显示(客机的受击在主机结算,拿不到来源)
+        if (this.fatalBlow) rows.push(['致命一击', `${this.fatalBlow.src} (${Math.round(this.fatalBlow.dmg)})`]);
+        return rows;
     }
 
     // 本局伤害构成:总伤害、秒伤与按来源排好序的占比(只列有伤害的来源)
@@ -2804,6 +2823,7 @@ class Game {
     }
 
     update() {
+        this._critCountFrame = 0;
         // ── Guest 模式：仅应用 host 状态，处理本地输入 ──
         if (this.mpMode === 'guest') {
             if (!this.isPaused) {
@@ -3020,6 +3040,10 @@ class Game {
 
     // 通过状态变化触发音效:受击/死亡/升级/魔王阶段。host 与 guest 都适用(guest 状态来自快照)
     _sfxTick() {
+        if (this._dashPulse > 0) this._dashPulse = Math.max(0, this._dashPulse - DT);
+        if (this._qPulse > 0) this._qPulse = Math.max(0, this._qPulse - DT);
+        if (this._ePulse > 0) this._ePulse = Math.max(0, this._ePulse - DT);
+
         const p = this.player;
         const b = this.boss;
         const cur = { hurt: p.hurtCooldown || 0, life: this.life, level: this.level, boss: this.bossState,
@@ -3030,6 +3054,24 @@ class Game {
         const prev = this._sfxPrev;
         this._sfxPrev = cur;
         if (!prev) return;
+
+        // 冲刺/Q/E 冷却就绪边沿检测:从 >0 变为 <=0
+        let cdJustReady = false;
+        if (prev.dash > 0 && cur.dash <= 0) {
+            this._dashPulse = 0.25;
+            cdJustReady = true;
+        }
+        if (prev.q > 0 && cur.q <= 0) {
+            this._qPulse = 0.25;
+            cdJustReady = true;
+        }
+        if (prev.e > 0 && cur.e <= 0) {
+            this._ePulse = 0.25;
+            cdJustReady = true;
+        }
+        if (cdJustReady) {
+            Sound.play('cdReady');
+        }
         if (cur.hurt > prev.hurt + 0.3 && this.life > 0) {
             const died = cur.life < prev.life;
             Sound.play(died ? 'death' : 'hurt');
@@ -3321,6 +3363,8 @@ class Game {
         // 圣骑士被动「圣盾爆发」:护盾被打破时震晕周围敌人(8 秒一次)
         if (p._shieldBroke) {
             p._shieldBroke = false;
+            // 护盾被打破:推淡蓝色小 shockwave,非圣骑士也触发
+            this.effects.push({ type: 'shockwave', x: pcx, y: pcy, radius: 8, maxRadius: 36, color: '#80d8ff', ttl: 0.2, maxTtl: 0.2 });
             if (p.class === 'paladin' && !(p.shieldNovaCd > 0)) {
                 p.shieldNovaCd = 8;
                 this._hitAround(pcx, pcy, 110, this._computeAttackDamage(p.attack) * 0.5, e => { e.stunTimer = Math.max(e.stunTimer || 0, e === this.boss ? 0.4 : 1); });
@@ -4022,6 +4066,18 @@ class Game {
         const cx = p.x + p.size / 2, cy = p.y + p.size / 2;
         this._showFloatingText('闪避!', cx, p.y - 18, '#80d8ff');
         this.spawnBurstRing(cx, cy, 22, '#80d8ff', 12);
+
+        // 完美闪避震波:对近身非 boss 敌人推开并眩晕
+        for (const e of this.enemies) {
+            if (e === this.boss) continue;
+            const ecx = e.x + e.size / 2, ecy = e.y + e.size / 2;
+            const dist = Math.hypot(ecx - cx, ecy - cy);
+            if (dist < 60 + e.size / 2) {
+                this._knockbackFrom(e, cx, cy, 5);
+                e.stunTimer = Math.max(e.stunTimer || 0, 0.3);
+            }
+        }
+        this.effects.push({ type: 'shockwave', x: cx, y: cy, radius: 8, maxRadius: 60, color: '#80d8ff', ttl: 0.25, maxTtl: 0.25 });
     }
 
     _checkGuestCollisions() {
@@ -4041,7 +4097,7 @@ class Game {
             for (const enemy of this.enemies) {
                 if (enemy.contactDamage() > 0 && this.checkCollision(gp, enemy)) {
                     if (this._canHurt(gp)) {
-                        gp.takeDamage(enemy.contactDamage());
+                        gp.takeDamage(enemy.contactDamage(), ENEMY_NAMES[enemy.type] || '敌人碰撞');
                         gp.hurtCooldown = 0.6 + (gp.hurtCooldownBonus || 0);
                         gp.gainRage(15 + (gp.rageOnHurtBonus || 0));
                     }
@@ -4050,7 +4106,7 @@ class Game {
             }
             // 魔王碰撞
             if (gp.hurtCooldown <= 0 && this.boss && this.bossState === 'active' && this.checkCollision(gp, this.boss) && this._canHurt(gp)) {
-                gp.takeDamage(this.boss.attack);
+                gp.takeDamage(this.boss.attack, '魔王');
                 gp.hurtCooldown = 0.6 + (gp.hurtCooldownBonus || 0);
                 gp.gainRage(15 + (gp.rageOnHurtBonus || 0));
             }
@@ -4060,7 +4116,7 @@ class Game {
                     const b = this.enemyBullets[i];
                     if (!this.checkCollision(gp, b)) continue;
                     if (!this._canHurt(gp)) break; // 冲刺中穿过子弹
-                    gp.takeDamage(b.damage);
+                    gp.takeDamage(b.damage, '敌方子弹');
                     gp.hurtCooldown = 0.6 + (gp.hurtCooldownBonus || 0);
                     gp.gainRage(15 + (gp.rageOnHurtBonus || 0));
                     this.spawnHitParticles(gp.x + gp.size / 2, gp.y + gp.size / 2, '#ff9800', 8);
@@ -4137,7 +4193,7 @@ class Game {
                 if (bossTouch && this.player.dashTimer > 0) this._canHurt(this.player);
                 else if (bossTouch) {
                     if (this._canHurt(this.player)) {
-                        this.player.takeDamage(this.boss.attack);
+                        this.player.takeDamage(this.boss.attack, '魔王');
                         this.player.hurtCooldown = 0.6 + (this.player.hurtCooldownBonus || 0);
                         this.player.gainRage(15 + (this.player.rageOnHurtBonus || 0));
                         this.spawnHitParticles(this.player.x + this.player.size / 2, this.player.y + this.player.size / 2, '#ff1744', 16);
@@ -4324,7 +4380,7 @@ class Game {
                 const pcx = p.x + p.size / 2, pcy = p.y + p.size / 2;
                 const d = Math.hypot(pcx - bcx, pcy - bcy);
                 if (d > r + p.size / 2) return;
-                if (!this._bossHitPlayer(p, dmg, '#ff5252')) return;
+                if (!this._bossHitPlayer(p, dmg, '#ff5252', '魔王震击')) return;
                 // 震飞
                 const k = 45 / (d || 1);
                 p.x = Math.max(0, Math.min(this.width - p.size, p.x + (pcx - bcx) * k));
@@ -4358,7 +4414,7 @@ class Game {
             const along = px * c + py * sn;
             if (along < 0) return;
             if (Math.abs(px * sn - py * c) > BlockBoss.LASER_HALF + p.size / 2) return;
-            this._bossHitPlayer(p, b.attack * 0.35, '#e040fb');
+            this._bossHitPlayer(p, b.attack * 0.35, '#e040fb', '魔王激光');
         };
         hit(this.player);
         if (this.mpMode === 'host') for (const gp of this.mpGuestPlayers.values()) hit(gp);
@@ -4387,9 +4443,9 @@ class Game {
     }
 
     // 魔王招式命中玩家(host 本机或 guest),走与接触伤害相同的受击无敌帧;返回是否结算了伤害
-    _bossHitPlayer(p, dmg, color) {
+    _bossHitPlayer(p, dmg, color, src = '魔王') {
         if (p.currentHealth <= 0 || !this._canHurt(p)) return false;
-        p.takeDamage(dmg);
+        p.takeDamage(dmg, src);
         p.hurtCooldown = 0.6 + (p.hurtCooldownBonus || 0);
         p.gainRage(15 + (p.rageOnHurtBonus || 0));
         this.spawnHitParticles(p.x + p.size / 2, p.y + p.size / 2, color, 12);
@@ -4409,6 +4465,8 @@ class Game {
             p.y = this.height / 2 - p.size / 2;
             p.currentHealth = p.maxHealth;
             p.hurtCooldown = 1.5;
+        } else {
+            this.fatalBlow = p.lastHitInfo ? { ...p.lastHitInfo } : null;
         }
     }
 
@@ -4681,7 +4739,7 @@ class Game {
         const dmg = 12 + 8 * this.difficulty;
         for (const p of this._livingPlayers()) {
             const d = Math.hypot(p.x + p.size / 2 - m.x, p.y + p.size / 2 - m.y);
-            if (d <= m.r + p.size * 0.3) this._bossHitPlayer(p, dmg, '#ff9100');
+            if (d <= m.r + p.size * 0.3) this._bossHitPlayer(p, dmg, '#ff9100', '天降陨石');
         }
         // 也砸敌人:击杀统一由 updateEnemies 结算
         const edmg = 110 * this.difficulty;
@@ -4922,7 +4980,7 @@ class Game {
         if (armed) {
             const hit = p => {
                 const d = Math.hypot(p.x + p.size / 2 - cx, p.y + p.size / 2 - cy);
-                if (d <= r + p.size / 2) this._bossHitPlayer(p, e.blastDamage, '#ff4081');
+                if (d <= r + p.size / 2) this._bossHitPlayer(p, e.blastDamage, '#ff4081', (ENEMY_NAMES[e.type] || '自爆方块') + '殉爆');
             };
             hit(this.player);
             if (this.mpMode === 'host') for (const gp of this.mpGuestPlayers.values()) hit(gp);
@@ -4939,13 +4997,16 @@ class Game {
     }
 
     updateEnemyBullets() {
-        for (let i = this.enemyBullets.length - 1; i >= 0; i--) {
-            const b = this.enemyBullets[i];
+        const arr = this.enemyBullets;
+        let w = 0;
+        for (let i = 0; i < arr.length; i++) {
+            const b = arr[i];
             b.update();
-            if (b.x < -20 || b.x > this.width + 20 || b.y < -20 || b.y > this.height + 20) {
-                this.enemyBullets.splice(i, 1);
+            if (b.x >= -20 && b.x <= this.width + 20 && b.y >= -20 && b.y <= this.height + 20) {
+                arr[w++] = b;
             }
         }
+        arr.length = w;
     }
     
     updateItems() {
@@ -4983,13 +5044,16 @@ class Game {
     }
 
     updateProjectiles() {
-        for (let i = this.projectiles.length - 1; i >= 0; i--) {
-            this.projectiles[i].update();
-            if (this.projectiles[i].x < 0 || this.projectiles[i].x > this.width || 
-                this.projectiles[i].y < 0 || this.projectiles[i].y > this.height) {
-                this.projectiles.splice(i, 1);
+        const arr = this.projectiles;
+        let w = 0;
+        for (let i = 0; i < arr.length; i++) {
+            const p = arr[i];
+            p.update();
+            if (p.x >= 0 && p.x <= this.width && p.y >= 0 && p.y <= this.height) {
+                arr[w++] = p;
             }
         }
+        arr.length = w;
     }
     
     checkCollisions() {
@@ -5000,7 +5064,7 @@ class Game {
                 if (this.player.dashTimer > 0) { if (!harmless) this._canHurt(this.player); continue; }
                 // 受击无敌帧：冷却期内不再结算玩家受伤，避免重叠时血量瞬间被掏空
                 if (this.player.hurtCooldown <= 0 && !harmless) {
-                    this.player.takeDamage(this.enemies[i].contactDamage());
+                    this.player.takeDamage(this.enemies[i].contactDamage(), ENEMY_NAMES[this.enemies[i].type] || '敌人碰撞');
                     this.player.hurtCooldown = 0.6 + (this.player.hurtCooldownBonus || 0);
                     this.player.gainRage(15 + (this.player.rageOnHurtBonus || 0));
                     this.spawnHitParticles(this.player.x + this.player.size / 2, this.player.y + this.player.size / 2, '#ff4444', 8);
@@ -5059,7 +5123,7 @@ class Game {
             if (this.checkCollision(this.player, b)) {
                 if (this.player.dashTimer > 0) { this._canHurt(this.player); continue; } // 冲刺中穿过子弹
                 if (this.player.hurtCooldown <= 0) {
-                    this.player.takeDamage(b.damage);
+                    this.player.takeDamage(b.damage, '敌方子弹');
                     this.player.hurtCooldown = 0.6 + (this.player.hurtCooldownBonus || 0);
                     this.player.gainRage(15 + (this.player.rageOnHurtBonus || 0));
                     this.spawnHitParticles(this.player.x + this.player.size / 2, this.player.y + this.player.size / 2, '#ff9800', 8);
@@ -5277,10 +5341,36 @@ class Game {
 
         let label = '';
         switch (item.type) {
-            case 'potion':
-                this.player.heal(50);
-                label = '+50 HP';
+            case 'potion': {
+                const p = this.player;
+                const oldHp = p.currentHealth;
+                const ht = p.tree && p.tree.healTaken;
+                const rawHeal = 50 * (ht ? Math.max(0, 1 + ht) : 1);
+                const hpMissing = Math.max(0, p.maxHealth - oldHp);
+                const actualHeal = Math.min(hpMissing, rawHeal);
+                p.currentHealth = Math.min(p.maxHealth, oldHp + actualHeal);
+                const excess = rawHeal - actualHeal;
+
+                let gainedShield = 0;
+                if (excess > 0) {
+                    const baseCap = p.maxHealth * (p.shieldCapRatio || 0.10);
+                    const shieldCap = Math.max(baseCap, p.maxHealth * 0.25);
+                    const toShield = excess * 0.5;
+                    const oldShield = p.shield || 0;
+                    p.shield = Math.min(shieldCap, oldShield + toShield);
+                    gainedShield = p.shield - oldShield;
+                }
+
+                if (actualHeal > 0 && gainedShield > 0) {
+                    label = `+${Math.round(actualHeal)} HP`;
+                    this._showFloatingText(`+${Math.round(gainedShield)} 护盾`, cx, cy - 24, '#80d8ff');
+                } else if (gainedShield > 0) {
+                    label = `+${Math.round(gainedShield)} 护盾`;
+                } else {
+                    label = `+${Math.round(actualHeal || rawHeal)} HP`;
+                }
                 break;
+            }
             case 'snowflake':
                 this.freezeEnemies(5000);
                 label = '冻结 5s';
@@ -5364,10 +5454,16 @@ class Game {
     }
 
     updateEffects() {
-        for (let i = this.effects.length - 1; i >= 0; i--) {
-            this.effects[i].ttl -= DT;
-            if (this.effects[i].ttl <= 0) this.effects.splice(i, 1);
+        const arr = this.effects;
+        let w = 0;
+        for (let i = 0; i < arr.length; i++) {
+            const fx = arr[i];
+            fx.ttl -= DT;
+            if (fx.ttl > 0) {
+                arr[w++] = fx;
+            }
         }
+        arr.length = w;
     }
 
     // 联机:host 记录粒子生成调用,随快照发给 guest 重放(比发送粒子本身小得多)
@@ -5615,6 +5711,19 @@ class Game {
             // 开着伤害数字时暴击直接用放大的金色数字表现,不再额外飘「暴击」
             if (this.showDmgNums) target._dnCrit = true;
             else this._showFloatingText('暴击', target.x + target.size / 2, target.y - 8, '#ff80ab');
+            // 暴击限流:同一帧最多 4 个 critSpark
+            if ((this._critCountFrame || 0) < 4) {
+                this._critCountFrame = (this._critCountFrame || 0) + 1;
+                const tx = target.x + target.size / 2, ty = target.y + target.size / 2;
+                this.effects.push({
+                    type: 'critSpark',
+                    x: tx,
+                    y: ty,
+                    size: Math.max(12, (target.size || 20) * 0.65),
+                    ttl: 0.12,
+                    maxTtl: 0.12
+                });
+            }
         }
         if (p.spec === 'frost' && p.awakened && target.stunTimer > 0) dmg *= 1.6;
         if (p.spec === 'venom') this._applyPoison(target, p, 1);
@@ -7794,9 +7903,7 @@ class Game {
             item.render(this.ctx);
         }
 
-        for (let projectile of this.projectiles) {
-            projectile.render(this.ctx);
-        }
+        Projectile.renderAll(ctx, this.projectiles);
 
         EnemyBullet.renderAll(ctx, this.enemyBullets);
         this._renderMeteorRocks(ctx);
@@ -8531,6 +8638,28 @@ class Game {
                 ctx.beginPath();
                 ctx.arc(fx.x, fx.y, r, 0, Math.PI * 2);
                 ctx.stroke();
+            } else if (fx.type === 'critSpark') {
+                // 暴击星芒:金色八芒线条,无 shadowBlur
+                const prog = 1 - alpha;
+                const s = (fx.size || 16) * (0.8 + 0.4 * prog);
+                ctx.globalAlpha = alpha;
+                ctx.strokeStyle = '#ffd700';
+                ctx.lineWidth = 2 * alpha;
+                ctx.lineCap = 'round';
+                ctx.beginPath();
+                // 主十字四芒
+                ctx.moveTo(fx.x - s, fx.y); ctx.lineTo(fx.x + s, fx.y);
+                ctx.moveTo(fx.x, fx.y - s); ctx.lineTo(fx.x, fx.y + s);
+                // 对角次四芒(形成八芒星)
+                const s2 = s * 0.55;
+                ctx.moveTo(fx.x - s2, fx.y - s2); ctx.lineTo(fx.x + s2, fx.y + s2);
+                ctx.moveTo(fx.x - s2, fx.y + s2); ctx.lineTo(fx.x + s2, fx.y - s2);
+                ctx.stroke();
+                // 核心亮斑
+                ctx.fillStyle = '#fff9c4';
+                ctx.beginPath();
+                ctx.arc(fx.x, fx.y, Math.max(1, 2 * alpha), 0, Math.PI * 2);
+                ctx.fill();
             } else if (fx.type === 'slash') {
                 ctx.globalAlpha = alpha;
                 ctx.shadowBlur = 12;
@@ -9050,6 +9179,14 @@ class Game {
             ctx.font = '9px Arial';
             ctx.fillText('空格', cx, cy + 13);
         }
+        if (this._dashPulse > 0) {
+            const t = 1 - this._dashPulse / 0.25;
+            ctx.beginPath();
+            ctx.arc(cx, cy, r + t * 16, 0, Math.PI * 2);
+            ctx.strokeStyle = `rgba(128,216,255,${(1 - t) * 0.85})`;
+            ctx.lineWidth = 2.5 * (1 - t * 0.5);
+            ctx.stroke();
+        }
         ctx.restore();
     }
 
@@ -9167,6 +9304,20 @@ class Game {
                 roundRect(ctx, s.x, barY2, barW, barH, 2);
                 ctx.fill();
                 ctx.shadowBlur = 0;
+            }
+
+            const pulse = s.key === 'q' ? this._qPulse : this._ePulse;
+            if (pulse > 0) {
+                const t = 1 - pulse / 0.25;
+                const scx = s.x + slotW / 2, scy = baseY + slotH / 2;
+                const sr = (slotW / 2) + t * 16;
+                ctx.beginPath();
+                ctx.arc(scx, scy, sr, 0, Math.PI * 2);
+                ctx.strokeStyle = s.color;
+                ctx.globalAlpha = (1 - t) * 0.85;
+                ctx.lineWidth = 2.5 * (1 - t * 0.5);
+                ctx.stroke();
+                ctx.globalAlpha = 1;
             }
         }
 
@@ -9445,6 +9596,7 @@ class Player {
         this.gemLog = '';               // 拾取过的技能石(每字符 = GEM_TYPES 下标的 36 进制),同种出现次数 = 等级
         this.sockets = { a: [null, null, null], q: [null, null, null], e: [null, null, null] };
         this._buildVer = 0;             // 天赋/宝石/镶嵌变化计数,_gemMap 缓存据此失效
+        this.lastHitInfo = null;        // 最近一次受击信息 {src, dmg}
     }
 
     // 冲刺实际冷却(天赋「疾风连击」减免)
@@ -9582,7 +9734,7 @@ class Player {
         ctx.restore();
     }
 
-    takeDamage(damage) {
+    takeDamage(damage, src = '其他伤害') {
         const t = this.tree || {};
         // 天赋「疾风之舞」:几率完全闪避
         if (t.evade && Math.random() < t.evade) { this._evadeFx = true; return 0; }
@@ -9612,6 +9764,7 @@ class Player {
             this._pendingIframes = 3;
             this._undyingFx = true;
         }
+        if (actualDamage > 0) this.lastHitInfo = { src: src || '其他伤害', dmg: actualDamage };
         if (actualDamage > 0) {
             this.currentHealth = Math.max(0, this.currentHealth - actualDamage);
             // 受伤打断一半连杀:冲刺躲开攻击才能把连杀滚大
@@ -11262,30 +11415,92 @@ class Projectile {
         this.y += this.dy;
     }
     
-    render(ctx) {
+    static getPal(p) {
+        if (p.gearBolt) return { trail: '#b9f6ca', glow: '#00e676', fill: '#b9f6ca', key: 'gear' };
+        if (p.kind === 3) return { trail: '#d1c4e9', glow: '#7c4dff', fill: '#ede7f6', key: 'arcane' };
+        if (p.kind === 4) return { trail: '#ffab91', glow: '#ff3d00', fill: '#ffccbc', key: 'fire' };
+        return { trail: '#ffcc80', glow: '#ff9800', fill: '#ffe082', key: 'normal' };
+    }
+
+    static bulletSprite(palKey, size, glowColor, fillColor) {
+        const pad = SpriteCache.padFor(12);
+        return SpriteCache.get(`proj|${palKey}|${size}`, size, size, pad, g => {
+            const c = size / 2;
+            g.translate(c, c);
+            g.shadowBlur = SpriteCache.blur(12);
+            g.shadowColor = glowColor;
+            g.fillStyle = fillColor;
+            g.beginPath();
+            g.arc(0, 0, size / 2, 0, Math.PI * 2);
+            g.fill();
+        });
+    }
+
+    static renderAll(ctx, list) {
+        if (!list || !list.length) return;
+        const L = 8;
         ctx.save();
-        // 装备弹(风暴连弩)青绿、奥术弹紫、爆裂火球橙红
-        const pal = this.gearBolt ? ['#b9f6ca', '#00e676', '#b9f6ca']
-            : this.kind === 3 ? ['#d1c4e9', '#7c4dff', '#ede7f6']
-            : this.kind === 4 ? ['#ffab91', '#ff3d00', '#ffccbc']
-            : ['#ffcc80', '#ff9800', '#ffe082'];
+        // 尾迹合并路径: 按透明度档位与颜色批量合并
+        for (let k = 1; k <= L; k++) {
+            const paths = {};
+            let any = false;
+            for (const p of list) {
+                if (p.isPiercing) continue;
+                const n = p.trail.length;
+                if (!n) continue;
+                const pal = Projectile.getPal(p);
+                for (let i = 0; i < n; i++) {
+                    if (Math.round(((i + 1) / n) * L) !== k) continue;
+                    const pt = p.trail[i];
+                    const r = ((i + 1) / n) * p.size * 0.5;
+                    if (!paths[pal.trail]) paths[pal.trail] = [];
+                    paths[pal.trail].push(pt.x, pt.y, r);
+                    any = true;
+                }
+            }
+            if (any) {
+                ctx.globalAlpha = (k / L) * 0.4;
+                for (const col in paths) {
+                    ctx.fillStyle = col;
+                    ctx.beginPath();
+                    const pts = paths[col];
+                    for (let j = 0; j < pts.length; j += 3) {
+                        ctx.moveTo(pts[j] + pts[j + 2], pts[j + 1]);
+                        ctx.arc(pts[j], pts[j + 1], pts[j + 2], 0, Math.PI * 2);
+                    }
+                    ctx.fill();
+                }
+            }
+        }
+        ctx.restore();
+
+        // 发光弹体预渲染绘制
+        for (const p of list) {
+            if (p.isPiercing) {
+                p.render(ctx);
+                continue;
+            }
+            const pal = Projectile.getPal(p);
+            const spr = Projectile.bulletSprite(pal.key, Math.round(p.size), pal.glow, pal.fill);
+            SpriteCache.draw(ctx, spr, p.x, p.y, p.size, p.size);
+        }
+    }
+    
+    render(ctx) {
+        const pal = Projectile.getPal(this);
+        ctx.save();
         for (let i = 0; i < this.trail.length; i++) {
             const a = (i / this.trail.length) * 0.4;
             const r = (i / this.trail.length) * this.size * 0.5;
             ctx.globalAlpha = a;
-            ctx.fillStyle = pal[0];
+            ctx.fillStyle = pal.trail;
             ctx.beginPath();
             ctx.arc(this.trail[i].x, this.trail[i].y, r, 0, Math.PI * 2);
             ctx.fill();
         }
-        ctx.globalAlpha = 1;
-        ctx.shadowBlur = 12;
-        ctx.shadowColor = pal[1];
-        ctx.fillStyle = pal[2];
-        ctx.beginPath();
-        ctx.arc(this.x + this.size / 2, this.y + this.size / 2, this.size / 2, 0, Math.PI * 2);
-        ctx.fill();
         ctx.restore();
+        const spr = Projectile.bulletSprite(pal.key, Math.round(this.size), pal.glow, pal.fill);
+        SpriteCache.draw(ctx, spr, this.x, this.y, this.size, this.size);
     }
 }
 
