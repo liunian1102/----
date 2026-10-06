@@ -618,6 +618,154 @@ const Progress = {
     }
 };
 
+// ══════════════════════════════════════════════════════════════════
+//  🌟 局外星图星盘永久天赋系统 (Constellation Metagrowth)
+//  消耗历史战斗累积的「星之砂」点亮五大星座,永久提升全职业基础战力
+// ══════════════════════════════════════════════════════════════════
+const Metagrowth = {
+    KEY: 'blockrun.metagrowth',
+    CONSTELLATIONS: {
+        aquila: {
+            name: '天鹰座 · 初始指引',
+            icon: '🦅',
+            maxLv: 3,
+            costs: [50, 100, 200],
+            descs: [
+                '开局自带 1 颗自选初始技能石(雷暴/强攻/穿透)',
+                '开局自带的技能石直接升至 Lv2',
+                '开局自带的技能石直接升至满级 Lv3,并额外附送 10 潜能点'
+            ]
+        },
+        scutum: {
+            name: '天盾座 · 星辉守卫',
+            icon: '🛡️',
+            maxLv: 3,
+            costs: [40, 80, 160],
+            descs: [
+                '每次开局或复活自带相当于 15% 基础生命的神圣护盾',
+                '开局与复活护盾提升至 25% 基础生命,护盾上限 +15%',
+                '开局与复活护盾提升至 40% 基础生命,护盾破碎时向全场释放击晕冰爆'
+            ]
+        },
+        sagitta: {
+            name: '天箭座 · 星芒精准',
+            icon: '🏹',
+            maxLv: 3,
+            costs: [60, 120, 240],
+            descs: [
+                '全局基础暴击率 +5%,投射物飞行速度 +15%',
+                '全局基础暴击率 +10%,暴击伤害 +30%',
+                '全局基础暴击率 +15%,暴击命中时 15% 几率引发贯穿天雷'
+            ]
+        },
+        andromeda: {
+            name: '仙女座 · 星尘丰饶',
+            icon: '🌌',
+            maxLv: 3,
+            costs: [40, 80, 160],
+            descs: [
+                '所有道具掉落几率 +15%,基础拾取磁吸范围 +40px',
+                '道具掉落几率 +30%,限时装备持续时间 +3秒,磁吸范围 +80px',
+                '暗金遗物掉落率翻倍,拾取道具时 20% 几率爆出双份!'
+            ]
+        },
+        phoenix: {
+            name: '凤凰座 · 涅槃灵辉',
+            icon: '🪶',
+            maxLv: 3,
+            costs: [80, 160, 320],
+            descs: [
+                '单人守护天使反扑冷却缩减至 75 秒',
+                '单人守护天使反扑冷却缩减至 60 秒,且反扑只需击杀 1 名敌人即可复苏',
+                '守护天使复苏时生命全满并获得 3 秒无敌,联机战术援救速度加快 50%!'
+            ]
+        }
+    },
+
+    load() {
+        const saved = Store.get(this.KEY, null) || {};
+        const state = {};
+        for (const k of Object.keys(this.CONSTELLATIONS)) {
+            state[k] = Math.max(0, Math.min(this.CONSTELLATIONS[k].maxLv, saved[k] || 0));
+        }
+        return state;
+    },
+
+    save(state) {
+        Store.set(this.KEY, state);
+    },
+
+    // 历史总星之砂:基于累计总分与击退魔王数折算
+    getTotalDust() {
+        const p = Progress.load();
+        return Math.floor((p.totalScore || 0) / 400) + (p.bossRepels || 0) * 8;
+    },
+
+    // 已消耗的星之砂
+    getSpentDust(state) {
+        let spent = 0;
+        for (const [k, lv] of Object.entries(state)) {
+            const def = this.CONSTELLATIONS[k];
+            if (def && lv > 0) {
+                for (let i = 0; i < lv; i++) spent += def.costs[i];
+            }
+        }
+        return spent;
+    },
+
+    // 当前可用星之砂
+    getAvailableDust() {
+        const state = this.load();
+        return Math.max(0, this.getTotalDust() - this.getSpentDust(state));
+    },
+
+    upgrade(k) {
+        const state = this.load();
+        const def = this.CONSTELLATIONS[k];
+        if (!def) return false;
+        const curLv = state[k] || 0;
+        if (curLv >= def.maxLv) return false;
+        const cost = def.costs[curLv];
+        if (this.getAvailableDust() < cost) return false;
+        state[k] = curLv + 1;
+        this.save(state);
+        return true;
+    },
+
+    reset() {
+        const state = {};
+        for (const k of Object.keys(this.CONSTELLATIONS)) state[k] = 0;
+        this.save(state);
+    }
+};
+
+// ══════════════════════════════════════════════════════════════════
+//  🌌 每日秘境突变因子挑战系统 (Seeded Mutation Rift)
+// ══════════════════════════════════════════════════════════════════
+const MutationRift = {
+    MUTATIONS: {
+        void_surge:   { name: '虚空狂涌', icon: '🌀', desc: '场上虚空精英刷新率翻倍,但全队技能与奥义冷却 -35%' },
+        magma_ground: { name: '熔岩炽地', icon: '🌋', desc: '场地随机涌出烈焰火柱,全队暴击伤害额外 +80%' },
+        hyper_frenzy: { name: '狂暴极速', icon: '⚡', desc: '敌人与玩家移动速度均提升 35%,冲刺冷却 -50%' },
+        glass_canon:  { name: '死寂决斗', icon: '☠️', desc: '玩家受伤害增加 40%,但攻击力与技能倍率 +75%' }
+    },
+
+    active: false,
+
+    // 根据当日日期(YYYY-MM-DD)哈希出固定的 2 个突变因子
+    getDailyMutations() {
+        const d = new Date();
+        const dateStr = `${d.getFullYear()}-${d.getMonth() + 1}-${d.getDate()}`;
+        let hash = 0;
+        for (let i = 0; i < dateStr.length; i++) hash = ((hash << 5) - hash + dateStr.charCodeAt(i)) | 0;
+        const keys = Object.keys(this.MUTATIONS);
+        const idx1 = Math.abs(hash) % keys.length;
+        const idx2 = Math.abs((hash >> 4)) % keys.length;
+        const finalIdx2 = (idx1 === idx2) ? (idx1 + 1) % keys.length : idx2;
+        return [keys[idx1], keys[finalIdx2]];
+    }
+};
+
 // WebAudio 合成音效:无需素材文件。浏览器要求首次用户手势后才能出声,见 Sound.init()
 const Sound = {
     ctx: null,
@@ -3198,6 +3346,30 @@ class Game {
                 ctx.restore();
                 rx += slotSize + 6;
             }
+            y += slotSize + 6;
+        }
+
+        // 🌌 每日秘境突变因子勋章
+        if (this.mutations && this.mutations.length > 0) {
+            const ctx = this.ctx;
+            const x = 10, w = 100, h = 24;
+            ctx.save();
+            ctx.fillStyle = 'rgba(40, 15, 60, 0.8)';
+            roundRect(ctx, x, y, w, h, 6);
+            ctx.fill();
+            ctx.strokeStyle = '#ba68c8';
+            ctx.lineWidth = 1.2;
+            roundRect(ctx, x, y, w, h, 6);
+            ctx.stroke();
+            ctx.font = '11px Arial';
+            ctx.textAlign = 'center';
+            ctx.textBaseline = 'middle';
+            ctx.fillText('🌌', x + 12, y + 12);
+            ctx.font = 'bold 10px Arial';
+            ctx.fillStyle = '#f3e5f5';
+            ctx.textAlign = 'left';
+            ctx.fillText('每日秘境', x + 24, y + 12);
+            ctx.restore();
         }
     }
 
@@ -3589,6 +3761,38 @@ class Game {
         this._bestAtStart = Store.get('blockrun.best', { score: 0 }).score || 0;
         this._recordShown = false;
         this.player.skin = Progress.currentSkin();
+
+        // 🌟 注入局外星图星盘永久天赋 (Constellation Metagrowth)
+        const meta = Metagrowth.load();
+        this.player.metagrowth = meta;
+
+        // 1. 天盾座: 开局护盾 (Lv1: 15%, Lv2: 25%, Lv3: 40%)
+        if (meta.scutum > 0) {
+            const shieldRatio = [0.15, 0.25, 0.40][meta.scutum - 1];
+            this.player.shield = Math.round(this.player.maxHealth * shieldRatio);
+        }
+
+        // 2. 天鹰座: 开局自带初始技能石 (Lv1: 1级, Lv2: 2级, Lv3: 满级+10潜能)
+        if (meta.aquila > 0) {
+            this._grantGem('chain');
+            if (meta.aquila >= 2) this._grantGem('chain');
+            if (meta.aquila >= 3) {
+                this._grantGem('chain');
+                this.player.potentialPoints += 10;
+            }
+        }
+
+        // 3. 凤凰座: 守护天使冷却缩短
+        if (meta.phoenix > 0) {
+            this.player.guardianCooldown = 0;
+        }
+
+        // 🌌 注入每日秘境突变因子 (Mutation Rift)
+        this.mutations = MutationRift.active ? MutationRift.getDailyMutations() : [];
+        if (this.mutations.length > 0) {
+            const mutNames = this.mutations.map(m => MutationRift.MUTATIONS[m].name).join(' + ');
+            this._showFloatingText(`🌌 每日秘境激活: ${mutNames}`, this.width / 2, this.height * 0.22, '#ba68c8');
+        }
     }
 
     _runStats() {
@@ -6334,13 +6538,16 @@ class Game {
             for (const p of players) {
                 if (it.type === 'potion_invicible' && p !== this.player) continue;
                 const magBonus = (p.relics && p.relics.includes('alchemist_stone')) ? 80 : 0;
-                const R = Game.MAGNET_RADIUS + magBonus;
+                // 🌟 星图天赋【仙女座】:基础磁吸范围 +40px ~ +80px
+                const andromedaBonus = (p.metagrowth && p.metagrowth.andromeda > 0) ? (p.metagrowth.andromeda >= 2 ? 80 : 40) : 0;
+                const R = Game.MAGNET_RADIUS + magBonus + andromedaBonus;
                 const d = Math.hypot(p.x + p.size / 2 - ix, p.y + p.size / 2 - iy);
                 if (d <= R && d < bd) { bd = d; best = p; }
             }
             if (!best || bd < 1) continue;
             const magBonus = (best.relics && best.relics.includes('alchemist_stone')) ? 80 : 0;
-            const R = Game.MAGNET_RADIUS + magBonus;
+            const andromedaBonus = (best.metagrowth && best.metagrowth.andromeda > 0) ? (best.metagrowth.andromeda >= 2 ? 80 : 40) : 0;
+            const R = Game.MAGNET_RADIUS + magBonus + andromedaBonus;
             const step = Math.min(bd, 1.5 + 7 * (1 - bd / R));
             const k = step / bd;
             it.x += (best.x + best.size / 2 - ix) * k;
@@ -7017,9 +7224,10 @@ class Game {
         const base = (CLASS_BASE_CD[p.class] || { q: 3, e: 5 })[key];
         const sk = key === 'q' ? p.skillQ : p.skillE;
         const flat = key === 'q' ? (p.qCdFlat || 0) : 0;
-        // 冷却缩减:天赋 + 该技能位的「快速冷却」,合计最多 -60%;暗金遗物【时空怀表】额外 -18%
+        // 冷却缩减:天赋 + 该技能位的「快速冷却」,合计最多 -60%;暗金遗物【时空怀表】额外 -18%;每日突变【虚空狂涌】额外 -35%
         const relicCdr = (p.relics && p.relics.includes('chrono_watch')) ? 0.18 : 0;
-        const red = Math.min(0.65, ((p.tree && p.tree.cdr) || 0) + this._gv(p, key, 'faster') + relicCdr);
+        const mutCdr = (this.mutations && this.mutations.includes('void_surge')) ? 0.35 : 0;
+        const red = Math.min(0.75, ((p.tree && p.tree.cdr) || 0) + this._gv(p, key, 'faster') + relicCdr + mutCdr);
         const cd = base * this._getCDMultiplier(sk.level) * (1 - red);
         return flat ? Math.max(1, cd - flat) : cd;
     }
@@ -7122,8 +7330,16 @@ class Game {
         if (p.class === 'assassin') crit += 0.2 + (p.spec === 'shadow' ? 0.15 : 0);
         // 贪婪诅咒【狂风契】:暴击率额外 +20%,暴击伤害额外 +60%
         if (p.greedContract === 'gale') crit += 0.20;
+        // 🌟 星图天赋【天箭座】:暴击率额外 +5%~15%
+        if (p.metagrowth && p.metagrowth.sagitta > 0) {
+            crit += p.metagrowth.sagitta * 0.05;
+        }
+
         if (crit > 0 && Math.random() < crit) {
-            const critBonus = (t.critDmg || 0) + (p.greedContract === 'gale' ? 0.6 : 0);
+            let critBonus = (t.critDmg || 0) + (p.greedContract === 'gale' ? 0.6 : 0);
+            if (p.metagrowth && p.metagrowth.sagitta >= 2) critBonus += 0.3;
+            // 🌌 每日突变【熔岩炽地】:暴伤额外 +80%
+            if (this.mutations && this.mutations.includes('magma_ground')) critBonus += 0.8;
             dmg *= 2 + critBonus;
             Sound.play('critHit');
             // 暴击命中时为本地玩家施加 50ms 的轻微顿帧,强化打击感
@@ -7174,6 +7390,10 @@ class Game {
                 const tx = target.x + target.size / 2, ty = target.y + target.size / 2;
                 this.spawnParticles(tx, ty, '#80d8ff', 3, 1, 2, 1, 3, 0.04);
             }
+        }
+        // 🌌 每日突变【死寂决斗】:伤害提升 75%
+        if (this.mutations && this.mutations.includes('glass_canon')) {
+            dmg *= 1.75;
         }
         return dmg;
     }
@@ -8321,14 +8541,17 @@ class Game {
         }
         this.player.gainRage(20);
         if (this.player.gainUltCharge) this.player.gainUltCharge(6);
-        // 单人守护天使绝境反扑:绝境期间击杀 2 名敌人即可免死复苏!
+        // 单人守护天使绝境反扑:绝境期间击杀敌人免死复苏(凤凰座星盘强化:Lv2只需1杀,Lv3满血复苏!)
         if (this.player.guardianActive) {
             this.player.guardianKills = (this.player.guardianKills || 0) + 1;
-            if (this.player.guardianKills >= 2) {
+            const phoenixLv = (this.player.metagrowth && this.player.metagrowth.phoenix) || 0;
+            const needKills = phoenixLv >= 2 ? 1 : 2;
+            if (this.player.guardianKills >= needKills) {
                 this.player.guardianActive = false;
-                this.player.currentHealth = this.player.maxHealth * 0.5;
-                this.player.shield = Math.max(this.player.shield || 0, this.player.maxHealth * 0.4);
-                this.player.hurtCooldown = 2.0;
+                const hpRatio = phoenixLv >= 3 ? 1.0 : 0.5;
+                this.player.currentHealth = this.player.maxHealth * hpRatio;
+                this.player.shield = Math.max(this.player.shield || 0, this.player.maxHealth * (phoenixLv >= 3 ? 0.6 : 0.4));
+                this.player.hurtCooldown = phoenixLv >= 3 ? 3.0 : 2.0;
                 Sound.play('levelUp');
                 this._showFloatingText('👼 绝境重燃! 免死复苏!', this.player.x + this.player.size / 2, this.player.y - 25, '#ffd700');
                 this.effects.push({ type: 'shockwave', x: this.player.x + this.player.size / 2, y: this.player.y + this.player.size / 2, radius: 10, maxRadius: 160, color: '#ffd700', ttl: 0.5, maxTtl: 0.5 });
@@ -11389,10 +11612,11 @@ class Player {
         this.lastHitInfo = null;        // 最近一次受击信息 {src, dmg}
     }
 
-    // 冲刺实际冷却(天赋「疾风连击」减免;暗金遗物【时空怀表】额外缩减 18%)
+    // 冲刺实际冷却(天赋「疾风连击」减免;暗金遗物【时空怀表】额外缩减 18%;每日突变【狂暴极速】额外减半)
     dashCdTotal() {
         const relicCdr = (this.relics && this.relics.includes('chrono_watch')) ? 0.18 : 0;
-        return this.dashMaxCooldown * Math.max(0.35, 1 - ((this.tree && this.tree.dashCdr) || 0) - relicCdr);
+        const mutCdr = (this.game && this.game.mutations && this.game.mutations.includes('hyper_frenzy')) ? 0.5 : 0;
+        return this.dashMaxCooldown * Math.max(0.2, (1 - ((this.tree && this.tree.dashCdr) || 0) - relicCdr) * (1 - mutCdr));
     }
     
     update(keys, width, height) {
@@ -11459,7 +11683,9 @@ class Player {
         const frostSlow = (this._frostSlowTimer > 0) ? 0.7 : 1.0;
         // 战士终极奥义「诸神黄昏」:狂暴移速加成 +40%
         const ultSpd = (this.ultActiveTimer > 0 && this.class === 'warrior') ? 1.4 : 1.0;
-        const spd = this.speed * gearSpd * frenzyMult * frostSlow * ultSpd * (this.blessTimer > 0 ? Game.BLESS.speed : 1);
+        // 🌌 每日突变【狂暴极速】:移速提升 35%
+        const mutSpd = (this.game && this.game.mutations && this.game.mutations.includes('hyper_frenzy')) ? 1.35 : 1.0;
+        const spd = this.speed * gearSpd * frenzyMult * frostSlow * ultSpd * mutSpd * (this.blessTimer > 0 ? Game.BLESS.speed : 1);
         // 虚拟摇杆(模拟量方向)
         const jx = keys._jx || 0, jy = keys._jy || 0;
         if (jx || jy) {
@@ -11555,6 +11781,8 @@ class Player {
         if (this.ultActiveTimer > 0 && this.class === 'warrior') mult *= 0.65;
         // 贪婪诅咒【血契】:受到所有伤害增加 30%
         if (this.greedContract === 'blood') mult *= 1.3;
+        // 🌌 每日突变【死寂决斗】:受到的所有伤害增加 40%
+        if (this.game && this.game.mutations && this.game.mutations.includes('glass_canon')) mult *= 1.4;
         // 守护者觉醒:神圣光环内减伤 50%;记下原始伤害,交给 Game 反弹
         if (this.auraGuard > 0) mult *= 0.5;
         actualDamage *= mult;
@@ -13834,6 +14062,98 @@ window.addEventListener('load', () => {
         progressOverlay.style.display = 'none';
         updateProgressLabel();
     });
+
+    // ── 🌟 星图星盘局外天赋弹窗与每日秘境交互 ──
+    const metaOverlay = document.getElementById('metaOverlay');
+    const renderMetaPanel = () => {
+        if (!metaOverlay) return;
+        const dustEl = document.getElementById('starDustCount');
+        const listEl = document.getElementById('constellationList');
+        if (dustEl) dustEl.textContent = Metagrowth.getAvailableDust();
+        if (!listEl) return;
+
+        const state = Metagrowth.load();
+        listEl.innerHTML = '';
+        for (const [k, def] of Object.entries(Metagrowth.CONSTELLATIONS)) {
+            const curLv = state[k] || 0;
+            const isMax = curLv >= def.maxLv;
+            const nextCost = isMax ? 0 : def.costs[curLv];
+            const canAfford = !isMax && Metagrowth.getAvailableDust() >= nextCost;
+
+            const card = document.createElement('div');
+            card.className = 'constellation-card';
+            card.innerHTML = `
+                <div class="constellation-icon">${def.icon}</div>
+                <div class="constellation-info">
+                    <div class="constellation-header">
+                        <span class="constellation-name">${def.name}</span>
+                        <span class="constellation-level">Lv.${curLv}/${def.maxLv}</span>
+                    </div>
+                    <div class="constellation-desc">${def.descs[Math.max(0, curLv - 1)]}</div>
+                    ${!isMax ? `<div style="font-size: 0.8em; color: #ffd54f; margin-top: 3px;">下一级: ${def.descs[curLv]} (消耗 ${nextCost} 星之砂)</div>` : ''}
+                </div>
+                <button class="mp-btn ${canAfford ? 'mp-btn-primary' : 'mp-btn-ghost'} constellation-btn" data-k="${k}" ${(!canAfford || isMax) ? 'disabled' : ''}>
+                    ${isMax ? '已满级' : `点亮 (${nextCost})`}
+                </button>
+            `;
+            const btn = card.querySelector('.constellation-btn');
+            if (btn && !isMax) {
+                btn.addEventListener('click', () => {
+                    if (Metagrowth.upgrade(k)) {
+                        Sound.play('levelUp');
+                        renderMetaPanel();
+                    }
+                });
+            }
+            listEl.appendChild(card);
+        }
+    };
+
+    const openMetaBtn = document.getElementById('openMetagrowth');
+    if (openMetaBtn) {
+        openMetaBtn.addEventListener('click', () => {
+            renderMetaPanel();
+            if (metaOverlay) metaOverlay.style.display = 'flex';
+        });
+    }
+    const closeMetaBtn = document.getElementById('closeMeta');
+    if (closeMetaBtn) {
+        closeMetaBtn.addEventListener('click', () => {
+            if (metaOverlay) metaOverlay.style.display = 'none';
+        });
+    }
+    const resetMetaBtn = document.getElementById('resetMeta');
+    if (resetMetaBtn) {
+        resetMetaBtn.addEventListener('click', () => {
+            Metagrowth.reset();
+            Sound.play('cdReady');
+            renderMetaPanel();
+        });
+    }
+
+    // ── 🌌 每日秘境突变因子切换 ──
+    const mutationBtn = document.getElementById('mutationToggle');
+    const mutationLabel = document.getElementById('mutationLabel');
+    const updateMutationUI = () => {
+        if (!mutationLabel) return;
+        if (MutationRift.active) {
+            const muts = MutationRift.getDailyMutations();
+            const names = muts.map(m => MutationRift.MUTATIONS[m].name).join('+');
+            mutationLabel.textContent = `开(${names})`;
+            mutationBtn.style.background = 'rgba(186, 104, 200, 0.25)';
+        } else {
+            mutationLabel.textContent = '关';
+            mutationBtn.style.background = 'transparent';
+        }
+    };
+    if (mutationBtn) {
+        mutationBtn.addEventListener('click', () => {
+            MutationRift.active = !MutationRift.active;
+            Sound.play('cdReady');
+            updateMutationUI();
+        });
+        updateMutationUI();
+    }
 
     // ── 操控方式(移动 + 技能按键):进入游戏前询问(可记住),大厅按钮随时更改 ──
     const controlOverlay = document.getElementById('controlOverlay');
