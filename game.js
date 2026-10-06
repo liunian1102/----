@@ -850,9 +850,12 @@ const Sound = {
         if (gap && this._last[name] && now - this._last[name] < gap) return;
         this._last[name] = now;
         switch (name) {
-            case 'kill':
-                this._tone(520 + Math.random() * 120, 0.07, 'square', 0.08, 1.6);
+            case 'kill': {
+                // 连杀心流动态半音梯级升调:每 5 连杀升调约 6%,最高升至 2 倍频
+                const pitch = 1 + Math.min(1.0, Math.floor((arg || 0) / 5) * 0.06);
+                this._tone((520 + Math.random() * 120) * pitch, 0.07, 'square', 0.08, 1.6);
                 break;
+            }
             case 'hurt':
                 this._tone(200, 0.18, 'sawtooth', 0.18, 0.5);
                 this._noise(0.12, 0.12, 'lowpass', 900);
@@ -5737,10 +5740,11 @@ class Game {
         this.boss.triggerRetreat(this.player.x, this.player.y);
         this.bossState = 'retreating';
 
-        // 魔王击退 K.O. 慢镜头终结特写(子弹时间 + 全屏金色裂空斩击)
+        // 魔王击退 K.O. 慢镜头终结特写(子弹时间 + 全屏金色裂空斩击 + 径向速度线)
         this.hitStop = 0.45;
         this.screenShake = 0.6;
         Sound.play('bossRepel');
+        this.effects.push({ type: 'speedLines', x: this.boss.x + 40, y: this.boss.y + 40, color: '#ffd700', offset: 0, ttl: 0.35, maxTtl: 0.35 });
         this.effects.push({ type: 'shockwave', x: this.width / 2, y: this.height / 2, radius: 20, maxRadius: this.width * 0.95, color: '#ffd700', ttl: 0.75, maxTtl: 0.75 });
         this.effects.push({ type: 'slash', x: this.boss.x + 40, y: this.boss.y + 40, angle: -Math.PI / 4, length: 160, color: '#ffd700', ttl: 0.4, maxTtl: 0.4 });
         this.spawnBurstRing(this.boss.x + 40, this.boss.y + 40, 100, '#ffd700', 30);
@@ -7844,6 +7848,8 @@ class Game {
 
     _dispatchUlt(p) {
         const pcx = p.x + p.size / 2, pcy = p.y + p.size / 2;
+        // 终极奥义银幕级径向速度聚焦线
+        this.effects.push({ type: 'speedLines', x: pcx, y: pcy, color: '#ffe082', offset: Math.random() * Math.PI, ttl: 0.22, maxTtl: 0.22 });
         this.effects.push({ type: 'shockwave', x: pcx, y: pcy, radius: 15, maxRadius: 150, color: '#ffd700', ttl: 0.6, maxTtl: 0.6 });
         this.spawnBurstRing(pcx, pcy, 80, '#ffe082', 30);
         this.spawnParticles(pcx, pcy, '#ffd700', 40, 2, 8, 2, 5, 0.04);
@@ -8669,6 +8675,19 @@ class Game {
             // 碎裂:方块裂成四块飞散(特效随快照同步给 guest)
             this.effects.push({ type: 'shatter', x: e.x + e.size / 2, y: e.y + e.size / 2, s: e.size, color: e.color,
                                 ttl: 0.5, maxTtl: 0.5 });
+
+            // 动力学击杀碎屑流弹连锁反馈:四向碎弹炸裂散射,撞击周围敌人造成物理真伤与击退
+            const ecx = e.x + e.size / 2, ecy = e.y + e.size / 2;
+            const debrisDmg = this._computeAttackDamage(this.player.attack) * 0.25;
+            this.pendingActions.push({ delay: 0.04, fn: () => {
+                for (const o of this.enemies) {
+                    if (o !== e && o.currentHealth > 0 && Math.hypot(o.x + o.size / 2 - ecx, o.y + o.size / 2 - ecy) <= 85) {
+                        this._dealDamage(o, debrisDmg);
+                        this._knockbackFrom(o, ecx, ecy, 4);
+                        this.spawnParticles(o.x + o.size / 2, o.y + o.size / 2, e.color, 3, 1, 2, 1, 3, 0.03);
+                    }
+                }
+            }});
         }
         // 分裂者碎成 3 块碎片向外迸开(下一帧再加进 enemies,避免调用方遍历时改数组)
         if (e && e.type === 'splitter' && !e.split) {
@@ -8680,7 +8699,7 @@ class Game {
             e.exploded = true;
             this.pendingActions.push({ delay: 0.05, fn: () => this._bomberExplode(e, false) });
         }
-        Sound.play('kill');
+        Sound.play('kill', this.player.combo || 0);
         // 击杀计数随玩家快照下发,本机据此触发击杀顿帧/震动(guest 也能拿到自己的击杀反馈)
         this.player.killCount = (this.player.killCount || 0) + 1;
         // 🌀 无尽深渊模式:当前层击杀数累加
@@ -10818,6 +10837,22 @@ class Game {
                 ctx.beginPath();
                 ctx.arc(fx.x + (fx.vx || 0) * p, fx.y + (fx.vy || 0) * p + p * p * 20, sz, 0, Math.PI * 2);
                 ctx.fill();
+            } else if (fx.type === 'speedLines') {
+                // 终极奥义/K.O.银幕级径向速度聚焦线:四周向中心汇聚
+                ctx.translate(fx.x, fx.y);
+                ctx.globalAlpha = alpha * 0.75;
+                ctx.strokeStyle = fx.color || '#ffffff';
+                ctx.lineWidth = 1.8;
+                const rays = 24;
+                const minR = 60 + (1 - alpha) * 40;
+                const maxR = Math.max(800, 600) * 0.8;
+                ctx.beginPath();
+                for (let i = 0; i < rays; i++) {
+                    const a = (i / rays) * Math.PI * 2 + (fx.offset || 0);
+                    ctx.moveTo(Math.cos(a) * minR, Math.sin(a) * minR);
+                    ctx.lineTo(Math.cos(a) * maxR, Math.sin(a) * maxR);
+                }
+                ctx.stroke();
             } else if (fx.type === 'critSpark') {
                 // 暴击星芒:金色八芒线条,无 shadowBlur
                 const prog = 1 - alpha;
