@@ -465,11 +465,16 @@ const Immersive = {
         Store.set('blockrun.immersive', !!on);
         if (!on) this.exit();
     },
+    // iPad/iPhone(含伪装成 Mac 的 iPadOS)上 WebKit 的元素全屏自带「下滑退出」系统手势,
+    // 网页的 preventDefault 拦不住,摇杆往下拖就会被踢出全屏;这些设备不进元素全屏,只保留横屏提示
+    isIOS: /iPad|iPhone|iPod/.test(navigator.userAgent) ||
+        (navigator.platform === 'MacIntel' && navigator.maxTouchPoints > 1),
+    get useFullscreen() { return this.enabled && !this.isIOS; },
     isFullscreen() { return !!(document.fullscreenElement || document.webkitFullscreenElement); },
     isPortrait() { return window.innerHeight > window.innerWidth; },
     // 必须在点击/触摸回调里同步调用
     enter() {
-        if (!this.enabled) return;
+        if (!this.useFullscreen) return;
         const el = document.documentElement;
         const lock = () => {
             try {
@@ -1469,14 +1474,14 @@ class Game {
         const immersiveCheck = () => {
             this._updateRotateHint();
             if (!Immersive.enabled || !this.isRunning || this.isPaused) return;
-            if (!Immersive.isFullscreen() || Immersive.isPortrait()) this.togglePause();
+            if ((Immersive.useFullscreen && !Immersive.isFullscreen()) || Immersive.isPortrait()) this.togglePause();
         };
         document.addEventListener('fullscreenchange', immersiveCheck);
         document.addEventListener('webkitfullscreenchange', immersiveCheck);
         window.addEventListener('resize', () => this._updateRotateHint());
         setInterval(() => this._updateRotateHint(), 500); // 开局/结束/断线等各处状态变化统一兜底
         document.addEventListener('pointerup', () => {
-            if (Immersive.enabled && this.isRunning && (!Immersive.isFullscreen() || Immersive.isPortrait())) Immersive.enter();
+            if (Immersive.useFullscreen && this.isRunning && (!Immersive.isFullscreen() || Immersive.isPortrait())) Immersive.enter();
         });
         // 失焦时清空按键状态,避免切回来后方向键"卡住"一直移动
         window.addEventListener('blur', () => { this.keys = {}; endJoy(); endAim(true); });
@@ -11999,7 +12004,9 @@ window.addEventListener('load', () => {
             updateImmersiveLabel();
         });
     }
-    document.getElementById('rotateFullscreen').addEventListener('click', () => Immersive.enter());
+    const rotateFsBtn = document.getElementById('rotateFullscreen');
+    if (Immersive.isIOS) rotateFsBtn.style.display = 'none'; // iOS 不进元素全屏,只靠旋转设备
+    else rotateFsBtn.addEventListener('click', () => Immersive.enter());
 
     // ── 联机大厅按钮逻辑 ──
     const overlay      = document.getElementById('mpOverlay');
