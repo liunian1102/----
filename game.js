@@ -1217,7 +1217,7 @@ class Game {
         });
         
         document.getElementById('restartBtn').addEventListener('click', () => {
-        if (!game.mpMode) Immersive.enter(); // 单人「再来一局」直接开局
+            if (!this.mpMode) Immersive.enter(); // 单人「再来一局」直接开局
             this.restartGame();
         });
         
