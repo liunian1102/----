@@ -160,6 +160,15 @@ const SpriteCache = {
 };
 
 // 场上敌人数量上限(随难度从 50 增至 80),防止挂机堆怪拖垮帧率
+// 难度模式:start 起始难度、ramp 每多少秒 +1、cap 封顶、score 分数倍率。大厅选择,联机以房主为准
+const DIFF_MODES = {
+    easy:   { name: '轻松', color: '#69f0ae', start: 1,   ramp: 140, cap: 3, score: 0.6, desc: '敌人成长更慢、上限更低,分数 ×0.6' },
+    normal: { name: '普通', color: '#4fc3f7', start: 1,   ramp: 90,  cap: 4, score: 1,   desc: '标准体验' },
+    hard:   { name: '噩梦', color: '#ff5252', start: 1.5, ramp: 60,  cap: 4, score: 1.5, desc: '开局更强、更快到顶,分数 ×1.5' }
+};
+const DIFF_KEYS = Object.keys(DIFF_MODES);
+const diffDef = k => DIFF_MODES[k] || DIFF_MODES.normal;
+
 const maxEnemiesFor = difficulty => Math.floor(40 + 10 * difficulty);
 
 // 大厅卡片上的最高纪录
@@ -495,6 +504,9 @@ const ACHIEVEMENTS = [
     { id: 'allClasses', icon: '🎭', name: '全能大师', desc: '五种职业各玩过一次',         check: (r, p) => Object.keys(Object.assign({}, p.classesPlayed, r.cls ? { [r.cls]: 1 } : {})).length >= 5 },
     { id: 'treasure1',  icon: '💰', name: '寻宝者',   desc: '击败一次宝藏方块',           check: r => (r.treasures || 0) >= 1 },
     { id: 'elite10',    icon: '♛', name: '精英猎手', desc: '单局击败 10 个精英怪',        check: r => (r.elites || 0) >= 10 },
+    { id: 'easyClear',  icon: '🌱', name: '小试牛刀', desc: '轻松难度下生存 180 秒',      check: r => r.diff === 'easy' && r.time >= 180 },
+    { id: 'hard180',    icon: '😈', name: '噩梦行者', desc: '噩梦难度下生存 180 秒',      check: r => r.diff === 'hard' && r.time >= 180 },
+    { id: 'hardBoss',   icon: '☠', name: '噩梦屠魔', desc: '噩梦难度下击退方块大魔王',    check: r => r.diff === 'hard' && r.bossRepels >= 1 },
     { id: 'total20k',   icon: '💎', name: '积少成多', desc: '累计得分 20000',            check: (r, p) => p.totalScore + r.score >= 20000 }
 ];
 
@@ -755,6 +767,7 @@ const Sound = {
 };
 
 class Game {
+    static MAGNET_RADIUS = 85; // 道具拾取磁吸半径
     static JOY_RADIUS = 56;   // 摇杆半径(CSS px)
     static ORB_SPIN = 4.2;    // 烈焰法球转速(弧度/秒)
     static ORB_RADIUS = 58;   // 烈焰法球环绕半径
@@ -825,6 +838,8 @@ class Game {
         this.score = 0;
         this.gameTime = 0;
         this.difficulty = 1;
+        this.diffPref = DIFF_MODES[Store.get('blockrun.diff', 'normal')] ? Store.get('blockrun.diff', 'normal') : 'normal';
+        this.diffMode = this.diffPref;  // 本局生效的难度(guest 以房主快照为准)
 
         this.enemyFreezeTimer = 0;
         this.gearTimer = 20;          // 距离下一件限时装备掉落的秒数
@@ -1439,6 +1454,12 @@ class Game {
         this.aim.active = false;
     }
 
+    setDiffMode(k) {
+        if (!DIFF_MODES[k]) return;
+        this.diffPref = k;
+        Store.set('blockrun.diff', k);
+    }
+
     setControlMode(mode) {
         this.controlMode = mode === 'tap' ? 'tap' : 'joystick';
         Store.set('blockrun.control', this.controlMode);
@@ -1459,6 +1480,7 @@ class Game {
         if (!this.isRunning) {
             this.isRunning = true;
             this.isPaused = false;
+            this.diffMode = this.diffPref;
             this._initRunProgress();
             this._lastFrameTime = performance.now();
             this._frameAccum = 0;
@@ -1801,7 +1823,7 @@ class Game {
             players,
             ev: this.event ? [EVENT_TYPES.indexOf(this.event.type), q1(this.event.timer), this.event.dur, this.event.left || 0] : 0,
             mt: this.meteors.map(m => [m.id, q1(m.x), q1(m.y), q1(m.r), q2(m.t), m.dur]),
-            tk: this.treasureKills, ek: this.eliteKills,
+            tk: this.treasureKills, ek: this.eliteKills, dm: this.diffMode,
             ef: this._mpTakeNewEffects(),
             fx: this._mpFx.splice(0),
             dn: this._mpTakeDmgNums(),
@@ -1978,11 +2000,12 @@ class Game {
         if (mt.removed.length) Sound.play('meteor');
         if (snapshot.tk !== undefined) this.treasureKills = snapshot.tk;
         if (snapshot.ek !== undefined) this.eliteKills = snapshot.ek;
+        if (snapshot.dm && DIFF_MODES[snapshot.dm]) this.diffMode = snapshot.dm;
 
         // 道具(仅渲染;落地/旋转动画在本地跑)
         const it = this._mpSyncList(this.items, snapshot.i || [],
             r => new Item(r[2], r[3], MP_ITEM_TYPES[r[1]] || 'potion'),
-            (o, r) => { o.duration = r[4]; });
+            (o, r) => { o.duration = r[4]; o.targetX = r[2]; o.targetY = r[3]; });
         this.items = it.list;
         // 还剩不少时长就消失 = 被拾取了
         const picked = it.removed.find(o => o.duration > 0.3);
@@ -2598,7 +2621,7 @@ class Game {
         const t = Math.floor(this.gameTime);
         ctx.font = '12px Arial';
         ctx.fillStyle = 'rgba(200,232,255,0.6)';
-        ctx.fillText(`生存 ${Math.floor(t / 60)}:${String(t % 60).padStart(2, '0')}  ·  ★ ${this.score}`, W / 2, py + 60);
+        ctx.fillText(`${diffDef(this.diffMode).name}  ·  生存 ${Math.floor(t / 60)}:${String(t % 60).padStart(2, '0')}  ·  ★ ${this.score}`, W / 2, py + 60);
 
         // 概况:两列三行
         const rows = this._runSummaryRows();
@@ -2717,7 +2740,8 @@ class Game {
         if (!this.isPaused) {
             this.gameTime += DT;
             // 难度更平缓且封顶，避免后期速度碾压必死
-            this.difficulty = Math.min(4, 1 + this.gameTime / 90);
+            const dm = diffDef(this.diffMode);
+            this.difficulty = Math.min(dm.cap, dm.start + this.gameTime / dm.ramp);
 
             // 计时器随暂停一起停（按帧推进，不再用 setTimeout）
             if (this.enemyFreezeTimer > 0) this.enemyFreezeTimer -= DT;
@@ -2793,7 +2817,7 @@ class Game {
     _runStats() {
         return { score: this.score, time: Math.floor(this.gameTime), level: this.level,
                  bossRepels: this.runBossRepels || 0, cls: this.player.class, dodges: this.player.dodgeCount || 0,
-                 treasures: this.treasureKills || 0, elites: this.eliteKills || 0 };
+                 treasures: this.treasureKills || 0, elites: this.eliteKills || 0, diff: this.diffMode };
     }
 
     // 每 tick 调用(host/guest 都走):统计击退魔王,每 0.5s 检查一次成就,推进解锁提示
@@ -2893,7 +2917,11 @@ class Game {
         }
         if (cur.dash > prev.dash + 0.5) Sound.play('whoosh');
         if (cur.dodge > prev.dodge) { Sound.play('dodge'); this._triggerHitStop(0.05); }
-        if (cur.level > prev.level) Sound.play('levelUp');
+        if (cur.level > prev.level) {
+            Sound.play('levelUp');
+            // 只画在本机玩家身上:标记已发送,host 不会把它同步给 guest
+            this.effects.push({ type: 'levelUp', lv: cur.level, ttl: 1.3, maxTtl: 1.3, _mpSent: true });
+        }
         if (cur.gear !== prev.gear) Sound.play(cur.gear ? 'gearOn' : 'gearOff');
         if (cur.q > prev.q + 0.2 || cur.e > prev.e + 0.2) Sound.play('skill');
         if (cur.atk !== prev.atk && cur.atk) {
@@ -4241,7 +4269,7 @@ class Game {
         // 奖励
         this.life = Math.min(this.life + 1, this.maxLife);
         this.player.addPotentialPoints(1);
-        this.score += 100 * (this.scoreMult || 1);
+        this.score += Math.round(100 * (this.scoreMult || 1) * diffDef(this.diffMode).score);
         // 击退动画
         // 击退必掉一件限时装备(落在魔王原位)
         this._dropGear(this.boss.x + this.boss.size / 2 - 12, this.boss.y + this.boss.size / 2 - 12);
@@ -4686,6 +4714,7 @@ class Game {
     }
     
     updateItems() {
+        this._magnetItems();
         for (let i = this.items.length - 1; i >= 0; i--) {
             this.items[i].update();
             if (this.items[i].duration <= 0) {
@@ -4694,6 +4723,30 @@ class Game {
         }
     }
     
+    // 拾取磁吸:落地后的道具被附近最近的存活玩家吸过去,越近越快(无敌药水只有房主/单人能捡,只吸向本机玩家)
+    _magnetItems() {
+        const players = this._allPlayers();
+        if (!players.length) return;
+        const R = Game.MAGNET_RADIUS;
+        for (const it of this.items) {
+            if (it.landTimer > 0) continue;
+            const ix = it.x + it.size / 2, iy = it.y + it.size / 2;
+            let best = null, bd = R;
+            for (const p of players) {
+                if (it.type === 'potion_invicible' && p !== this.player) continue;
+                const d = Math.hypot(p.x + p.size / 2 - ix, p.y + p.size / 2 - iy);
+                if (d < bd) { bd = d; best = p; }
+            }
+            if (!best || bd < 1) continue;
+            const step = Math.min(bd, 1.5 + 7 * (1 - bd / R));
+            const k = step / bd;
+            it.x += (best.x + best.size / 2 - ix) * k;
+            it.y += (best.y + best.size / 2 - iy) * k;
+            it.targetX = it.x;
+            it.targetY = it.y;
+        }
+    }
+
     updateProjectiles() {
         for (let i = this.projectiles.length - 1; i >= 0; i--) {
             this.projectiles[i].update();
@@ -6204,7 +6257,7 @@ class Game {
         this.player.killCount = (this.player.killCount || 0) + 1;
         const horde = this.event && this.event.type === 'horde' ? 2 : 1;
         const comboMult = this._registerCombo(e);
-        this.score += Math.round(10 * (this.scoreMult || 1) * horde * comboMult);
+        this.score += Math.round(10 * (this.scoreMult || 1) * horde * comboMult * diffDef(this.diffMode).score);
         this.exp += 5 * horde;
         if (e && e.type === 'treasure') this._treasureReward(e);
         else if (e && !e.elite && Math.random() < 0.006) this._dropGem(e.x, e.y);
@@ -7184,6 +7237,8 @@ class Game {
         }
         document.getElementById('finalTime').textContent = time;
         document.getElementById('finalScore').textContent = score;
+        const fd = document.getElementById('finalDiff');
+        if (fd) { const dm = diffDef(this.diffMode); fd.textContent = dm.name; fd.style.color = dm.color; fd.style.borderColor = dm.color; }
         const sumEl = document.getElementById('runSummary');
         if (sumEl) {
             sumEl.innerHTML = '';
@@ -7220,6 +7275,9 @@ class Game {
     }
     
     updateUI() {
+        // 旧 DOM 属性面板在全屏布局下一直隐藏(画面都是画布绘制):隐藏时跳过,省掉每 100ms 十几次 DOM 写入
+        const ui = this._gameUIEl || (this._gameUIEl = document.getElementById('gameUI'));
+        if (ui && ui.style.display === 'none') return;
         document.getElementById('life').textContent = this.life;
         document.getElementById('level').textContent = this.level;
         document.getElementById('exp').textContent = Math.floor(this.exp);
@@ -8078,6 +8136,53 @@ class Game {
         for (const e of enemies) e.renderOverlays(ctx, snap, frozen);
     }
 
+    // 升级光柱:本机玩家脚下升起金色光柱 + 地面光环 + 上升的光点 + 「LEVEL UP」(跟随玩家,纯填充/渐变,无 shadowBlur)
+    _renderLevelUpFx(ctx, fx, alpha) {
+        const p = this.player;
+        const t = 1 - alpha;
+        const cx = p.x + p.size / 2, by = p.y + p.size;
+        const h = 170 * Math.min(1, t / 0.2), w = p.size * 1.5 * (1 - 0.55 * t);
+        ctx.globalCompositeOperation = 'lighter';
+        ctx.globalAlpha = Math.min(1, alpha * 1.4);
+        const g = ctx.createLinearGradient(0, by, 0, by - h);
+        g.addColorStop(0, 'rgba(255,215,64,0.75)');
+        g.addColorStop(0.6, 'rgba(255,235,140,0.3)');
+        g.addColorStop(1, 'rgba(255,245,200,0)');
+        ctx.fillStyle = g;
+        ctx.fillRect(cx - w / 2, by - h, w, h);
+        ctx.fillRect(cx - w * 0.18, by - h, w * 0.36, h);   // 叠一层更亮的光芯
+        // 地面光环
+        const rx = p.size * (0.7 + 1.8 * t);
+        ctx.strokeStyle = '#ffd740';
+        ctx.lineWidth = 3 * alpha + 1;
+        ctx.beginPath();
+        ctx.ellipse(cx, by, rx, rx * 0.32, 0, 0, Math.PI * 2);
+        ctx.stroke();
+        // 上升光点
+        ctx.fillStyle = '#fff8e1';
+        for (let k = 0; k < 10; k++) {
+            const ph = (k * 0.37 + t * 1.6) % 1;
+            const sx = cx + Math.sin(k * 2.39) * w * 0.7, sy = by - ph * Math.max(h, 40);
+            const sz = 3.5 * (1 - ph) + 1;
+            ctx.globalAlpha = alpha * (1 - ph);
+            ctx.fillRect(sx - sz / 2, sy - sz / 2, sz, sz);
+        }
+        ctx.globalCompositeOperation = 'source-over';
+        // 文字:先弹出再上飘
+        const pop = t < 0.15 ? 0.6 + 0.6 * (t / 0.15) : 1.2 - 0.2 * Math.min(1, (t - 0.15) / 0.2);
+        ctx.globalAlpha = Math.min(1, alpha * 2);
+        ctx.translate(cx, p.y - 42 - 20 * t);
+        ctx.scale(pop, pop);
+        ctx.textAlign = 'center';
+        ctx.textBaseline = 'middle';
+        ctx.font = 'bold 15px Arial';
+        ctx.lineWidth = 3;
+        ctx.strokeStyle = 'rgba(60,30,0,0.8)';
+        ctx.strokeText(`LEVEL UP  Lv ${fx.lv}`, 0, 0);
+        ctx.fillStyle = '#ffe082';
+        ctx.fillText(`LEVEL UP  Lv ${fx.lv}`, 0, 0);
+    }
+
     _renderEffects() {
         const ctx = this.ctx;
         for (const fx of this.effects) {
@@ -8255,6 +8360,8 @@ class Game {
                 ctx.moveTo(fx.x + Math.cos(fx.angle) * dist * 0.6, fx.y + Math.sin(fx.angle) * dist * 0.6);
                 ctx.lineTo(endX, endY);
                 ctx.stroke();
+            } else if (fx.type === 'levelUp') {
+                this._renderLevelUpFx(ctx, fx, alpha);
             }
 
             ctx.restore();
@@ -10346,6 +10453,11 @@ class Item {
             const eased = 1 - (1 - t) * (1 - t);
             this.y = this.spawnY + (this.targetY - this.spawnY) * eased;
             if (this.landTimer <= 0) this.y = this.targetY;
+        } else if (this.x !== this.targetX || this.y !== this.targetY) {
+            // 联机 guest:被磁吸的道具在快照间平滑追上 host 的位置
+            this.x += (this.targetX - this.x) * 0.35;
+            this.y += (this.targetY - this.y) * 0.35;
+            if (Math.abs(this.targetX - this.x) < 0.3 && Math.abs(this.targetY - this.y) < 0.3) { this.x = this.targetX; this.y = this.targetY; }
         }
         this.spinPhase += 0.04;
         this.bobPhase += 0.08;
@@ -11142,6 +11254,21 @@ window.addEventListener('load', () => {
         if (e.target === controlOverlay && !controlThen) controlOverlay.style.display = 'none';
     });
     document.getElementById('openControl').addEventListener('click', () => openControl(null));
+
+    // ── 难度:点击在 轻松 → 普通 → 噩梦 间循环(联机以房主为准) ──
+    const updateDiffLabel = () => {
+        const dm = diffDef(game.diffPref), el = document.getElementById('diffLabel');
+        el.textContent = dm.name;
+        el.style.color = dm.color;
+        document.getElementById('diffToggle').title = dm.desc;
+    };
+    updateDiffLabel();
+    document.getElementById('diffToggle').addEventListener('click', () => {
+        game.setDiffMode(DIFF_KEYS[(DIFF_KEYS.indexOf(game.diffPref) + 1) % DIFF_KEYS.length]);
+        updateDiffLabel();
+        const dm = diffDef(game.diffPref);
+        setStatus(`难度:${dm.name} · ${dm.desc}`);
+    });
 
     // ── 沉浸式横屏全屏开关(仅触屏设备显示) ──
     const immersiveBtn = document.getElementById('immersiveToggle');
