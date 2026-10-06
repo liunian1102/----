@@ -14387,7 +14387,7 @@ window.addEventListener('load', () => {
                         <span class="constellation-level">Lv.${curLv}/${def.maxLv}</span>
                     </div>
                     <div class="constellation-desc">${def.descs[Math.max(0, curLv - 1)]}</div>
-                    ${!isMax ? `<div style="font-size: 0.8em; color: #ffd54f; margin-top: 3px;">下一级: ${def.descs[curLv]} (消耗 ${nextCost} 星之砂)</div>` : ''}
+                    ${!isMax ? `<div class="constellation-next">下一级: ${def.descs[curLv]} (消耗 ${nextCost} 星之砂)</div>` : ''}
                 </div>
                 <button class="mp-btn ${canAfford ? 'mp-btn-primary' : 'mp-btn-ghost'} constellation-btn" data-k="${k}" ${(!canAfford || isMax) ? 'disabled' : ''}>
                     ${isMax ? '已满级' : `点亮 (${nextCost})`}

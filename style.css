@@ -1049,34 +1049,78 @@ kbd {
     display: flex;
     justify-content: space-between;
     align-items: center;
+    gap: 8px;
     margin-bottom: 4px;
 }
 .constellation-name {
-    font-size: 1.05em;
+    font-size: 1.02em;
     font-weight: bold;
     color: #ffd700;
 }
 .constellation-level {
-    font-size: 0.85em;
+    font-size: 0.82em;
     color: #ffe082;
     background: rgba(255, 215, 0, 0.15);
     padding: 2px 6px;
     border-radius: 4px;
+    white-space: nowrap;
 }
 .constellation-desc {
     font-size: 0.85em;
     color: rgba(200, 232, 255, 0.85);
     line-height: 1.4;
+    word-break: break-word;
+}
+.constellation-next {
+    font-size: 0.8em;
+    color: #ffd54f;
+    margin-top: 3px;
+    line-height: 1.35;
+    word-break: break-word;
 }
 .constellation-btn {
-    padding: 6px 12px;
+    width: auto;
+    min-width: 84px;
+    padding: 8px 14px;
     font-size: 0.85em;
     border-radius: 8px;
     cursor: pointer;
     flex-shrink: 0;
+    white-space: nowrap;
 }
 .constellation-btn:disabled {
     opacity: 0.45;
     cursor: not-allowed;
+}
+
+/* 窄屏/移动端竖屏: 转为自适应网格，文本通栏，操作按钮底部大触控区 */
+@media (max-width: 640px) {
+    .panel-card {
+        padding: 18px 14px;
+        width: 100%;
+    }
+    .constellation-card {
+        display: grid;
+        grid-template-columns: 44px 1fr;
+        grid-template-areas:
+            "icon info"
+            "btn  btn";
+        align-items: start;
+        gap: 8px 12px;
+        padding: 12px;
+    }
+    .constellation-icon {
+        grid-area: icon;
+        margin-top: 2px;
+    }
+    .constellation-info {
+        grid-area: info;
+    }
+    .constellation-btn {
+        grid-area: btn;
+        width: 100%;
+        margin-top: 4px;
+        padding: 9px;
+    }
 }
 .diff-tag:empty { display: none; }
