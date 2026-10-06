@@ -3977,9 +3977,20 @@ class Game {
         this.hitStop = Math.max(this.hitStop || 0, sec);
     }
 
+    // Web Haptics 2.0: 动作游戏级分级微触觉震动系统(支持模式名与脉冲数组)
     _vibrate(pattern) {
         if (Sound.muted || typeof navigator === 'undefined' || !navigator.vibrate) return;
-        try { navigator.vibrate(pattern); } catch (_) { /* 部分浏览器在无用户手势时会抛错 */ }
+        const patterns = {
+            light: 10,
+            hit: 12,
+            crit: [15, 20, 15],
+            dodge: [12, 15, 12],
+            ult: [45, 30, 60],
+            heartbeat: 15,
+            ko: [50, 40, 90]
+        };
+        const p = typeof pattern === 'string' ? (patterns[pattern] || 15) : pattern;
+        try { navigator.vibrate(p); } catch (_) { /* 忽略无手势异常 */ }
     }
 
     _onLocalHurt(died) {
@@ -4027,7 +4038,11 @@ class Game {
         if (ratio > 0 && ratio < 0.3) {
             this.lowHpBeat = Math.max(0, (this.lowHpBeat || 0) - DT);
             this.lowHpPeriod = ratio < 0.15 ? 0.6 : 0.9;
-            if (this.lowHpBeat <= 0) { this.lowHpBeat = this.lowHpPeriod; Sound.play('heartbeat'); }
+            if (this.lowHpBeat <= 0) {
+                this.lowHpBeat = this.lowHpPeriod;
+                Sound.play('heartbeat');
+                this._vibrate('heartbeat');
+            }
         } else {
             this.lowHpBeat = 0;
             this.lowHpPeriod = 0;
@@ -5109,6 +5124,7 @@ class Game {
         p.dodgeCount = (p.dodgeCount || 0) + 1;
         p.dashCooldown = Math.max(0, p.dashCooldown - p.dashCdTotal() * 0.5);
         if (p.gainUltCharge) p.gainUltCharge(15);
+        this._vibrate('dodge');
         const cx = p.x + p.size / 2, cy = p.y + p.size / 2;
         this._showFloatingText('闪避!', cx, p.y - 18, '#80d8ff');
         this.spawnBurstRing(cx, cy, 22, '#80d8ff', 12);
@@ -7362,6 +7378,7 @@ class Game {
             if (this.mutations && this.mutations.includes('magma_ground')) critBonus += 0.8;
             dmg *= 2 + critBonus;
             Sound.play('critHit');
+            this._vibrate('crit');
             // 暴击命中时为本地玩家施加 50ms 的轻微顿帧,强化打击感
             if (p === this.player) this.hitStop = Math.max(this.hitStop, 0.05);
             // 开着伤害数字时暴击直接用放大的金色数字表现,不再额外飘「暴击」
@@ -7689,6 +7706,7 @@ class Game {
         this.screenShake = Math.max(this.screenShake, 0.35);
         this.hitStop = Math.max(this.hitStop, 0.08);
         Sound.play('bossSpawn');
+        this._vibrate('ult');
         this._dispatchUlt(p);
     }
 
@@ -11547,6 +11565,9 @@ class Player {
         this.y = y;
         this.size = 30;
         this.speed = 5;
+        // 动态运动学手感引擎:真实物理速度矢量与惯性平滑阻尼
+        this.vx = 0;
+        this.vy = 0;
         this.color = '#4CAF50';
         this.maxHealth = 100;
         this.currentHealth = 100;
@@ -11761,55 +11782,77 @@ class Player {
         const ultSpd = (this.ultActiveTimer > 0 && this.class === 'warrior') ? 1.4 : 1.0;
         // 🌌 每日突变【狂暴极速】:移速提升 35%
         const mutSpd = (this.game && this.game.mutations && this.game.mutations.includes('hyper_frenzy')) ? 1.35 : 1.0;
-        const spd = this.speed * gearSpd * frenzyMult * frostSlow * ultSpd * mutSpd * (this.blessTimer > 0 ? Game.BLESS.speed : 1);
-        // 虚拟摇杆(模拟量方向)
+        const targetSpeed = this.speed * gearSpd * frenzyMult * frostSlow * ultSpd * mutSpd * (this.blessTimer > 0 ? Game.BLESS.speed : 1);
+
+        // 目标期望输入方向 (归一化矢量)
+        let inX = 0, inY = 0;
+
+        // 虚拟摇杆(模拟量方向优先)
         const jx = keys._jx || 0, jy = keys._jy || 0;
         if (jx || jy) {
-            this.x = Math.max(0, Math.min(width - this.size, this.x + jx * spd));
-            this.y = Math.max(0, Math.min(height - this.size, this.y + jy * spd));
+            inX = jx;
+            inY = jy;
             this.moving = false;
             this.targetX = null;
             this.targetY = null;
-        }
-        // 键盘控制
-        let kx = 0, ky = 0;
-        if (keys['ArrowUp'] || keys['w']) ky -= 1;
-        if (keys['ArrowDown'] || keys['s']) ky += 1;
-        if (keys['ArrowLeft'] || keys['a']) kx -= 1;
-        if (keys['ArrowRight'] || keys['d']) kx += 1;
+        } else {
+            // 键盘控制
+            let kx = 0, ky = 0;
+            if (keys['ArrowUp'] || keys['w']) ky -= 1;
+            if (keys['ArrowDown'] || keys['s']) ky += 1;
+            if (keys['ArrowLeft'] || keys['a']) kx -= 1;
+            if (keys['ArrowRight'] || keys['d']) kx += 1;
 
-        if (kx !== 0 || ky !== 0) {
-            // 重置目标位置，优先键盘控制
-            this.moving = false;
-            this.targetX = null;
-            this.targetY = null;
-            if (kx !== 0 && ky !== 0) {
-                kx *= Math.SQRT1_2;
-                ky *= Math.SQRT1_2;
-            }
-            this.x = Math.max(0, Math.min(width - this.size, this.x + kx * spd));
-            this.y = Math.max(0, Math.min(height - this.size, this.y + ky * spd));
-        }
-        
-        // 点击移动
-        if (this.moving && this.targetX !== null && this.targetY !== null) {
-            const dx = this.targetX - (this.x + this.size / 2);
-            const dy = this.targetY - (this.y + this.size / 2);
-            const distance = Math.sqrt(dx * dx + dy * dy);
-            
-            if (distance > 5) { // 到达目标附近时停止
-                const moveX = (dx / distance) * spd;
-                const moveY = (dy / distance) * spd;
-                
-                // 边界检查
-                this.x = Math.max(0, Math.min(width - this.size, this.x + moveX));
-                this.y = Math.max(0, Math.min(height - this.size, this.y + moveY));
-            } else {
+            if (kx !== 0 || ky !== 0) {
                 this.moving = false;
                 this.targetX = null;
                 this.targetY = null;
+                if (kx !== 0 && ky !== 0) {
+                    kx *= Math.SQRT1_2;
+                    ky *= Math.SQRT1_2;
+                }
+                inX = kx;
+                inY = ky;
+            } else if (this.moving && this.targetX !== null && this.targetY !== null) {
+                // 点击移动
+                const dx = this.targetX - (this.x + this.size / 2);
+                const dy = this.targetY - (this.y + this.size / 2);
+                const dist = Math.sqrt(dx * dx + dy * dy);
+                if (dist > 5) {
+                    inX = dx / dist;
+                    inY = dy / dist;
+                } else {
+                    this.moving = false;
+                    this.targetX = null;
+                    this.targetY = null;
+                }
             }
         }
+
+        // 动态运动学手感引擎:
+        // 有输入时快速加速插值 (敏捷发力 ~70ms), 无输入时平滑摩擦阻尼刹车 (~50ms)
+        const hasInput = (inX !== 0 || inY !== 0);
+        const targetVx = inX * targetSpeed;
+        const targetVy = inY * targetSpeed;
+        const accelRate = hasInput ? 0.35 : 0.25;
+
+        this.vx = (this.vx || 0) * (1 - accelRate) + targetVx * accelRate;
+        this.vy = (this.vy || 0) * (1 - accelRate) + targetVy * accelRate;
+        if (!hasInput && Math.abs(this.vx) < 0.05) this.vx = 0;
+        if (!hasInput && Math.abs(this.vy) < 0.05) this.vy = 0;
+
+        // 贴墙平滑滑移(Corner Sliding):撞到边界时吸收法向动量并沿墙平滑滑行
+        let nextX = this.x + this.vx;
+        let nextY = this.y + this.vy;
+
+        if (nextX < 0) { nextX = 0; this.vx = 0; }
+        else if (nextX > width - this.size) { nextX = width - this.size; this.vx = 0; }
+
+        if (nextY < 0) { nextY = 0; this.vy = 0; }
+        else if (nextY > height - this.size) { nextY = height - this.size; this.vy = 0; }
+
+        this.x = nextX;
+        this.y = nextY;
     }
 
     // 冲刺残影:冲刺期间每个渲染帧记一个位置,200ms 内淡出(按真实时间,不随帧率变化)
