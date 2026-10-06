@@ -721,6 +721,7 @@ class Game {
     static TALENT_REROLLS = 2; // 每局天赋「换一批」基础次数
     // 自动画质档位:持续掉帧时逐级降低画布分辨率上限与粒子数量(本次打开页面内不再回升,避免来回切换)
     static PERF_FRAME_MS = 22;  // 平滑后的帧间隔超过它(约 45 帧以下)视为掉帧
+    static STAR_LEVELS = 5;  // 星星闪烁亮度档位数
     static QUALITY = [{ dpr: 2, fx: 1 }, { dpr: 1.5, fx: 0.6 }, { dpr: 1, fx: 0.4 }];
     static DN_MERGE = 0.25;   // 同一目标多少秒内的伤害并进同一个伤害数字
     static DN_MAX = 60;       // 同屏伤害数字上限(超出丢最早的)
@@ -734,7 +735,8 @@ class Game {
     static CTX = { a: { slot: 'a', mult: 1 }, q: { slot: 'q', mult: 1 }, e: { slot: 'e', mult: 1 } };
     constructor() {
         this.canvas = document.getElementById('gameCanvas');
-        this.ctx = this.canvas.getContext('2d');
+        // 画布每帧都整屏铺底色,本身不透明:声明 alpha:false 让合成器跳过与页面的混合
+        this.ctx = this.canvas.getContext('2d', { alpha: false });
         this.gameScale = 1;
         this.gameOffsetX = 0;
         this.gameOffsetY = 0;
@@ -7202,16 +7204,15 @@ class Game {
     // 背景渐变与网格是静态的,预渲染到离屏画布;每帧只画闪烁的星星
     _buildBgLayers() {
         const W = this.width, H = this.height;
-        const bg = SpriteCache.get('bg|gradient', W, H, 0, g => {
+        // 网格直接烘焙进背景层(固定透明度):每帧少一次整屏带透明度的贴图
+        const bg = SpriteCache.get('bg|base', W, H, 0, g => {
             const grad = g.createLinearGradient(0, 0, 0, H);
             grad.addColorStop(0, '#07101a');
             grad.addColorStop(1, '#050c12');
             g.fillStyle = grad;
             g.fillRect(0, 0, W, H);
-        });
-        // 网格按不透明绘制,渲染时用 globalAlpha 做呼吸效果
-        const grid = SpriteCache.get('bg|grid', W, H, 0, g => {
             const gridSize = 60;
+            g.globalAlpha = 0.06;
             g.strokeStyle = 'rgb(0, 200, 255)';
             g.lineWidth = 0.5;
             g.beginPath();
@@ -7219,30 +7220,35 @@ class Game {
             for (let y = 0; y < H; y += gridSize) { g.moveTo(0, y); g.lineTo(W, y); }
             g.stroke();
         });
-        this._bgLayers = { bg, grid };
+        // 星星按亮度分 5 档,每档合并成一条路径一次 fill(原来每颗星一次 fill)
+        this._starBuckets = Array.from({ length: Game.STAR_LEVELS }, () => []);
+        this._bgLayers = { bg };
     }
 
     renderBackground() {
         const ctx = this.ctx;
         if (!this._bgLayers) this._buildBgLayers();
-        const { bg, grid } = this._bgLayers;
         // 背景层同样按设备像素 1:1 绘制(缩放比例非整数时插值缩放整屏图很慢)
         const m = ctx.getTransform();
-        const snap = { a: m.a, e: m.e, f: m.f };
-        SpriteCache.drawPx(ctx, bg, 0, 0, snap);
+        SpriteCache.drawPx(ctx, this._bgLayers.bg, 0, 0, { a: m.a, e: m.e, f: m.f });
 
-        const t = this.bgTime;
+        // 星星闪烁:亮度量化到 STAR_LEVELS 档,同档的星星一次 fill
+        const t = this.bgTime, L = Game.STAR_LEVELS, buckets = this._starBuckets;
+        for (const b of buckets) b.length = 0;
+        for (const s of this.stars) {
+            const twinkle = Math.max(0.05, Math.min(1, s.alpha + Math.sin(t * s.twinkleSpeed * 60 + s.twinkleOffset) * 0.25));
+            buckets[Math.min(L - 1, Math.floor(twinkle * L))].push(s);
+        }
         ctx.save();
         ctx.fillStyle = '#c8e8ff';
-        for (const s of this.stars) {
-            const twinkle = s.alpha + Math.sin(t * s.twinkleSpeed * 60 + s.twinkleOffset) * 0.25;
-            ctx.globalAlpha = Math.max(0.05, Math.min(1, twinkle));
+        for (let i = 0; i < L; i++) {
+            const b = buckets[i];
+            if (!b.length) continue;
+            ctx.globalAlpha = (i + 0.5) / L;
             ctx.beginPath();
-            ctx.arc(s.x, s.y, s.r, 0, Math.PI * 2);
+            for (const s of b) { ctx.moveTo(s.x + s.r, s.y); ctx.arc(s.x, s.y, s.r, 0, Math.PI * 2); }
             ctx.fill();
         }
-        ctx.globalAlpha = 0.06 + Math.sin(t * 0.5) * 0.02;
-        SpriteCache.drawPx(ctx, grid, 0, 0, snap);
         ctx.restore();
     }
 
@@ -7377,8 +7383,7 @@ class Game {
     render() {
         const ctx = this.ctx;
 
-        // 清空物理画布（含 letterbox 区域）
-        ctx.clearRect(0, 0, this.canvas.width, this.canvas.height);
+        // 铺底色(含 letterbox 区域);底色不透明,无需先 clearRect
         ctx.fillStyle = '#050a10';
         ctx.fillRect(0, 0, this.canvas.width, this.canvas.height);
 
@@ -7426,9 +7431,7 @@ class Game {
             projectile.render(this.ctx);
         }
 
-        for (let b of this.enemyBullets) {
-            b.render(this.ctx);
-        }
+        EnemyBullet.renderAll(ctx, this.enemyBullets);
         this._renderMeteorRocks(ctx);
 
         this._renderEffects();
@@ -8788,6 +8791,16 @@ class Game {
         // 每个箭槽(从底到顶)
         const gap = 2;
         const slotH = (h - gap * (max + 1)) / max;
+        // 已装填的箭槽合并成一条路径,只做一次带光晕的 fill
+        if (cur > 0) {
+            ctx.fillStyle = '#aaff44';
+            ctx.shadowBlur = 6;
+            ctx.shadowColor = '#aaff44';
+            ctx.beginPath();
+            for (let i = 0; i < Math.min(cur, max); i++) addRoundRect(ctx, x + 2, y + h - gap - (i + 1) * slotH - i * gap, w - 4, slotH, 2);
+            ctx.fill();
+            ctx.shadowBlur = 0;
+        }
         for (let i = 0; i < max; i++) {
             const slotY = y + h - gap - (i + 1) * slotH - i * gap;
             const filled = i < cur;
@@ -8795,12 +8808,7 @@ class Game {
             const isReloadingSlot = reloading && i === cur;
 
             if (filled) {
-                ctx.fillStyle = '#aaff44';
-                ctx.shadowBlur = 6;
-                ctx.shadowColor = '#aaff44';
-                roundRect(ctx, x + 2, slotY, w - 4, slotH, 2);
-                ctx.fill();
-                ctx.shadowBlur = 0;
+                // 已在上面合批画过
             } else if (isReloadingSlot) {
                 // 装填进度从底部往上充
                 const fillH = slotH * reloadProg;
@@ -10917,6 +10925,7 @@ class PiercingArrow {
 }
 
 class EnemyBullet {
+    static TRAIL = 8; // 尾迹长度,也是尾迹透明度的合批档位数
     constructor(x, y, vx, vy, damage) {
         this.id = nextEntityId();
         this.x = x - 6;
@@ -10931,46 +10940,70 @@ class EnemyBullet {
 
     update() {
         this.trail.push({ x: this.x + this.size / 2, y: this.y + this.size / 2 });
-        if (this.trail.length > 8) this.trail.shift();
+        if (this.trail.length > EnemyBullet.TRAIL) this.trail.shift();
         this.x += this.vx;
         this.y += this.vy;
+    }
+
+    // 所有敌方子弹一起画:尾迹按透明度档位合并成 TRAIL 条路径(原来每颗子弹每个尾迹点一次 fill),
+    // 弹体用缓存精灵按飞行方向旋转贴图(原来每颗子弹一次实时 shadowBlur + 径向渐变)
+    static renderAll(ctx, bullets) {
+        if (!bullets.length) return;
+        const L = EnemyBullet.TRAIL;
+        ctx.save();
+        ctx.fillStyle = '#ffcc80';
+        for (let k = 1; k < L; k++) {
+            ctx.beginPath();
+            let any = false;
+            for (const b of bullets) {
+                const n = b.trail.length;
+                for (let i = 1; i < n; i++) {
+                    if (Math.round(i / n * L) !== k) continue;
+                    const p = b.trail[i], r = b.size * 0.3 * (i / n);
+                    ctx.moveTo(p.x + r, p.y);
+                    ctx.arc(p.x, p.y, r, 0, Math.PI * 2);
+                    any = true;
+                }
+            }
+            if (any) { ctx.globalAlpha = k / L * 0.45; ctx.fill(); }
+        }
+        ctx.restore();
+        for (const b of bullets) b.render(ctx);
     }
 
     render(ctx) {
         const cx = this.x + this.size / 2;
         const cy = this.y + this.size / 2;
-        ctx.save();
-        // 弹道尾迹
-        for (let i = 0; i < this.trail.length; i++) {
-            const t = i / this.trail.length;
-            ctx.globalAlpha = t * 0.45;
-            ctx.fillStyle = '#ffcc80';
-            ctx.beginPath();
-            ctx.arc(this.trail[i].x, this.trail[i].y, this.size * 0.3 * t, 0, Math.PI * 2);
-            ctx.fill();
-        }
-        ctx.globalAlpha = 1;
-        // 炮弹主体:椭圆形朝飞行方向
-        ctx.shadowBlur = 12;
-        ctx.shadowColor = '#ff6f00';
+        const spr = EnemyBullet.bodySprite(this.size);
         ctx.save();
         ctx.translate(cx, cy);
         ctx.rotate(this.angle);
-        const bGrad = ctx.createRadialGradient(0, 0, 0, 0, 0, this.size * 0.6);
-        bGrad.addColorStop(0, '#ffee58');
-        bGrad.addColorStop(0.5, '#ff9800');
-        bGrad.addColorStop(1, '#bf360c');
-        ctx.fillStyle = bGrad;
-        ctx.beginPath();
-        ctx.ellipse(0, 0, this.size * 0.6, this.size * 0.38, 0, 0, Math.PI * 2);
-        ctx.fill();
-        // 高光
-        ctx.fillStyle = 'rgba(255,255,200,0.5)';
-        ctx.beginPath();
-        ctx.ellipse(-this.size * 0.15, -this.size * 0.1, this.size * 0.22, this.size * 0.12, -0.3, 0, Math.PI * 2);
-        ctx.fill();
+        SpriteCache.draw(ctx, spr, -this.size / 2, -this.size / 2, this.size, this.size);
         ctx.restore();
-        ctx.restore();
+    }
+
+    // 精灵坐标系 (0,0)-(size,size),中心为弹体中心、+x 为飞行方向
+    static bodySprite(size) {
+        const pad = SpriteCache.padFor(12);
+        return SpriteCache.get('ebullet|' + size, size, size, pad, g => {
+            const c = size / 2;
+            g.translate(c, c);
+            g.shadowBlur = SpriteCache.blur(12);
+            g.shadowColor = '#ff6f00';
+            const bGrad = g.createRadialGradient(0, 0, 0, 0, 0, size * 0.6);
+            bGrad.addColorStop(0, '#ffee58');
+            bGrad.addColorStop(0.5, '#ff9800');
+            bGrad.addColorStop(1, '#bf360c');
+            g.fillStyle = bGrad;
+            g.beginPath();
+            g.ellipse(0, 0, size * 0.6, size * 0.38, 0, 0, Math.PI * 2);
+            g.fill();
+            g.shadowBlur = 0;
+            g.fillStyle = 'rgba(255,255,200,0.5)';
+            g.beginPath();
+            g.ellipse(-size * 0.15, -size * 0.1, size * 0.22, size * 0.12, -0.3, 0, Math.PI * 2);
+            g.fill();
+        });
     }
 }
 
