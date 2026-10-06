@@ -2035,6 +2035,7 @@ class Game {
             this.player.dashTimer = myData.dt || 0;
             this.player.dodgeCount = myData.dg || 0;
             this.player.combo = myData.cb ? myData.cb[0] : 0;
+            this.player.frenzyTier = Math.min(5, Math.floor(this.player.combo / 10));
             this.player.comboTimer = myData.cb ? myData.cb[1] : 0;
             this.player.maxCombo = myData.mc || 0;
             if (myData.ds) DMG_SRCS.forEach((k, i) => { this.player.dmgStats[k] = myData.ds[i]; });
@@ -2986,7 +2987,10 @@ class Game {
 
     // 白闪计时与受击暗角衰减(guest 也跑,白闪状态来自快照标记)
     _tickHitFeedback() {
-        for (const e of this.enemies) if (e.hitFlash > -1) e.hitFlash = Math.max(-1, e.hitFlash - DT);
+        for (const e of this.enemies) {
+            if (e.hitFlash > -1) e.hitFlash = Math.max(-1, e.hitFlash - DT);
+            if (e.squash > 0) e.squash = Math.max(0, e.squash - DT / 0.15);
+        }
         if (this.boss && this.boss.hitFlash > -1) this.boss.hitFlash = Math.max(-1, this.boss.hitFlash - DT);
         if (this.hurtVignette > 0) this.hurtVignette = Math.max(0, this.hurtVignette - DT);
         // 低血量(<30%)心跳:屏幕边缘随心跳泛红,血越少跳得越快
@@ -3004,22 +3008,55 @@ class Game {
 
     // 本机受击时屏幕四周泛红
     _renderHurtVignette() {
+        const p = this.player;
+        const hpRatio = p.maxHealth > 0 ? p.currentHealth / p.maxHealth : 1;
         // 低血量心跳脉冲:每次心跳亮一下再慢慢暗下去
         let beat = 0;
         if (this.lowHpPeriod > 0) {
             const ph = 1 - this.lowHpBeat / this.lowHpPeriod;   // 0 = 刚跳
             beat = (ph < 0.15 ? 1 : Math.max(0, 1 - (ph - 0.15) / 0.6)) * 0.3;
         }
+        if (hpRatio < 0.25 && hpRatio > 0) {
+            const danger = (0.25 - hpRatio) / 0.25; // 0 ~ 1
+            const pulse = (Math.sin(performance.now() / 160) * 0.5 + 0.5) * 0.12 * danger;
+            beat = Math.max(beat * (1.3 + danger * 0.5), 0.15 * danger + pulse);
+        }
         if (this.hurtVignette <= 0 && beat <= 0) return;
         const ctx = this.ctx;
         const W = this.width, H = this.height;
-        const a = Math.max(Math.min(1, this.hurtVignette / 0.35) * 0.55, beat);
-        const g = ctx.createRadialGradient(W / 2, H / 2, Math.min(W, H) * 0.3, W / 2, H / 2, Math.max(W, H) * 0.65);
-        g.addColorStop(0, 'rgba(255,0,40,0)');
-        g.addColorStop(1, `rgba(255,0,40,${a})`);
+        const hurtA = Math.min(1, this.hurtVignette / 0.35) * 0.55;
+        let a = Math.max(hurtA, beat);
+        if (hpRatio < 0.25 && hpRatio > 0) a = Math.min(0.85, a * 1.25);
+
+        // 缓存径向渐变，画布尺寸变化时重建;中央 60% 保持完全透明
+        if (!this._vignetteGrad || this._vignetteW !== W || this._vignetteH !== H) {
+            this._vignetteW = W;
+            this._vignetteH = H;
+            const g = ctx.createRadialGradient(W / 2, H / 2, Math.min(W, H) * 0.3, W / 2, H / 2, Math.max(W, H) * 0.65);
+            g.addColorStop(0, 'rgba(255,0,40,0)');
+            g.addColorStop(0.5, 'rgba(255,0,40,0.3)');
+            g.addColorStop(1, 'rgba(255,0,40,1)');
+            this._vignetteGrad = g;
+        }
+
         ctx.save();
-        ctx.fillStyle = g;
+        ctx.globalAlpha = a;
+        ctx.fillStyle = this._vignetteGrad;
         ctx.fillRect(0, 0, W, H);
+
+        // 生命比例 < 15% 时:从屏幕边缘向内收缩的半透明红色波纹(周期 1 秒,收缩至中央清晰区边缘)
+        if (hpRatio < 0.15 && hpRatio > 0) {
+            const wavePhase = (performance.now() % 1000) / 1000;
+            const maxR = Math.max(W, H) * 0.65;
+            const minR = Math.min(W, H) * 0.31;
+            const waveR = maxR - (maxR - minR) * wavePhase;
+            const waveAlpha = (1 - wavePhase) * 0.35;
+            ctx.beginPath();
+            ctx.arc(W / 2, H / 2, waveR, 0, Math.PI * 2);
+            ctx.strokeStyle = `rgba(255,30,40,${waveAlpha})`;
+            ctx.lineWidth = 2 + (1 - wavePhase) * 3;
+            ctx.stroke();
+        }
         ctx.restore();
     }
 
@@ -3044,13 +3081,20 @@ class Game {
         this._tickGear();
         if (this.player.comboTimer > 0) {
             this.player.comboTimer -= DT;
-            if (this.player.comboTimer <= 0) { this.player.comboTimer = 0; this.player.combo = 0; }
+            if (this.player.comboTimer <= 0) {
+                this.player.comboTimer = 0;
+                this.player.combo = 0;
+                this.player.frenzyTier = 0;
+            }
+        } else {
+            this.player.frenzyTier = 0;
         }
         // 天赋「嗜血回春」:每秒回复最大生命的一部分
         const regen = this.player.tree && this.player.tree.regen;
         if (regen && this.player.currentHealth > 0) this.player.heal(this.player.maxHealth * regen * DT);
-        if (this.player.skillQ.cooldown > 0) this.player.skillQ.cooldown -= DT;
-        if (this.player.skillE.cooldown > 0) this.player.skillE.cooldown -= DT;
+        const cdDt = DT * (1 + (this.player.frenzyTier || 0) * 0.04);
+        if (this.player.skillQ.cooldown > 0) this.player.skillQ.cooldown = Math.max(0, this.player.skillQ.cooldown - cdDt);
+        if (this.player.skillE.cooldown > 0) this.player.skillE.cooldown = Math.max(0, this.player.skillE.cooldown - cdDt);
 
         if (this.player.class === 'mage' && this.player.mana < this.player.maxMana) {
             this.player.mana = Math.min(this.player.maxMana, this.player.mana + this.player.manaRegen * DT);
@@ -4843,7 +4887,13 @@ class Game {
             const prevCtx = this._ctx;
             this._ctx = proj.ctx || null;   // 命中按发射时的技能位结算宝石效果
             for (let j = this.enemies.length - 1; j >= 0; j--) {
-                if (this.checkCollision(proj, this.enemies[j])) {
+                const enemy = this.enemies[j];
+                const pSize = proj.size || 8;
+                const eSize = enemy.size || 30;
+                const threshold = (pSize + eSize) * 0.5 + 8;
+                if (Math.abs((proj.x + pSize * 0.5) - (enemy.x + eSize * 0.5)) > threshold ||
+                    Math.abs((proj.y + pSize * 0.5) - (enemy.y + eSize * 0.5)) > threshold) continue;
+                if (this.checkCollision(proj, enemy)) {
                     // 有限穿透:已命中过的同一敌人跳过
                     if (proj.hitEnemies && proj.hitEnemies.has(this.enemies[j])) continue;
                     const dmg = this._applyHitMods(proj.owner, this.enemies[j], proj.damage != null ? proj.damage : 15);
@@ -6294,6 +6344,7 @@ class Game {
         const p = this.player;
         p.combo = (p.comboTimer > 0 ? p.combo : 0) + 1;
         p.comboTimer = Game.COMBO_WINDOW;
+        p.frenzyTier = Math.min(5, Math.floor(p.combo / 10));
         if (p.combo > p.maxCombo) p.maxCombo = p.combo;
         const n = p.combo;
         if (Game.comboMilestone(n)) {
@@ -7874,17 +7925,21 @@ class Game {
         ctx.textAlign = 'right';
         ctx.textBaseline = 'alphabetic';
         // 数字 + 「连杀」
+        const tier = Math.min(5, p.frenzyTier || 0);
+        const frenzyText = tier >= 2 ? ` 狂热 ${tier}阶` : '';
+        const isFrenzy = tier >= 2;
+        const frenzyPulse = isFrenzy ? Math.sin(performance.now() / 150) * 0.5 + 0.5 : 0;
         ctx.font = 'bold 12px Arial';
-        ctx.fillStyle = 'rgba(255,255,255,0.85)';
-        ctx.fillText('连杀', rx, y + 26);
-        const lw = ctx.measureText('连杀').width;
+        ctx.fillStyle = isFrenzy ? '#ffb74d' : 'rgba(255,255,255,0.85)';
+        ctx.fillText('连杀' + frenzyText, rx, y + 26);
+        const lw = ctx.measureText('连杀' + frenzyText).width;
         const sc = 1 + bump * 0.25 + pop * 0.5;
         ctx.save();
         ctx.translate(rx - lw - 4, y + 26);
         ctx.scale(sc, sc);
         ctx.font = 'bold 26px Arial';
-        ctx.shadowBlur = 10 + pop * 14;
-        ctx.shadowColor = color;
+        ctx.shadowBlur = (10 + pop * 14) + (isFrenzy ? 8 + frenzyPulse * 10 : 0);
+        ctx.shadowColor = isFrenzy ? '#ff9800' : color;
         ctx.fillStyle = color;
         ctx.fillText(String(n), 0, 0);
         ctx.restore();
@@ -9056,6 +9111,7 @@ class Player {
         this.attack = 20;
         this.defense = 10;
         this.potentialPoints = 0;
+        this.frenzyTier = 0;
         
         this.class = null;
 
@@ -9236,7 +9292,8 @@ class Player {
 
     _move(keys, width, height) {
         const gear = this.gear && GEARS[this.gear.type];
-        const spd = this.speed * (gear && gear.speedMult || 1);
+        const frenzyMult = 1 + (this.frenzyTier || 0) * 0.025;
+        const spd = this.speed * (gear && gear.speedMult || 1) * frenzyMult;
         // 虚拟摇杆(模拟量方向)
         const jx = keys._jx || 0, jy = keys._jy || 0;
         if (jx || jy) {
@@ -9247,30 +9304,23 @@ class Player {
             this.targetY = null;
         }
         // 键盘控制
-        if (keys['ArrowUp'] || keys['w']) {
-            this.y = Math.max(0, this.y - spd);
+        let kx = 0, ky = 0;
+        if (keys['ArrowUp'] || keys['w']) ky -= 1;
+        if (keys['ArrowDown'] || keys['s']) ky += 1;
+        if (keys['ArrowLeft'] || keys['a']) kx -= 1;
+        if (keys['ArrowRight'] || keys['d']) kx += 1;
+
+        if (kx !== 0 || ky !== 0) {
             // 重置目标位置，优先键盘控制
             this.moving = false;
             this.targetX = null;
             this.targetY = null;
-        }
-        if (keys['ArrowDown'] || keys['s']) {
-            this.y = Math.min(height - this.size, this.y + spd);
-            this.moving = false;
-            this.targetX = null;
-            this.targetY = null;
-        }
-        if (keys['ArrowLeft'] || keys['a']) {
-            this.x = Math.max(0, this.x - spd);
-            this.moving = false;
-            this.targetX = null;
-            this.targetY = null;
-        }
-        if (keys['ArrowRight'] || keys['d']) {
-            this.x = Math.min(width - this.size, this.x + spd);
-            this.moving = false;
-            this.targetX = null;
-            this.targetY = null;
+            if (kx !== 0 && ky !== 0) {
+                kx *= Math.SQRT1_2;
+                ky *= Math.SQRT1_2;
+            }
+            this.x = Math.max(0, Math.min(width - this.size, this.x + kx * spd));
+            this.y = Math.max(0, Math.min(height - this.size, this.y + ky * spd));
         }
         
         // 点击移动
@@ -9347,7 +9397,10 @@ class Player {
         if (actualDamage > 0) {
             this.currentHealth = Math.max(0, this.currentHealth - actualDamage);
             // 受伤打断一半连杀:冲刺躲开攻击才能把连杀滚大
-            if (this.combo > 0) this.combo = Math.floor(this.combo / 2);
+            if (this.combo > 0) {
+                this.combo = Math.floor(this.combo / 2);
+                this.frenzyTier = Math.min(5, Math.floor(this.combo / 10));
+            }
         }
         return actualDamage;
     }
@@ -9520,6 +9573,7 @@ class Enemy {
 
         // 受击反馈:hitFlash>0 时白闪;降为负值时作为再次闪白的间隔(持续伤害时呈闪烁而非常亮)
         this.hitFlash = -1;
+        this.squash = 0;
         // 击退速度(像素/帧,每帧衰减),由 Game 在 updateEnemies 推进
         this.kbX = 0;
         this.kbY = 0;
@@ -9972,14 +10026,15 @@ class Enemy {
         if (Enemy.onDamage) Enemy.onDamage(Math.min(actualDamage, this.currentHealth));
         this.currentHealth = Math.max(0, this.currentHealth - actualDamage);
         this._dn = (this._dn || 0) + actualDamage; // 伤害数字:本帧累计,由 Game._flushDmgNums 统一出数
-        this.flash();
+        this.flash(!!this._dnCrit);
         return actualDamage;
     }
 
     // 白闪;_mpHit 让 host 在下一个快照里告诉 guest 也闪一下
-    flash() {
+    flash(isCrit = false) {
         if (this.hitFlash <= -0.04) {
             this.hitFlash = 0.08;
+            this.squash = isCrit ? 1.3 : 1;
             this._mpHit = true;
         }
     }
@@ -10006,6 +10061,16 @@ class Enemy {
     // 第 1 遍:本体(炮手含炮管、炮口火花、"炮"字)+ 受击白闪。血条见 renderBars,星星/冰封见 renderOverlays。
     // 由 Game._renderEnemies 调用,调用前已关闭 imageSmoothing
     render(ctx, snap) {
+        const cx = this.x + this.size / 2;
+        const cy = this.y + this.size / 2;
+        const s = this.squash > 0.001 ? this.squash * Math.cos((1 - this.squash) * Math.PI * 2.5) : 0;
+        const useSquash = Math.abs(s) > 0.001;
+        if (useSquash) {
+            ctx.save();
+            ctx.translate(cx, cy);
+            ctx.scale(1 + 0.22 * s, 1 - 0.18 * s);
+            ctx.translate(-cx, -cy);
+        }
         const fadeIn = this.type === 'gunner' ? this.spawnProgress() : 1;
         if (fadeIn < 1) {
             const a = ctx.globalAlpha;
@@ -10013,6 +10078,9 @@ class Enemy {
             this._renderBody(ctx, snap);
             ctx.globalAlpha = a;
         } else this._renderBody(ctx, snap);
+        if (useSquash) {
+            ctx.restore();
+        }
     }
 
     // 炮手出场进度 0→1(Enemy.SPAWN_IN 秒)
