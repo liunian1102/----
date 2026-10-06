@@ -4362,10 +4362,15 @@ class Game {
         };
         hit(this.player);
         if (this.mpMode === 'host') for (const gp of this.mpGuestPlayers.values()) hit(gp);
-        // 光束扫过的地方冒火花
+        // 光束扫过的地方冒火花;只取场地内的一段,否则火花会飘进手机横屏两侧的黑边里
         if (Math.random() < 0.5) {
-            const d = 60 + Math.random() * 500;
-            this.spawnParticles(bcx + c * d, bcy + sn * d, '#ea80fc', 1, 1, 3, 2, 3, 0.06);
+            const exit = Math.min(c > 0 ? (this.width - bcx) / c : c < 0 ? -bcx / c : Infinity,
+                sn > 0 ? (this.height - bcy) / sn : sn < 0 ? -bcy / sn : Infinity);
+            const d = 60 + Math.random() * (Math.min(560, exit) - 60);
+            const sx = bcx + c * d, sy = bcy + sn * d;
+            if (d > 60 && sx >= 0 && sx <= this.width && sy >= 0 && sy <= this.height) {
+                this.spawnParticles(sx, sy, '#ea80fc', 1, 1, 3, 2, 3, 0.06);
+            }
         }
     }
 
