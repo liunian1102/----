@@ -1290,6 +1290,7 @@ class Game {
             if (!this.isPaused && this.isRunning) {
                 if (e.key === 'q' || e.key === 'Q') this._requestSkill('Q');
                 else if (e.key === 'e' || e.key === 'E') this._requestSkill('E');
+                else if (e.key === 'r' || e.key === 'R') this._requestSkill('ult');
                 else if ((e.key === ' ' || e.key === 'Shift') && !e.repeat) this._requestSkill('dash');
             }
         });
@@ -1963,6 +1964,8 @@ class Game {
             class: p.class, hurtCooldown: q2(p.hurtCooldown), invincibleTimer: q2(p.invincibleTimer), kc: p.killCount || 0,
             sp: p.spec || 0, aw: p.awakened ? 1 : 0,
             dc: q2(p.dashCooldown), dt: q2(p.dashTimer), dg: p.dodgeCount || 0,
+            // 终极觉醒奥义充能(0~100)与激活中标记
+            uc: q1(p.ultCharge || 0), ua: p.ultActiveTimer > 0 ? 1 : 0,
             // 连杀 [连杀数, 剩余秒] 与本局最高连杀
             cb: p.combo > 0 ? [p.combo, q2(p.comboTimer)] : 0, mc: p.maxCombo || 0,
             // 限时装备 [种类序号, 剩余, 总时长, 法球角度, 等级(1/2)]
@@ -2153,6 +2156,8 @@ class Game {
             this.player.dashCooldown = myData.dc || 0;
             this.player.dashTimer = myData.dt || 0;
             this.player.dodgeCount = myData.dg || 0;
+            this.player.ultCharge = myData.uc !== undefined ? myData.uc : (this.player.ultCharge || 0);
+            this.player.ultActiveTimer = myData.ua ? Math.max(this.player.ultActiveTimer || 0, 0.1) : 0;
             this.player.combo = myData.cb ? myData.cb[0] : 0;
             this.player.frenzyTier = Math.min(5, Math.floor(this.player.combo / 10));
             this.player.comboTimer = myData.cb ? myData.cb[1] : 0;
@@ -3509,6 +3514,7 @@ class Game {
     _tickPlayerResources() {
         this._tickGear();
         if (this.player.blessTimer > 0) this.player.blessTimer = Math.max(0, this.player.blessTimer - DT);
+        if (this.player.ultActiveTimer > 0) this.player.ultActiveTimer = Math.max(0, this.player.ultActiveTimer - DT);
         if (this.player.comboTimer > 0) {
             this.player.comboTimer -= DT;
             if (this.player.comboTimer <= 0) {
@@ -4310,7 +4316,8 @@ class Game {
             if (which === 'dash') {
                 if (p._aim && p.dashCooldown <= 0 && p.dashTimer <= 0) { p.faceX = p._aim[0]; p.faceY = p._aim[1]; }
                 this._dash();
-            } else if (which === 'E') this.castSkillE();
+            } else if (which === 'ult' || which === 'R') this.castSkillR();
+            else if (which === 'E') this.castSkillE();
             else this.castSkillQ();
         } finally {
             p._aim = null;
@@ -4352,12 +4359,13 @@ class Game {
         return true;
     }
 
-    // 完美闪避:每次冲刺最多触发一次,返还一半冲刺冷却
+    // 完美闪避:每次冲刺最多触发一次,返还一半冲刺冷却并获得 15 点奥义充能
     _onPerfectDodge(p) {
         if (p.dashDodged) return;
         p.dashDodged = true;
         p.dodgeCount = (p.dodgeCount || 0) + 1;
         p.dashCooldown = Math.max(0, p.dashCooldown - p.dashCdTotal() * 0.5);
+        if (p.gainUltCharge) p.gainUltCharge(15);
         const cx = p.x + p.size / 2, cy = p.y + p.size / 2;
         this._showFloatingText('闪避!', cx, p.y - 18, '#80d8ff');
         this.spawnBurstRing(cx, cy, 22, '#80d8ff', 12);
@@ -6299,6 +6307,15 @@ class Game {
         if (p.spec === 'frost' && p.awakened && target.stunTimer > 0) dmg *= 1.6;
         if (p.spec === 'venom') this._applyPoison(target, p, 1);
         if (t.poisonHit) this._applyPoison(target, p, 1);
+        // 智慧基石「时空裂隙 / 奥术异化」(iK):命中附加基于法力上限的魔法裂解真实伤害
+        if (p.treeNodes && p.treeNodes.has('iK') && p.maxMana) {
+            const manaDmg = p.maxMana * 0.8;
+            dmg += manaDmg;
+            if (Math.random() < 0.3) {
+                const tx = target.x + target.size / 2, ty = target.y + target.size / 2;
+                this.spawnParticles(tx, ty, '#80d8ff', 3, 1, 2, 1, 3, 0.04);
+            }
+        }
         return dmg;
     }
 
@@ -6520,6 +6537,188 @@ class Game {
     castSkillQ() { this._castSlot('q'); }
 
     castSkillE() { this._castSlot('e'); }
+
+    // 终极觉醒奥义 (R 技能)
+    castSkillR() {
+        const p = this.player;
+        if (!p.awakened || p.currentHealth <= 0) return;
+        if ((p.ultCharge || 0) < (p.maxUltCharge || 100)) {
+            this._showFloatingText('奥义未就绪', p.x + p.size / 2, p.y - 20, '#ffcc80');
+            return;
+        }
+        p.ultCharge = 0;
+        this.screenShake = Math.max(this.screenShake, 0.35);
+        this.hitStop = Math.max(this.hitStop, 0.08);
+        Sound.play('bossSpawn');
+        this._dispatchUlt(p);
+    }
+
+    _dispatchUlt(p) {
+        const pcx = p.x + p.size / 2, pcy = p.y + p.size / 2;
+        this.effects.push({ type: 'shockwave', x: pcx, y: pcy, radius: 15, maxRadius: 150, color: '#ffd700', ttl: 0.6, maxTtl: 0.6 });
+        this.spawnBurstRing(pcx, pcy, 80, '#ffe082', 30);
+        this.spawnParticles(pcx, pcy, '#ffd700', 40, 2, 8, 2, 5, 0.04);
+
+        switch (p.class) {
+            case 'warrior':  this._warriorUlt(p); break;
+            case 'mage':     this._mageUlt(p); break;
+            case 'assassin': this._assassinUlt(p); break;
+            case 'archer':   this._archerUlt(p); break;
+            case 'paladin':  this._paladinUlt(p); break;
+            default:
+                this._showFloatingText('🌟 觉醒爆发!', pcx, pcy - 25, '#ffd700');
+                break;
+        }
+    }
+
+    // 战士奥义:「诸神黄昏」—— 霸体狂暴6s,移速+40%,受击减免35%,毁灭旋风斩席卷战场
+    _warriorUlt(p) {
+        p.ultActiveTimer = 6.0;
+        p.hurtCooldown = Math.max(p.hurtCooldown, 1.5);
+        this._showFloatingText('⚔️ 诸神黄昏!', p.x + p.size / 2, p.y - 30, '#ff3d00');
+        Sound.play('bossEnrage');
+        const ticks = 18;
+        const dmg = this._computeAttackDamage(p.attack) * 1.8;
+        for (let i = 0; i < ticks; i++) {
+            this.pendingActions.push({ delay: i * 0.3, fn: () => {
+                if (p.currentHealth <= 0) return;
+                const pcx = p.x + p.size / 2, pcy = p.y + p.size / 2;
+                const range = 140;
+                // 持续向自身吸引近身敌人并粉碎
+                for (const e of this.enemies) {
+                    const ecx = e.x + e.size / 2, ecy = e.y + e.size / 2;
+                    const d = Math.hypot(ecx - pcx, ecy - pcy);
+                    if (d <= range + 40 && d > 10) {
+                        e.x += (pcx - ecx) / d * 4;
+                        e.y += (pcy - ecy) / d * 4;
+                    }
+                }
+                const hits = this._hitAround(pcx, pcy, range, dmg);
+                if (hits > 0) p.heal(p.maxHealth * 0.015 * hits);
+                this.effects.push({ type: 'meleeSwing', x: pcx, y: pcy, radius: range, startAngle: i, endAngle: i + Math.PI * 2, color: '#ff5722', ttl: 0.22, maxTtl: 0.22 });
+            }});
+        }
+    }
+
+    // 法师奥义:「时空坍缩」—— 凝聚超重力黑洞,强力牵引全场敌人后引发超新星湮灭爆炸
+    _mageUlt(p) {
+        const pcx = p.x + p.size / 2, pcy = p.y + p.size / 2;
+        let tx = pcx, ty = pcy;
+        const target = this._findClosestTarget();
+        if (target) {
+            tx = target.x + target.size / 2;
+            ty = target.y + target.size / 2;
+        }
+        this._showFloatingText('✨ 时空坍缩!', tx, ty - 30, '#e040fb');
+        Sound.play('riftOpen');
+
+        // 持续 2.4 秒强力引力黑洞
+        const pullTicks = 12;
+        const range = 260;
+        for (let i = 0; i < pullTicks; i++) {
+            this.pendingActions.push({ delay: i * 0.2, fn: () => {
+                for (const e of this.enemies) {
+                    const ecx = e.x + e.size / 2, ecy = e.y + e.size / 2;
+                    const d = Math.hypot(ecx - tx, ecy - ty);
+                    if (d <= range && d > 10) {
+                        e.x += (tx - ecx) / d * 7;
+                        e.y += (ty - ecy) / d * 7;
+                        e.stunTimer = Math.max(e.stunTimer || 0, 0.25);
+                    }
+                }
+                this.spawnParticles(tx, ty, '#ea80fc', 4, 1, 3, 2, 4, 0.04);
+            }});
+        }
+
+        // 最终超新星湮灭爆炸
+        this.pendingActions.push({ delay: 2.5, fn: () => {
+            const burstDmg = this._computeAttackDamage(p.attack) * 6.5;
+            this._hitAround(tx, ty, range * 1.2, burstDmg);
+            this.effects.push({ type: 'shockwave', x: tx, y: ty, radius: 10, maxRadius: range * 1.25, color: '#ffffff', ttl: 0.6, maxTtl: 0.6 });
+            this.spawnBurstRing(tx, ty, range, '#ea80fc', 35);
+            this.screenShake = Math.max(this.screenShake, 0.4);
+            Sound.play('bomb');
+        }});
+    }
+
+    // 刺客奥义:「万刃影杀阵」—— 9次全场无敌极速穿梭斩击
+    _assassinUlt(p) {
+        this._showFloatingText('🗡️ 万刃影杀阵!', p.x + p.size / 2, p.y - 30, '#ff1744');
+        Sound.play('skill');
+        p.hurtCooldown = Math.max(p.hurtCooldown, 2.5); // 穿梭期间全程无敌
+
+        const strikes = 9;
+        const strikeDmg = this._computeAttackDamage(p.attack) * 2.2;
+        for (let i = 0; i < strikes; i++) {
+            this.pendingActions.push({ delay: i * 0.2, fn: () => {
+                if (p.currentHealth <= 0) return;
+                const targets = this._gearTargets().filter(t => t.currentHealth > 0);
+                if (!targets.length) return;
+                const t = targets[Math.floor(Math.random() * targets.length)];
+                const tx = t.x + t.size / 2, ty = t.y + t.size / 2;
+
+                // 瞬移至目标身旁斩击
+                p.x = tx - p.size / 2 + (Math.random() - 0.5) * 40;
+                p.y = ty - p.size / 2 + (Math.random() - 0.5) * 40;
+
+                t.takeDamage(strikeDmg);
+                this.spawnHitParticles(tx, ty, '#ff1744', 8);
+                Sound.play('critHit');
+
+                this.effects.push({ type: 'slash', x: tx, y: ty, angle: Math.random() * Math.PI * 2, length: 70, color: '#ff1744', ttl: 0.25, maxTtl: 0.25 });
+                this.effects.push({ type: 'shockwave', x: tx, y: ty, radius: 5, maxRadius: 40, color: '#ff5252', ttl: 0.2, maxTtl: 0.2 });
+            }});
+        }
+    }
+
+    // 游侠奥义:「箭雨风暴」—— 3.5秒全场持续倾泻穿透冰火流星箭雨
+    _archerUlt(p) {
+        this._showFloatingText('🏹 箭雨风暴!', p.x + p.size / 2, p.y - 30, '#00e676');
+        Sound.play('bossLaser');
+        const waves = 14;
+        const dmg = this._computeAttackDamage(p.attack) * 0.85;
+        for (let i = 0; i < waves; i++) {
+            this.pendingActions.push({ delay: i * 0.24, fn: () => {
+                // 每波随机在场内降下 4 枚流星箭
+                for (let k = 0; k < 4; k++) {
+                    const rx = 30 + Math.random() * (this.width - 60);
+                    const ry = 30 + Math.random() * (this.height - 60);
+                    this._hitAround(rx, ry, 65, dmg);
+                    this.effects.push({ type: 'arrow', x: rx, y: ry - 40, angle: Math.PI / 2, length: 45, color: '#69f0ae', ttl: 0.2, maxTtl: 0.2 });
+                    this.effects.push({ type: 'shockwave', x: rx, y: ry, radius: 4, maxRadius: 65, color: k % 2 === 0 ? '#4fc3f7' : '#ff9100', ttl: 0.3, maxTtl: 0.3 });
+                    this.spawnParticles(rx, ry, '#69f0ae', 6, 1, 3, 1.5, 3.5, 0.04);
+                }
+            }});
+        }
+    }
+
+    // 圣骑士奥义:「圣光降临」—— 圣十字结界降临,全队获得100%生命神圣护盾+全屏制裁眩晕
+    _paladinUlt(p) {
+        const pcx = p.x + p.size / 2, pcy = p.y + p.size / 2;
+        this._showFloatingText('✝️ 圣光降临!', pcx, p.y - 30, '#ffd700');
+        Sound.play('bless');
+
+        // 全队护盾与完全净化
+        for (const pl of this._livingPlayers()) {
+            pl.shield = Math.max(pl.shield || 0, pl.maxHealth);
+            pl.heal(pl.maxHealth * 0.5);
+            this.effects.push({ type: 'holyAura', x: pl.x + pl.size / 2, y: pl.y + pl.size / 2, radius: 80, ttl: 0.6, maxTtl: 0.6, color: '#fff9c4' });
+            this.spawnBurstRing(pl.x + pl.size / 2, pl.y + pl.size / 2, 70, '#fff59d', 20);
+        }
+
+        // 全场敌人眩晕 2.2 秒并受到神圣真实伤害
+        const smiteDmg = this._computeAttackDamage(p.attack) * 3.5;
+        for (const e of this.enemies) {
+            e.stunTimer = Math.max(e.stunTimer || 0, 2.2);
+            e.takeDamage(smiteDmg);
+            const ecx = e.x + e.size / 2, ecy = e.y + e.size / 2;
+            this.spawnParticles(ecx, ecy, '#ffd54f', 8, 1, 3, 2, 4, 0.03);
+        }
+        if (this.boss && this.bossState === 'active') {
+            this.boss.takeDamage(smiteDmg);
+        }
+        this.effects.push({ type: 'shockwave', x: pcx, y: pcy, radius: 15, maxRadius: this.width * 0.8, color: '#ffd700', ttl: 0.7, maxTtl: 0.7 });
+    }
 
     _warriorQ(skill) {
         if (this.player.rage < 30) return;
@@ -7221,6 +7420,7 @@ class Game {
             this.player.heal(this.player.lifeStealPerKill);
         }
         this.player.gainRage(20);
+        if (this.player.gainUltCharge) this.player.gainUltCharge(6);
         this.checkLevelUp();
     }
     
@@ -9970,6 +10170,61 @@ class Game {
             ctx.restore();
         }
 
+        // 终极觉醒奥义 (R 技能, 角色达到 Lv7 觉醒后解锁)
+        if (this.player.awakened) {
+            const ultX = baseX + (slotW + margin / 2) - slotW / 2;
+            const ultY = baseY - slotH - 18;
+            this._hudButton(ultX, ultY, slotW, slotH, 'ult');
+
+            const ultNames = { warrior: '诸神黄昏', mage: '时空坍缩', assassin: '万刃影杀', archer: '箭雨风暴', paladin: '圣光降临' };
+            const ultIcons = { warrior: '⚔️', mage: '✨', assassin: '🗡️', archer: '🏹', paladin: '✝️' };
+            const ultName = ultNames[cls] || '终极奥义';
+            const ultIcon = ultIcons[cls] || '🌟';
+
+            const charge = Math.max(0, Math.min(1, (this.player.ultCharge || 0) / (this.player.maxUltCharge || 100)));
+            const ready = charge >= 1.0;
+            const pulse = ready ? 0.6 + 0.4 * Math.sin(this.bgTime * 6) : 0;
+
+            ctx.save();
+            ctx.shadowBlur = ready ? 18 + 8 * pulse : 4;
+            ctx.shadowColor = ready ? '#ffd700' : '#333333';
+            ctx.fillStyle = ready ? 'rgba(255, 215, 0, 0.28)' : 'rgba(0,0,0,0.65)';
+            roundRect(ctx, ultX, ultY, slotW, slotH, slotR);
+            ctx.fill();
+
+            ctx.strokeStyle = ready ? '#ffd700' : '#666666';
+            ctx.lineWidth = ready ? 2.5 : 1.5;
+            roundRect(ctx, ultX, ultY, slotW, slotH, slotR);
+            ctx.stroke();
+
+            // 环形外层充能弧
+            if (charge > 0) {
+                ctx.strokeStyle = ready ? '#fff59d' : '#ffd54f';
+                ctx.lineWidth = 3;
+                ctx.lineCap = 'round';
+                ctx.beginPath();
+                ctx.arc(ultX + slotW / 2, ultY + slotH / 2, slotW * 0.58, -Math.PI / 2, -Math.PI / 2 + Math.PI * 2 * charge);
+                ctx.stroke();
+            }
+
+            // 图标与快捷键
+            ctx.font = '20px Arial';
+            ctx.textAlign = 'center';
+            ctx.textBaseline = 'middle';
+            ctx.fillText(ultIcon, ultX + slotW / 2, ultY + slotH / 2 - 5);
+
+            ctx.font = 'bold 11px Arial';
+            ctx.fillStyle = ready ? '#fffde7' : '#cccccc';
+            ctx.fillText(ready ? 'R 释放!' : `R ${Math.floor(charge * 100)}%`, ultX + slotW / 2, ultY + slotH / 2 + 15);
+
+            // 槽顶上方大招名牌
+            ctx.font = 'bold 10px Arial';
+            ctx.fillStyle = ready ? '#ffe082' : '#b0bec5';
+            ctx.fillText(ultName, ultX + slotW / 2, ultY - 6);
+
+            ctx.restore();
+        }
+
         ctx.restore();
     }
 
@@ -10089,6 +10344,12 @@ class Player {
 
         this.skillQ = { cooldown: 0, maxCooldown: 3, level: 1 };
         this.skillE = { cooldown: 0, maxCooldown: 5, level: 1 };
+
+        // 终极觉醒奥义 (R 技能, 角色达到 Lv7 觉醒后解锁)
+        this.ultCharge = 0;              // 0 ~ 100 奥义充能槽
+        this.maxUltCharge = 100;
+        this.ultActiveTimer = 0;         // > 0 表示大招持续进行中
+        this.ultName = null;
 
         this.mana = 10;
         this.maxMana = 10;
@@ -10269,7 +10530,9 @@ class Player {
         const frenzyMult = 1 + (this.frenzyTier || 0) * 0.025;
         if (this._frostSlowTimer > 0) this._frostSlowTimer -= DT;
         const frostSlow = (this._frostSlowTimer > 0) ? 0.7 : 1.0;
-        const spd = this.speed * gearSpd * frenzyMult * frostSlow * (this.blessTimer > 0 ? Game.BLESS.speed : 1);
+        // 战士终极奥义「诸神黄昏」:狂暴移速加成 +40%
+        const ultSpd = (this.ultActiveTimer > 0 && this.class === 'warrior') ? 1.4 : 1.0;
+        const spd = this.speed * gearSpd * frenzyMult * frostSlow * ultSpd * (this.blessTimer > 0 ? Game.BLESS.speed : 1);
         // 虚拟摇杆(模拟量方向)
         const jx = keys._jx || 0, jy = keys._jy || 0;
         if (jx || jy) {
@@ -10357,6 +10620,8 @@ class Player {
         if (t.dmgTaken) mult *= Math.max(0.1, 1 + t.dmgTaken);
         // 战士被动「战意」:怒气越高越抗揍(满怒 -30%)
         if (this.class === 'warrior') mult *= 1 - 0.3 * Math.min(1, this.rage / this.maxRage);
+        // 战士终极奥义「诸神黄昏」:狂暴期间受到伤害额外减免 35%
+        if (this.ultActiveTimer > 0 && this.class === 'warrior') mult *= 0.65;
         // 守护者觉醒:神圣光环内减伤 50%;记下原始伤害,交给 Game 反弹
         if (this.auraGuard > 0) mult *= 0.5;
         actualDamage *= mult;
@@ -10405,6 +10670,13 @@ class Player {
     gainRage(amount) {
         if (this.class !== 'warrior') return;
         this.rage = Math.min(this.maxRage, this.rage + amount * (this.rageGainMult || 1));
+    }
+
+    // 终极奥义充能(觉醒后激活,造成伤害/击杀/挨打/完美闪避时获取)
+    gainUltCharge(amount) {
+        if (!this.awakened) return;
+        const prev = this.ultCharge || 0;
+        this.ultCharge = Math.min(this.maxUltCharge || 100, prev + amount);
     }
     
     spendPotentialPoint(stat) {
