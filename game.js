@@ -788,7 +788,22 @@ const Sound = {
         } catch (e) { return; }
         this.master = this.ctx.createGain();
         this.master.gain.value = this.muted ? 0 : 0.35;
-        this.master.connect(this.ctx.destination);
+
+        // 主动态低通滤波器:用于低血量濒死/子弹时间/魔王绝境时的真实心跳沉浸闷音
+        this.filterNode = this.ctx.createBiquadFilter();
+        this.filterNode.type = 'lowpass';
+        this.filterNode.frequency.setValueAtTime(20000, this.ctx.currentTime);
+        this.master.connect(this.filterNode);
+        this.filterNode.connect(this.ctx.destination);
+    },
+
+    setMuffle(active) {
+        if (!this.ctx || !this.filterNode || this.ctx.state !== 'running') return;
+        const t = this.ctx.currentTime;
+        const targetFreq = active ? 420 : 20000;
+        this.filterNode.frequency.cancelScheduledValues(t);
+        this.filterNode.frequency.setValueAtTime(Math.max(20, this.filterNode.frequency.value), t);
+        this.filterNode.frequency.exponentialRampToValueAtTime(targetFreq, t + 0.15);
     },
 
     toggleMute() {
@@ -3948,6 +3963,11 @@ class Game {
                 this._vibrate([30, 40, 90]);
             }
         }
+
+        // WebAudio 动态低通滤波混音驱动:低血量濒死(HP<25%)、守护天使绝境、魔王二阶段暴走时触发真实沉浸闷音
+        const isLowHp = p.maxHealth > 0 && (p.currentHealth / p.maxHealth) < 0.25 && p.currentHealth > 0;
+        const isDesperate = p.guardianActive || p.downed || (b && b.phase2);
+        Sound.setMuffle(isLowHp || isDesperate);
     }
 
     // ── 打击感 ──
@@ -7359,6 +7379,19 @@ class Game {
                     ttl: 0.12,
                     maxTtl: 0.12
                 });
+                // 暴击星芒物理拖尾
+                const a = Math.random() * Math.PI * 2;
+                this.effects.push({
+                    type: 'sparkleTrail',
+                    x: tx,
+                    y: ty,
+                    vx: Math.cos(a) * 45,
+                    vy: Math.sin(a) * 45 - 25,
+                    size: 5,
+                    color: '#ffd700',
+                    ttl: 0.28,
+                    maxTtl: 0.28
+                });
             }
         }
         if (p.spec === 'frost' && p.awakened && target.stunTimer > 0) dmg *= 1.6;
@@ -7702,6 +7735,9 @@ class Game {
                 const hits = this._hitAround(pcx, pcy, range, dmg);
                 if (hits > 0) p.heal(p.maxHealth * 0.015 * hits);
                 this.effects.push({ type: 'meleeSwing', x: pcx, y: pcy, radius: range, startAngle: i, endAngle: i + Math.PI * 2, color: '#ff5722', ttl: 0.22, maxTtl: 0.22 });
+                // 诸神黄昏旋转流光刀弧
+                const arcAng = (i * 0.7) % (Math.PI * 2);
+                this.effects.push({ type: 'bladeArc', x: pcx, y: pcy, angle: arcAng, length: range * 1.5, curve: 45, color: '#ff3d00', ttl: 0.24, maxTtl: 0.24 });
             }});
         }
     }
@@ -7773,6 +7809,10 @@ class Game {
 
                 this.effects.push({ type: 'slash', x: tx, y: ty, angle: Math.random() * Math.PI * 2, length: 70, color: '#ff1744', ttl: 0.25, maxTtl: 0.25 });
                 this.effects.push({ type: 'shockwave', x: tx, y: ty, radius: 5, maxRadius: 40, color: '#ff5252', ttl: 0.2, maxTtl: 0.2 });
+                // 影杀交错流光弧与星芒拖尾
+                const aAng = Math.random() * Math.PI * 2;
+                this.effects.push({ type: 'bladeArc', x: tx, y: ty, angle: aAng, length: 85, curve: 30, color: '#ff1744', ttl: 0.2, maxTtl: 0.2 });
+                this.effects.push({ type: 'sparkleTrail', x: tx, y: ty, vx: Math.cos(aAng) * 35, vy: Math.sin(aAng) * 35, size: 5, color: '#ff8a80', ttl: 0.28, maxTtl: 0.28 });
             }});
         }
     }
@@ -10581,6 +10621,42 @@ class Game {
                 ctx.beginPath();
                 ctx.arc(fx.x, fx.y, r, 0, Math.PI * 2);
                 ctx.stroke();
+            } else if (fx.type === 'bladeArc') {
+                // 高能流光刀波弧线:贝塞尔弯曲流光刀芒,带高光发光外环
+                const p = 1 - alpha;
+                ctx.translate(fx.x, fx.y);
+                ctx.rotate(fx.angle || 0);
+                ctx.globalAlpha = alpha * 0.9;
+                ctx.shadowBlur = 16;
+                ctx.shadowColor = fx.color || '#ffd700';
+
+                const len = fx.length || 90;
+                const curve = (fx.curve || 35) * (1 - p * 0.3);
+                ctx.strokeStyle = fx.color || '#ffd700';
+                ctx.lineWidth = 4 * (1 - p * 0.4);
+                ctx.beginPath();
+                ctx.moveTo(-len / 2, 0);
+                ctx.quadraticCurveTo(0, -curve, len / 2, 0);
+                ctx.stroke();
+
+                // 核心纯白高光刀刃
+                ctx.strokeStyle = '#ffffff';
+                ctx.lineWidth = 1.8;
+                ctx.beginPath();
+                ctx.moveTo(-len / 2 * 0.85, 0);
+                ctx.quadraticCurveTo(0, -curve * 0.95, len / 2 * 0.85, 0);
+                ctx.stroke();
+            } else if (fx.type === 'sparkleTrail') {
+                // 渐变星芒拖尾粒子
+                const p = 1 - alpha;
+                ctx.globalAlpha = alpha;
+                ctx.fillStyle = fx.color || '#ffd700';
+                ctx.shadowBlur = 10;
+                ctx.shadowColor = fx.color || '#ffd700';
+                const sz = (fx.size || 6) * (1 - p * 0.4);
+                ctx.beginPath();
+                ctx.arc(fx.x + (fx.vx || 0) * p, fx.y + (fx.vy || 0) * p + p * p * 20, sz, 0, Math.PI * 2);
+                ctx.fill();
             } else if (fx.type === 'critSpark') {
                 // 暴击星芒:金色八芒线条,无 shadowBlur
                 const prog = 1 - alpha;
