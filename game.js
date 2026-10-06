@@ -265,13 +265,25 @@ const DMG_SRC_INFO = {
 const ENEMY_NAMES = { chaser: '追击者', patroller: '巡逻者', giant: '巨人', gunner: '炮手', dasher: '冲锋者', bomber: '自爆方块', treasure: '宝藏方块', healer: '医疗兵', splitter: '分裂者', shard: '碎片', reaper: '噬魂者' };
 const MP_ENEMY_TYPES = ['chaser', 'patroller', 'giant', 'gunner', 'dasher', 'bomber', 'treasure', 'healer', 'splitter', 'shard', 'reaper'];
 
+// 词缀精英体系 2.0 (Affix System 2.0)
+//   gale: 疾风(极速+风刃尾迹) / tenacity: 坚毅(霸体+坚毅护盾) / frost: 极寒(减速冰环) / vortex: 引力(黑洞牵引) / venom: 剧毒(毒雾洼地)
+const AFFIX_TYPES = ['gale', 'tenacity', 'frost', 'vortex', 'venom'];
+const AFFIX_INFO = {
+    gale:     { name: '疾风', char: '疾', color: '#00e5ff', glow: '#00b0ff' },
+    tenacity: { name: '坚毅', char: '坚', color: '#ffd54f', glow: '#ffb300' },
+    frost:    { name: '极寒', char: '寒', color: '#4fc3f7', glow: '#0288d1' },
+    vortex:   { name: '引力', char: '引', color: '#ba68c8', glow: '#8e24aa' },
+    venom:    { name: '剧毒', char: '毒', color: '#69f0ae', glow: '#00e676' }
+};
+
 // 随机事件(两次魔王之间触发,由 host/单人调度,经快照 ev 下发给 guest)
 const GAME_EVENTS = {
-    meteor:   { name: '流星雨',   icon: '🌠', color: '#ff9100', dur: 10, desc: '躲开地面红圈,陨石也会砸伤敌人' },
-    treasure: { name: '宝藏方块', icon: '💰', color: '#ffd740', dur: 14, desc: '追上并击败它,掉落装备和一堆道具' },
-    elite:    { name: '精英来袭', icon: '♛', color: '#ffc400', dur: 20, desc: '击败金框精英怪获得额外奖励' },
-    horde:    { name: '怪潮',     icon: '🌊', color: '#40c4ff', dur: 12, desc: '敌人大量涌来,击杀经验和分数翻倍' },
-    altar:    { name: '祝福祭坛', icon: '✨', color: '#b388ff', dur: 18, desc: '站进光圈为祭坛充能,充满后全队获得祝福' }
+    meteor:    { name: '流星雨',   icon: '🌠', color: '#ff9100', dur: 10, desc: '躲开地面红圈,陨石也会砸伤敌人' },
+    treasure:  { name: '宝藏方块', icon: '💰', color: '#ffd740', dur: 14, desc: '追上并击败它,掉落装备和一堆道具' },
+    elite:     { name: '精英来袭', icon: '♛', color: '#ffc400', dur: 20, desc: '击败金框精英怪获得额外奖励' },
+    horde:     { name: '怪潮',     icon: '🌊', color: '#40c4ff', dur: 12, desc: '敌人大量涌来,击杀经验和分数翻倍' },
+    altar:     { name: '祝福祭坛', icon: '✨', color: '#b388ff', dur: 18, desc: '站进光圈为祭坛充能,充满后全队获得祝福' },
+    void_rift: { name: '虚空裂隙', icon: '🌀', color: '#ba68c8', dur: 22, desc: '靠近石碑引导开启挑战,击破虚空怪潮夺取史诗宝藏' }
 };
 const EVENT_TYPES = Object.keys(GAME_EVENTS);
 const MP_ITEM_TYPES = ['potion', 'exp_book', 'snowflake', 'bomb', 'heart', 'potion_invicible',
@@ -279,18 +291,19 @@ const MP_ITEM_TYPES = ['potion', 'exp_book', 'snowflake', 'bomb', 'heart', 'poti
 
 // 限时装备:捡起后一段时间内强化属性,并附带一种独立于职业的特殊攻击(Game._tickGear 驱动)
 //   atkMult 攻击倍率 / defBonus 防御加成 / speedMult 移速倍率;every = 特殊攻击间隔(秒)
+//   evo: 重复拾取同款装备时升阶为 Lv2 觉醒状态,属性倍增且技能质变
 const GEARS = {
-    blade: { name: '雷霆之刃', icon: '⚡', color: '#ffe14d', duration: 12, atkMult: 1.3, every: 0.7,
-             desc: '攻击 +30%  连锁闪电' },
-    orb:   { name: '烈焰法球', icon: '🔥', color: '#ff7043', duration: 12, atkMult: 1.15,
-             desc: '攻击 +15%  环绕火球' },
-    armor: { name: '寒霜战甲', icon: '🛡️', color: '#80d8ff', duration: 12, defBonus: 12, every: 1.8,
-             desc: '防御 +12  冰霜新星' },
-    bow:   { name: '风暴连弩', icon: '🏹', color: '#69f0ae', duration: 12, speedMult: 1.25, every: 0.45,
-             desc: '移速 +25%  扇形连射' },
+    blade: { name: '雷霆之刃', evoName: '天怒神剑', icon: '⚡', color: '#ffe14d', duration: 12, atkMult: 1.3, evoAtkMult: 1.6, every: 0.7, evoEvery: 0.45,
+             desc: '攻击 +30%  连锁闪电', evoDesc: '攻击 +60%  7重天雷轰顶' },
+    orb:   { name: '烈焰法球', evoName: '日冕星环', icon: '🔥', color: '#ff7043', duration: 12, atkMult: 1.15, evoAtkMult: 1.35,
+             desc: '攻击 +15%  环绕火球', evoDesc: '攻击 +35%  5重火环+烈焰射线' },
+    armor: { name: '寒霜战甲', evoName: '绝对零度', icon: '🛡️', color: '#80d8ff', duration: 12, defBonus: 12, evoDefBonus: 25, every: 1.8, evoEvery: 1.2,
+             desc: '防御 +12  冰霜新星', evoDesc: '防御 +25 移速+15%  超大冰爆+受击反冻' },
+    bow:   { name: '风暴连弩', evoName: '万箭齐发', icon: '🏹', color: '#69f0ae', duration: 12, speedMult: 1.25, evoSpeedMult: 1.45, every: 0.45, evoEvery: 0.3,
+             desc: '移速 +25%  扇形连射', evoDesc: '移速 +45% 极速连弩  8向穿透箭' },
     // 荆棘之甲:挨打越多打得越疼,与圣骑士守护者的「圣光反击」叠加时反伤再 ×1.5
-    thorns: { name: '荆棘之甲', icon: '🌵', color: '#c6ff00', duration: 12, defBonus: 6, every: 0.5,
-              desc: '防御 +6  受击反伤 尖刺' }
+    thorns: { name: '荆棘之甲', evoName: '荆棘反冲', icon: '🌵', color: '#c6ff00', duration: 12, defBonus: 6, evoDefBonus: 16, every: 0.5, evoEvery: 0.35,
+              desc: '防御 +6  受击反伤 尖刺', evoDesc: '防御 +16  高倍反伤+八向尖刺环' }
 };
 const GEAR_TYPES = Object.keys(GEARS);
 
@@ -1856,8 +1869,10 @@ class Game {
         }
         return {
             e: this.enemies.map(e => {
+                const affixIdx = e.elite ? Math.max(0, AFFIX_TYPES.indexOf(e.affix || AFFIX_TYPES[e.id % AFFIX_TYPES.length])) : 0;
                 const row = [e.id, MP_ENEMY_TYPES.indexOf(e.type), q1(e.x), q1(e.y),
-                    Math.ceil(e.currentHealth), Math.ceil(e.maxHealth), (e.stunTimer > 0 ? 1 : 0) | (e._mpHit ? 2 : 0) | (e.elite ? 4 : 0) | (e.poison > 0 ? 8 : 0) | (e.burnT > 0 ? 16 : 0)];
+                    Math.ceil(e.currentHealth), Math.ceil(e.maxHealth),
+                    (e.stunTimer > 0 ? 1 : 0) | (e._mpHit ? 2 : 0) | (e.elite ? 4 : 0) | (e.poison > 0 ? 8 : 0) | (e.burnT > 0 ? 16 : 0) | ((affixIdx & 7) << 5)];
                 e._mpHit = false;
                 if (e.type === 'gunner') row.push(q2(e.aimAngle || 0), q2(e.shootTimer || 0), q2(e.shootInterval || 1));
                 else if (e.type === 'dasher' || e.type === 'bomber' || e.type === 'healer') row.push(e.state, q2(e.stateTimer), q2(e.stateDur), q2(e.dashAngle),
@@ -1874,7 +1889,8 @@ class Game {
             b: this.enemyBullets.map(b => [b.id, q1(b.x), q1(b.y), q2(b.angle)]),
             players,
             ev: this.event ? [EVENT_TYPES.indexOf(this.event.type), q1(this.event.timer), this.event.dur, this.event.left || 0,
-                ...(this.event.type === 'altar' ? [q1(this.event.ax), q1(this.event.ay), q2(this.event.charge)] : [])] : 0,
+                ...(this.event.type === 'altar' ? [q1(this.event.ax), q1(this.event.ay), q2(this.event.charge)] :
+                    this.event.type === 'void_rift' ? [q1(this.event.rx), q1(this.event.ry), q2(this.event.charge), this.event.activated ? 1 : 0] : [])] : 0,
             bt: this.bossState === 'idle' ? q1(this.bossTimer) : 0,
             mt: this.meteors.map(m => [m.id, q1(m.x), q1(m.y), q1(m.r), q2(m.t), m.dur]),
             tk: this.treasureKills, ek: this.eliteKills, dm: this.diffMode,
@@ -1922,8 +1938,8 @@ class Game {
             dc: q2(p.dashCooldown), dt: q2(p.dashTimer), dg: p.dodgeCount || 0,
             // 连杀 [连杀数, 剩余秒] 与本局最高连杀
             cb: p.combo > 0 ? [p.combo, q2(p.comboTimer)] : 0, mc: p.maxCombo || 0,
-            // 限时装备 [种类序号, 剩余, 总时长, 法球角度]
-            g: p.gear ? [GEAR_TYPES.indexOf(p.gear.type), q1(p.gear.timer), p.gear.max, q2(p.gear.angle || 0)] : 0,
+            // 限时装备 [种类序号, 剩余, 总时长, 法球角度, 等级(1/2)]
+            g: p.gear ? [GEAR_TYPES.indexOf(p.gear.type), q1(p.gear.timer), p.gear.max, q2(p.gear.angle || 0), p.gear.level || 1] : 0,
             bl: p.blessTimer > 0 ? q1(p.blessTimer) : 0,  // 祭坛祝福剩余秒数
             // 拾取过的技能石(host 判定拾取,guest 据此得到宝石;镶嵌以 guest 本地为准)
             gl: p.gemLog || undefined,
@@ -1975,7 +1991,7 @@ class Game {
     // 快照里的装备行 → 本地装备对象;法球角度记下收到时刻,渲染时按转速外推
     _mpGear(g) {
         if (!g) return null;
-        return { type: GEAR_TYPES[g[0]], timer: g[1], max: g[2], angle: g[3], _phaseAt: this.bgTime };
+        return { type: GEAR_TYPES[g[0]], timer: g[1], max: g[2], angle: g[3], level: g[4] || 1, _phaseAt: this.bgTime };
     }
 
     // ── Guest：应用 host 广播的世界状态 ──
@@ -1995,7 +2011,11 @@ class Game {
             r => {
                 const e = new Enemy(r[2], r[3], MP_ENEMY_TYPES[r[1]] || 'chaser', 1);
                 e.id = r[0];
-                if (r[6] & 4) e.makeElite(true);
+                if (r[6] & 4) {
+                    const affixIdx = (r[6] >> 5) & 7;
+                    const affixKey = AFFIX_TYPES[affixIdx] || 'gale';
+                    e.makeElite(true, affixKey);
+                }
                 return e;
             },
             (e, r, isNew) => {
@@ -2049,8 +2069,22 @@ class Game {
 
         // 随机事件与陨石(陨石落地倒计时在 _mpInterpolate 里本地推进)
         const evRow = snapshot.ev;
-        this.event = evRow ? { type: EVENT_TYPES[evRow[0]], timer: evRow[1], dur: evRow[2], left: evRow[3],
-            ax: evRow[4], ay: evRow[5], charge: evRow[6] || 0 } : null;
+        if (evRow) {
+            const evType = EVENT_TYPES[evRow[0]];
+            this.event = { type: evType, timer: evRow[1], dur: evRow[2], left: evRow[3] };
+            if (evType === 'altar') {
+                this.event.ax = evRow[4];
+                this.event.ay = evRow[5];
+                this.event.charge = evRow[6] || 0;
+            } else if (evType === 'void_rift') {
+                this.event.rx = evRow[4];
+                this.event.ry = evRow[5];
+                this.event.charge = evRow[6] || 0;
+                this.event.activated = !!evRow[7];
+            }
+        } else {
+            this.event = null;
+        }
         if (snapshot.bt !== undefined) this.bossTimer = snapshot.bt;
         const mt = this._mpSyncList(this.meteors, snapshot.mt || [], () => ({}),
             (m, r) => { m.x = r[1]; m.y = r[2]; m.r = r[3]; m.t = r[4]; m.dur = r[5]; });
@@ -2478,6 +2512,132 @@ class Game {
         ctx.restore();
     }
 
+    // 虚空裂隙:未激活时为悬浮暗紫石碑与引导圈;激活后展开暗紫虚空结界与挑战倒计时
+    _renderVoidRift(ctx) {
+        const ev = this.event;
+        if (!ev || ev.type !== 'void_rift' || ev.rx === undefined) return;
+        const x = ev.rx, y = ev.ry, t = this.bgTime;
+        const pulse = 0.5 + 0.5 * Math.sin(t * 4);
+        ctx.save();
+        if (!ev.activated) {
+            // 阶段 0: 悬浮石碑 + 靠近引导圈
+            const R = 80;
+            const c = ev.charge || 0;
+            // 地面暗紫引力底圈
+            ctx.fillStyle = `rgba(186, 104, 200, ${0.12 + 0.15 * c})`;
+            ctx.beginPath();
+            ctx.arc(x, y, R, 0, Math.PI * 2);
+            ctx.fill();
+            ctx.strokeStyle = `rgba(225, 190, 231, ${0.4 + 0.4 * pulse})`;
+            ctx.lineWidth = 2;
+            ctx.setLineDash([8, 6]);
+            ctx.lineDashOffset = t * 15;
+            ctx.beginPath();
+            ctx.arc(x, y, R, 0, Math.PI * 2);
+            ctx.stroke();
+            ctx.setLineDash([]);
+            // 引导蓄力弧
+            if (c > 0) {
+                ctx.strokeStyle = '#e1bee7';
+                ctx.lineWidth = 4;
+                ctx.lineCap = 'round';
+                ctx.beginPath();
+                ctx.arc(x, y, R - 4, -Math.PI / 2, -Math.PI / 2 + Math.PI * 2 * c);
+                ctx.stroke();
+            }
+            // 中央悬浮石碑主体
+            const bob = Math.sin(t * 3) * 6;
+            ctx.translate(x, y + bob);
+            ctx.shadowBlur = 12 + 8 * pulse;
+            ctx.shadowColor = '#ba68c8';
+            ctx.fillStyle = '#4a148c';
+            roundRect(ctx, -14, -26, 28, 52, 6);
+            ctx.fill();
+            ctx.strokeStyle = '#e1bee7';
+            ctx.lineWidth = 2;
+            roundRect(ctx, -14, -26, 28, 52, 6);
+            ctx.stroke();
+            // 石碑中央虚空符文
+            ctx.font = 'bold 16px Arial';
+            ctx.textAlign = 'center';
+            ctx.textBaseline = 'middle';
+            ctx.fillStyle = '#f3e5f5';
+            ctx.fillText('🌀', 0, 0);
+            ctx.font = 'bold 11px Arial';
+            ctx.fillText(c > 0 ? `引导中 ${Math.round(c * 100)}%` : '靠近开启挑战', 0, 36);
+        } else {
+            // 阶段 1: 虚空结界展开 (大结界光晕 + 倒计时)
+            const ringR = 260 + Math.sin(t * 2) * 15;
+            ctx.fillStyle = 'rgba(74, 20, 140, 0.08)';
+            ctx.beginPath();
+            ctx.arc(x, y, ringR, 0, Math.PI * 2);
+            ctx.fill();
+            ctx.strokeStyle = `rgba(206, 147, 216, ${0.45 + 0.3 * pulse})`;
+            ctx.lineWidth = 2.5;
+            ctx.setLineDash([12, 8]);
+            ctx.lineDashOffset = -t * 25;
+            ctx.beginPath();
+            ctx.arc(x, y, ringR, 0, Math.PI * 2);
+            ctx.stroke();
+            ctx.setLineDash([]);
+
+            // 中央破裂的虚空核心
+            ctx.translate(x, y);
+            ctx.shadowBlur = 20;
+            ctx.shadowColor = '#e1bee7';
+            ctx.fillStyle = '#7b1fa2';
+            ctx.beginPath();
+            ctx.arc(0, 0, 18 + Math.sin(t * 5) * 4, 0, Math.PI * 2);
+            ctx.fill();
+            ctx.strokeStyle = '#ffffff';
+            ctx.lineWidth = 2;
+            ctx.beginPath();
+            ctx.arc(0, 0, 18, 0, Math.PI * 2);
+            ctx.stroke();
+            // 倒计时标签
+            ctx.font = 'bold 13px Arial';
+            ctx.textAlign = 'center';
+            ctx.textBaseline = 'middle';
+            ctx.fillStyle = '#ffd54f';
+            ctx.shadowBlur = 6;
+            ctx.shadowColor = '#000000';
+            ctx.fillText(`⚡ 存活: ${Math.ceil(ev.timer)}s`, 0, -28);
+        }
+        ctx.restore();
+    }
+
+    // 渲染剧毒精英死后留下的腐蚀毒雾洼地
+    _renderToxicPuddles(ctx) {
+        if (!this.toxicPuddles || !this.toxicPuddles.length) return;
+        const t = this.bgTime;
+        ctx.save();
+        for (const p of this.toxicPuddles) {
+            const alpha = Math.min(1, p.timer / 0.5) * 0.45;
+            const r = p.radius;
+            // 毒池渐变
+            const grad = ctx.createRadialGradient(p.x, p.y, 4, p.x, p.y, r);
+            grad.addColorStop(0, `rgba(0, 230, 118, ${alpha})`);
+            grad.addColorStop(0.7, `rgba(76, 175, 80, ${alpha * 0.6})`);
+            grad.addColorStop(1, 'rgba(46, 125, 50, 0)');
+            ctx.fillStyle = grad;
+            ctx.beginPath();
+            ctx.arc(p.x, p.y, r, 0, Math.PI * 2);
+            ctx.fill();
+            // 气泡动画
+            for (let i = 0; i < 3; i++) {
+                const bt = (t * 2 + i * 1.3) % 1;
+                const a = i * Math.PI * 2 / 3 + t * 0.5;
+                const bx = p.x + Math.cos(a) * (r * 0.5 * (1 - bt * 0.4));
+                const by = p.y + Math.sin(a) * (r * 0.5 * (1 - bt * 0.4));
+                ctx.fillStyle = `rgba(167, 255, 235, ${alpha * (1 - bt)})`;
+                ctx.beginPath();
+                ctx.arc(bx, by, 2 + bt * 2.5, 0, Math.PI * 2);
+                ctx.fill();
+            }
+        }
+        ctx.restore();
+    }
+
     // 职业状态光环:觉醒玩家身边转动的职业色虚线环;弓手站定专注时脚下一圈瞄准刻度
     _renderClassAura(p, cls, awakened, still) {
         if (!cls) return;
@@ -2518,72 +2678,87 @@ class Game {
         }
     }
 
-    // 限时装备的身上效果:装备色光圈 + 剩余时间弧,烈焰法球另画环绕火球(本机/联机玩家共用)
+    // 限时装备的身上效果:装备色光圈 + 剩余时间弧,烈焰法球另画环绕火球(本机/联机玩家共用;Lv2 觉醒装备带金色外环与更炫酷特效)
     _renderGearAura(p) {
         const g = p && p.gear;
         if (!g || !GEARS[g.type] || p.currentHealth <= 0) return;
         const def = GEARS[g.type];
+        const isEvo = g.level === 2;
         const ctx = this.ctx;
         const cx = p.x + p.size / 2, cy = p.y + p.size / 2;
         const r = p.size * 0.72 + 8;
         const ending = g.timer < 3;
         const blink = ending ? 0.35 + 0.65 * Math.abs(Math.sin(this.bgTime * 10)) : 1;
         ctx.save();
-        ctx.globalAlpha = 0.18 * blink;
-        ctx.strokeStyle = def.color;
-        ctx.lineWidth = 3;
+        ctx.globalAlpha = (isEvo ? 0.3 : 0.18) * blink;
+        ctx.strokeStyle = isEvo ? '#ffd700' : def.color;
+        ctx.lineWidth = isEvo ? 4 : 3;
         ctx.beginPath();
         ctx.arc(cx, cy, r, 0, Math.PI * 2);
         ctx.stroke();
+        // 觉醒外环光晕
+        if (isEvo) {
+            ctx.globalAlpha = 0.45 * blink;
+            ctx.strokeStyle = def.color;
+            ctx.lineWidth = 1.5;
+            ctx.beginPath();
+            ctx.arc(cx, cy, r + 4, 0, Math.PI * 2);
+            ctx.stroke();
+        }
         ctx.globalAlpha = 0.85 * blink;
-        ctx.shadowBlur = 8;
-        ctx.shadowColor = def.color;
+        ctx.shadowBlur = isEvo ? 14 : 8;
+        ctx.shadowColor = isEvo ? '#ffd700' : def.color;
         ctx.beginPath();
         ctx.arc(cx, cy, r, -Math.PI / 2, -Math.PI / 2 + Math.PI * 2 * Math.max(0, g.timer / (g.max || 1)));
         ctx.stroke();
         if (g.type === 'thorns') {
-            // 一圈缓慢转动的尖刺
+            // 一圈缓慢转动的尖刺(Lv2 数量翻倍并带金色高光)
             ctx.shadowBlur = 0;
-            ctx.globalAlpha = 0.8 * blink;
-            ctx.fillStyle = def.color;
-            const rot = this.bgTime * 0.8;
+            ctx.globalAlpha = 0.85 * blink;
+            ctx.fillStyle = isEvo ? '#ffff00' : def.color;
+            const rot = this.bgTime * (isEvo ? 1.2 : 0.8);
+            const count = isEvo ? 16 : 10;
             ctx.beginPath();
-            for (let i = 0; i < 10; i++) {
-                const a = rot + i * Math.PI / 5;
+            for (let i = 0; i < count; i++) {
+                const a = rot + i * Math.PI * 2 / count;
                 const c = Math.cos(a), s = Math.sin(a);
-                ctx.moveTo(cx + c * (r + 9), cy + s * (r + 9));
-                ctx.lineTo(cx + Math.cos(a - 0.14) * (r + 1), cy + Math.sin(a - 0.14) * (r + 1));
-                ctx.lineTo(cx + Math.cos(a + 0.14) * (r + 1), cy + Math.sin(a + 0.14) * (r + 1));
+                const spikeLen = isEvo ? 12 : 9;
+                ctx.moveTo(cx + c * (r + spikeLen), cy + s * (r + spikeLen));
+                ctx.lineTo(cx + Math.cos(a - 0.12) * (r + 1), cy + Math.sin(a - 0.12) * (r + 1));
+                ctx.lineTo(cx + Math.cos(a + 0.12) * (r + 1), cy + Math.sin(a + 0.12) * (r + 1));
                 ctx.closePath();
             }
             ctx.fill();
         }
         if (g.type === 'orb') {
-            const base = (g.angle || 0) + (g._phaseAt !== undefined ? (this.bgTime - g._phaseAt) * Game.ORB_SPIN : 0);
-            ctx.globalAlpha = 0.12;
+            const speedMult = isEvo ? 1.4 : 1.0;
+            const base = (g.angle || 0) + (g._phaseAt !== undefined ? (this.bgTime - g._phaseAt) * Game.ORB_SPIN * speedMult : 0);
+            const count = isEvo ? 5 : 3;
+            const rad = isEvo ? Game.ORB_RADIUS * 1.15 : Game.ORB_RADIUS;
+            ctx.globalAlpha = 0.15;
             ctx.shadowBlur = 0;
             ctx.lineWidth = 1;
             ctx.beginPath();
-            ctx.arc(cx, cy, Game.ORB_RADIUS, 0, Math.PI * 2);
+            ctx.arc(cx, cy, rad, 0, Math.PI * 2);
             ctx.stroke();
             ctx.globalAlpha = 1;
-            for (let i = 0; i < 3; i++) {
-                const a = base + i * Math.PI * 2 / 3;
-                const ox = cx + Math.cos(a) * Game.ORB_RADIUS, oy = cy + Math.sin(a) * Game.ORB_RADIUS;
+            for (let i = 0; i < count; i++) {
+                const a = base + i * Math.PI * 2 / count;
+                const ox = cx + Math.cos(a) * rad, oy = cy + Math.sin(a) * rad;
                 // 拖尾
-                ctx.fillStyle = 'rgba(255,112,67,0.35)';
+                ctx.fillStyle = isEvo ? 'rgba(255,215,0,0.45)' : 'rgba(255,112,67,0.35)';
                 ctx.beginPath();
-                ctx.arc(cx + Math.cos(a - 0.25) * Game.ORB_RADIUS, cy + Math.sin(a - 0.25) * Game.ORB_RADIUS, 6, 0, Math.PI * 2);
+                ctx.arc(cx + Math.cos(a - 0.22) * rad, cy + Math.sin(a - 0.22) * rad, isEvo ? 7 : 6, 0, Math.PI * 2);
                 ctx.fill();
-                const grad = ctx.createRadialGradient(ox - 2, oy - 2, 1, ox, oy, 10);
-                grad.addColorStop(0, '#fff3e0');
-                grad.addColorStop(0.45, '#ffab40');
-                grad.addColorStop(1, 'rgba(255,61,0,0.2)');
-                ctx.shadowBlur = 12;
-                ctx.shadowColor = '#ff6d00';
+                const grad = ctx.createRadialGradient(ox - 2, oy - 2, 1, ox, oy, isEvo ? 12 : 10);
+                grad.addColorStop(0, '#ffffff');
+                grad.addColorStop(0.35, isEvo ? '#ffe082' : '#ffab40');
+                grad.addColorStop(1, isEvo ? 'rgba(255,160,0,0.2)' : 'rgba(255,61,0,0.2)');
+                ctx.shadowBlur = isEvo ? 16 : 12;
+                ctx.shadowColor = isEvo ? '#ffd700' : '#ff6d00';
                 ctx.fillStyle = grad;
                 ctx.beginPath();
-                ctx.arc(ox, oy, 10, 0, Math.PI * 2);
+                ctx.arc(ox, oy, isEvo ? 12 : 10, 0, Math.PI * 2);
                 ctx.fill();
             }
         }
@@ -2598,26 +2773,29 @@ class Game {
         const g = p.gear;
         if (g && GEARS[g.type]) {
             const def = GEARS[g.type];
-            this._renderBuffPill(y, def.icon, def.name, def.color, g.timer, g.max);
+            const isEvo = g.level === 2;
+            const name = isEvo ? `🌟${def.evoName}` : def.name;
+            const color = isEvo ? '#ffd700' : def.color;
+            this._renderBuffPill(y, def.icon, name, color, g.timer, g.max, isEvo);
             y += 34;
         }
-        if (p.blessTimer > 0) this._renderBuffPill(y, '✨', '祝福', '#b388ff', p.blessTimer, Game.BLESS.dur);
+        if (p.blessTimer > 0) this._renderBuffPill(y, '✨', '祝福', '#b388ff', p.blessTimer, Game.BLESS.dur, false);
     }
 
-    _renderBuffPill(y, icon, name, color, timer, max) {
+    _renderBuffPill(y, icon, name, color, timer, max, isEvo = false) {
         const def = { icon, name, color };
         const g = { timer, max };
         const ctx = this.ctx;
-        const x = 10, w = 100, h = 30;
+        const x = 10, w = isEvo ? 112 : 100, h = 30;
         const ratio = Math.max(0, Math.min(1, g.timer / (g.max || 1)));
         const blink = g.timer < 3 ? 0.45 + 0.55 * Math.abs(Math.sin(this.bgTime * 10)) : 1;
         ctx.save();
-        ctx.fillStyle = 'rgba(0, 10, 20, 0.55)';
+        ctx.fillStyle = isEvo ? 'rgba(25, 20, 5, 0.75)' : 'rgba(0, 10, 20, 0.55)';
         roundRect(ctx, x, y, w, h, 8);
         ctx.fill();
-        ctx.strokeStyle = def.color;
-        ctx.globalAlpha = 0.6 * blink;
-        ctx.lineWidth = 1;
+        ctx.strokeStyle = isEvo ? '#ffd700' : def.color;
+        ctx.globalAlpha = (isEvo ? 0.85 : 0.6) * blink;
+        ctx.lineWidth = isEvo ? 1.5 : 1;
         roundRect(ctx, x, y, w, h, 8);
         ctx.stroke();
         ctx.globalAlpha = blink;
@@ -2625,19 +2803,19 @@ class Game {
         ctx.textAlign = 'center';
         ctx.textBaseline = 'middle';
         ctx.fillText(def.icon, x + 15, y + 15);
-        ctx.font = 'bold 11px Arial';
+        ctx.font = 'bold 10.5px Arial';
         ctx.textAlign = 'left';
-        ctx.fillStyle = def.color;
-        ctx.fillText(def.name, x + 28, y + 11);
+        ctx.fillStyle = isEvo ? '#fff59d' : def.color;
+        ctx.fillText(def.name, x + 27, y + 11);
         ctx.textAlign = 'right';
         ctx.fillStyle = '#ffffff';
         ctx.font = '10px Arial';
-        ctx.fillText(`${Math.ceil(g.timer)}s`, x + w - 6, y + 11);
-        const bx = x + 28, by = y + 20, bw = w - 34, bh = 4;
+        ctx.fillText(`${Math.ceil(g.timer)}s`, x + w - 5, y + 11);
+        const bx = x + 27, by = y + 20, bw = w - 32, bh = 4;
         ctx.fillStyle = 'rgba(255,255,255,0.12)';
         roundRect(ctx, bx, by, bw, bh, 2);
         ctx.fill();
-        ctx.fillStyle = def.color;
+        ctx.fillStyle = isEvo ? '#ffd700' : def.color;
         roundRect(ctx, bx, by, Math.max(bh, bw * ratio), bh, 2);
         ctx.fill();
         ctx.restore();
@@ -3440,44 +3618,62 @@ class Game {
             return;
         }
         const def = GEARS[g.type];
+        const isEvo = g.level === 2;
         const pcx = p.x + p.size / 2, pcy = p.y + p.size / 2;
-        if (g.type === 'orb') { this._gearOrbTick(g, pcx, pcy); return; }
-        if (g.type === 'thorns' && p._thornsHit > 0) this._gearThornsBurst(p, pcx, pcy);
+        if (g.type === 'orb') { this._gearOrbTick(g, pcx, pcy, isEvo); return; }
+        if (g.type === 'thorns' && p._thornsHit > 0) this._gearThornsBurst(p, pcx, pcy, isEvo);
         g.cd -= DT;
         if (g.cd > 0) return;
         let fired = false;
-        if (g.type === 'blade') fired = this._gearChainLightning(pcx, pcy);
-        else if (g.type === 'armor') fired = this._gearFrostNova(pcx, pcy);
-        else if (g.type === 'bow') fired = this._gearFanShot(pcx, pcy);
-        else if (g.type === 'thorns') fired = this._gearThornsSpikes(p, pcx, pcy);
-        // 附近没目标就稍后再试,不白白进入冷却
-        g.cd = fired ? def.every : 0.1;
+        if (g.type === 'blade') fired = this._gearChainLightning(pcx, pcy, isEvo);
+        else if (g.type === 'armor') fired = this._gearFrostNova(pcx, pcy, isEvo);
+        else if (g.type === 'bow') fired = this._gearFanShot(pcx, pcy, isEvo);
+        else if (g.type === 'thorns') fired = this._gearThornsSpikes(p, pcx, pcy, isEvo);
+        // 附近没目标就稍后再试,不白白进入冷却;Lv2 时按 evoEvery 冷却
+        const every = (isEvo && def.evoEvery) ? def.evoEvery : def.every;
+        g.cd = fired ? every : 0.1;
     }
 
-    // 荆棘之甲:受击后把这一帧受到的原始伤害 ×2(守护者再 ×1.25)+ 半个攻击力,炸向 110 范围内的敌人
-    _gearThornsBurst(p, pcx, pcy) {
+    // 荆棘之甲:受击后把这一帧受到的原始伤害 ×2(Lv2 时 ×3.5,守护者再 ×1.25)+ 攻击力,炸向周围敌人
+    _gearThornsBurst(p, pcx, pcy, isEvo = false) {
         const raw = p._thornsHit;
         p._thornsHit = 0;
         if (p.currentHealth <= 0) return;
-        const dmg = (raw * 2 + p.attack * 0.5) * (p.spec === 'protector' ? 1.25 : 1);
+        const mult = isEvo ? 3.5 : 2.0;
+        const radius = isEvo ? 140 : 110;
+        const dmg = (raw * mult + p.attack * (isEvo ? 0.9 : 0.5)) * (p.spec === 'protector' ? 1.25 : 1);
         for (const t of this._gearTargets()) {
             const tx = t.x + t.size / 2, ty = t.y + t.size / 2;
-            if (Math.hypot(tx - pcx, ty - pcy) <= 110 + t.size / 2) this._gearHit(t, dmg, '#c6ff00', pcx, pcy);
+            if (Math.hypot(tx - pcx, ty - pcy) <= radius + t.size / 2) this._gearHit(t, dmg, '#c6ff00', pcx, pcy);
         }
-        this.effects.push({ type: 'shockwave', x: pcx, y: pcy, radius: 8, maxRadius: 110, color: '#c6ff00', ttl: 0.3, maxTtl: 0.3 });
-        for (let i = 0; i < 12; i++) {
-            this.effects.push({ type: 'iceShard', x: pcx, y: pcy, angle: i * Math.PI / 6, length: 26, color: '#eeff41', ttl: 0.25, maxTtl: 0.25 });
+        this.effects.push({ type: 'shockwave', x: pcx, y: pcy, radius: 8, maxRadius: radius, color: isEvo ? '#ffff00' : '#c6ff00', ttl: 0.35, maxTtl: 0.35 });
+        const count = isEvo ? 18 : 12;
+        for (let i = 0; i < count; i++) {
+            this.effects.push({ type: 'iceShard', x: pcx, y: pcy, angle: i * Math.PI * 2 / count, length: isEvo ? 36 : 26, color: '#eeff41', ttl: 0.28, maxTtl: 0.28 });
         }
-        this._showFloatingText('荆棘反伤', pcx, p.y - 22, '#c6ff00');
+        if (isEvo) {
+            // 觉醒荆棘反冲:向周围发射 8 支穿透尖刺
+            for (let i = 0; i < 8; i++) {
+                const a = i * Math.PI / 4;
+                const proj = new Projectile(pcx - 4, pcy - 4, Math.cos(a) * 7.5, Math.sin(a) * 7.5, dmg * 0.4);
+                proj.owner = p;
+                proj.isPiercing = true;
+                proj.pierceRemaining = 2;
+                proj.gearBolt = true;
+                this.projectiles.push(proj);
+            }
+        }
+        this._showFloatingText(isEvo ? '⚡ 荆棘反冲!' : '荆棘反伤', pcx, p.y - 22, isEvo ? '#ffff00' : '#c6ff00');
     }
 
-    // 荆棘之甲:每 0.5 秒扎一次贴身的敌人
-    _gearThornsSpikes(p, pcx, pcy) {
-        const dmg = p.attack * 0.5 + p.maxHealth * 0.02;
+    // 荆棘之甲:每 0.5 秒扎一次贴身的敌人(Lv2 伤害提高且范围略大)
+    _gearThornsSpikes(p, pcx, pcy, isEvo = false) {
+        const dmg = p.attack * (isEvo ? 0.8 : 0.5) + p.maxHealth * (isEvo ? 0.03 : 0.02);
+        const reach = isEvo ? 32 : 22;
         let hit = false;
         for (const t of this._gearTargets()) {
             const tx = t.x + t.size / 2, ty = t.y + t.size / 2;
-            if (Math.hypot(tx - pcx, ty - pcy) > p.size / 2 + t.size / 2 + 22) continue;
+            if (Math.hypot(tx - pcx, ty - pcy) > p.size / 2 + t.size / 2 + reach) continue;
             this._gearHit(t, dmg, '#c6ff00', pcx, pcy);
             hit = true;
         }
@@ -3513,14 +3709,15 @@ class Game {
         }
     }
 
-    // 雷霆之刃:闪电打向最近目标,再向附近弹跳 3 次
-    _gearChainLightning(pcx, pcy) {
+    // 雷霆之刃:闪电打向最近目标,再向附近弹跳(Lv1: 3次, Lv2 天怒神剑: 6次 + 天雷冲击波)
+    _gearChainLightning(pcx, pcy, isEvo = false) {
         const targets = this._gearTargets();
-        const dmg = this._computeAttackDamage(this.player.attack) * 0.7;
+        const baseDmg = this._computeAttackDamage(this.player.attack) * (isEvo ? 0.95 : 0.7);
         const hit = new Set();
-        let x = pcx, y = pcy, range = 230;
+        let x = pcx, y = pcy, range = isEvo ? 280 : 230;
         const nodes = [[pcx, pcy]];
-        for (let hop = 0; hop < 4; hop++) {
+        const maxHops = isEvo ? 7 : 4;
+        for (let hop = 0; hop < maxHops; hop++) {
             let best = null, bestD = range * range;
             for (const t of targets) {
                 if (hit.has(t) || t.currentHealth <= 0) continue;
@@ -3532,67 +3729,83 @@ class Game {
             hit.add(best);
             x = best.x + best.size / 2; y = best.y + best.size / 2;
             nodes.push([x, y]);
-            range = 150;
+            range = isEvo ? 180 : 150;
         }
         if (nodes.length < 2) return false;
-        for (const t of hit) this._gearHit(t, dmg, '#fff59d');
-        this.effects.push({ type: 'lightning', pts: this._lightningPts(nodes), color: '#ffe14d', ttl: 0.2, maxTtl: 0.2 });
+        for (const t of hit) {
+            this._gearHit(t, baseDmg, isEvo ? '#fff176' : '#fff59d');
+            if (isEvo) {
+                const tx = t.x + t.size / 2, ty = t.y + t.size / 2;
+                this.effects.push({ type: 'shockwave', x: tx, y: ty, radius: 4, maxRadius: 28, color: '#ffee58', ttl: 0.2, maxTtl: 0.2 });
+            }
+        }
+        this.effects.push({ type: 'lightning', pts: this._lightningPts(nodes), color: isEvo ? '#fff176' : '#ffe14d', ttl: 0.22, maxTtl: 0.22 });
         return true;
     }
 
-    // 烈焰法球:3 颗火球绕身旋转,碰到的敌人每 0.4 秒最多受伤一次
-    _gearOrbTick(g, pcx, pcy) {
-        g.angle = ((g.angle || 0) + Game.ORB_SPIN * DT) % (Math.PI * 2);
+    // 烈焰法球:火球绕身旋转(Lv1: 3 颗, Lv2 日冕星环: 5 颗旋转并带点燃)
+    _gearOrbTick(g, pcx, pcy, isEvo = false) {
+        const speedMult = isEvo ? 1.4 : 1.0;
+        g.angle = ((g.angle || 0) + Game.ORB_SPIN * speedMult * DT) % (Math.PI * 2);
         if (!g.hits) g.hits = new WeakMap();
-        const dmg = this._computeAttackDamage(this.player.attack) * 0.45;
+        const dmg = this._computeAttackDamage(this.player.attack) * (isEvo ? 0.6 : 0.45);
         const targets = this._gearTargets();
-        for (let i = 0; i < 3; i++) {
-            const a = g.angle + i * Math.PI * 2 / 3;
-            const ox = pcx + Math.cos(a) * Game.ORB_RADIUS, oy = pcy + Math.sin(a) * Game.ORB_RADIUS;
+        const count = isEvo ? 5 : 3;
+        const rad = isEvo ? Game.ORB_RADIUS * 1.15 : Game.ORB_RADIUS;
+        for (let i = 0; i < count; i++) {
+            const a = g.angle + i * Math.PI * 2 / count;
+            const ox = pcx + Math.cos(a) * rad, oy = pcy + Math.sin(a) * rad;
             for (const t of targets) {
                 if (t.currentHealth <= 0) continue;
-                const r = 11 + t.size / 2;
+                const r = 12 + t.size / 2;
                 const dx = t.x + t.size / 2 - ox, dy = t.y + t.size / 2 - oy;
                 if (dx * dx + dy * dy > r * r) continue;
                 const last = g.hits.get(t);
-                if (last !== undefined && this.gameTime - last < 0.4) continue;
+                if (last !== undefined && this.gameTime - last < 0.35) continue;
                 g.hits.set(t, this.gameTime);
                 this._gearHit(t, dmg, '#ffab91', ox, oy);
+                if (isEvo && t !== this.boss) this._applyBurn(t, this.player.attack * 0.25, 2.0);
                 this.spawnParticles(ox, oy, '#ff7043', 4, 1, 3, 1, 3, 0.08);
             }
         }
     }
 
-    // 寒霜战甲:身边有敌人时释放冰霜新星,造成伤害并冻住 1 秒(魔王只吃伤害)
-    _gearFrostNova(pcx, pcy) {
-        const R = 120;
+    // 寒霜战甲:身边有敌人时释放冰霜新星(Lv1: 半径 120, 冻结 1s; Lv2 绝对零度: 半径 180, 冻结 1.8s)
+    _gearFrostNova(pcx, pcy, isEvo = false) {
+        const R = isEvo ? 180 : 120;
         const inRange = this._gearTargets().filter(t => {
             const r = R + t.size / 2;
             return (t.x + t.size / 2 - pcx) ** 2 + (t.y + t.size / 2 - pcy) ** 2 <= r * r;
         });
         if (!inRange.length) return false;
-        const dmg = this._computeAttackDamage(this.player.attack) * 0.6;
+        const dmg = this._computeAttackDamage(this.player.attack) * (isEvo ? 0.9 : 0.6);
+        const freezeDur = isEvo ? 1.8 : 1.0;
         for (const t of inRange) {
-            if (t !== this.boss) t.stunTimer = Math.max(t.stunTimer || 0, 1);
+            if (t !== this.boss) t.stunTimer = Math.max(t.stunTimer || 0, freezeDur);
             this._gearHit(t, dmg, '#b3e5fc', pcx, pcy);
         }
-        this.effects.push({ type: 'shockwave', x: pcx, y: pcy, radius: 12, maxRadius: R, color: '#80d8ff', ttl: 0.45, maxTtl: 0.45 });
-        this.spawnBurstRing(pcx, pcy, R * 0.8, '#b3e5fc', 18);
+        this.effects.push({ type: 'shockwave', x: pcx, y: pcy, radius: 12, maxRadius: R, color: isEvo ? '#00e5ff' : '#80d8ff', ttl: 0.5, maxTtl: 0.5 });
+        this.spawnBurstRing(pcx, pcy, R * 0.85, isEvo ? '#00e5ff' : '#b3e5fc', isEvo ? 26 : 18);
         return true;
     }
 
-    // 风暴连弩:朝最近目标扇形连射 5 发
-    _gearFanShot(pcx, pcy) {
+    // 风暴连弩:朝最近目标扇形连射(Lv1: 5发; Lv2 万箭齐发: 8发穿透箭)
+    _gearFanShot(pcx, pcy, isEvo = false) {
         const t = this._findClosestTarget();
         if (!t) return false;
         const base = Math.atan2(t.y + t.size / 2 - pcy, t.x + t.size / 2 - pcx);
-        const dmg = this._computeAttackDamage(this.player.attack) * 0.4;
-        const spread = 20 * Math.PI / 180;
-        for (let i = 0; i < 5; i++) {
-            const a = base - spread + spread * 2 * i / 4;
-            const proj = new Projectile(pcx - 4, pcy - 4, Math.cos(a) * 8, Math.sin(a) * 8, dmg);
+        const dmg = this._computeAttackDamage(this.player.attack) * (isEvo ? 0.55 : 0.4);
+        const count = isEvo ? 8 : 5;
+        const spread = (isEvo ? 28 : 20) * Math.PI / 180;
+        for (let i = 0; i < count; i++) {
+            const a = base - spread + spread * 2 * i / (count - 1);
+            const proj = new Projectile(pcx - 4, pcy - 4, Math.cos(a) * 8.5, Math.sin(a) * 8.5, dmg);
             proj.owner = this.player;
             proj.gearBolt = true;
+            if (isEvo) {
+                proj.isPiercing = true;
+                proj.pierceRemaining = 2;
+            }
             this.projectiles.push(proj);
         }
         return true;
@@ -4571,6 +4784,7 @@ class Game {
         this.event = null;            // { type, timer, dur, left }
         this.eventTimer = 25;         // 距离下一个事件的秒数
         this.meteors = [];            // { id, x, y, r, t, dur }:t 为落地倒计时
+        this.toxicPuddles = [];       // 剧毒精英死亡留下的腐蚀毒雾洼地
         this.treasureKills = 0;
         this.eliteKills = 0;
         this._lastEventType = null;
@@ -4578,6 +4792,7 @@ class Game {
 
     _updateEvents() {
         this._updateMeteors();
+        this._updateToxicPuddles();
         const ev = this.event;
         if (ev) {
             ev.timer -= DT;
@@ -4592,6 +4807,8 @@ class Game {
                 if (ev.left === 0) { ev.success = true; ev.timer = 0; }
             } else if (ev.type === 'altar') {
                 this._tickAltar(ev);
+            } else if (ev.type === 'void_rift') {
+                this._tickVoidRift(ev);
             } else if (ev.type === 'treasure') {
                 const t = this.enemies.find(e => e.type === 'treasure');
                 if (!t) ev.timer = 0;
@@ -4617,6 +4834,31 @@ class Game {
         this._startEvent(type);
     }
 
+    // 更新剧毒精英死后留下的腐蚀洼地
+    _updateToxicPuddles() {
+        if (!this.toxicPuddles || !this.toxicPuddles.length) return;
+        for (let i = this.toxicPuddles.length - 1; i >= 0; i--) {
+            const p = this.toxicPuddles[i];
+            p.timer -= DT;
+            if (p.timer <= 0) {
+                this.toxicPuddles.splice(i, 1);
+                continue;
+            }
+            // 每 0.5 秒判定一次对踏入洼地的存活玩家造成伤害
+            p.tick = (p.tick || 0) - DT;
+            if (p.tick <= 0) {
+                p.tick = 0.45;
+                for (const pl of this._livingPlayers()) {
+                    const pcx = pl.x + pl.size / 2, pcy = pl.y + pl.size / 2;
+                    if (Math.hypot(pcx - p.x, pcy - p.y) <= p.radius) {
+                        pl.takeDamage(pl.maxHealth * 0.04, '剧毒沼泽', 0.03);
+                        this.spawnParticles(pcx, pcy, '#69f0ae', 3, 1, 2, 1, 2.5, 0.03);
+                    }
+                }
+            }
+        }
+    }
+
     _startEvent(type) {
         const def = GAME_EVENTS[type];
         this.event = { type, timer: def.dur, dur: def.dur, left: 0, spawnCd: 0.6 };
@@ -4627,6 +4869,7 @@ class Game {
         if (type === 'treasure') this._spawnTreasure();
         else if (type === 'elite') this._spawnElites();
         else if (type === 'altar') this._placeAltar(this.event);
+        else if (type === 'void_rift') this._placeVoidRift(this.event);
     }
 
     _endEvent() {
@@ -4650,6 +4893,12 @@ class Game {
         } else if (ev.type === 'altar' && !ev.success) {
             this.spawnBurstRing(ev.ax, ev.ay, Game.ALTAR_R, '#7e57c2', 14);
             this._showFloatingText('祭坛熄灭了…', this.width / 2, this.height * 0.3, '#b39ddb');
+        } else if (ev.type === 'void_rift') {
+            if (ev.success) {
+                this._showFloatingText('🌀 虚空挑战成功! 宝藏现世!', this.width / 2, this.height * 0.3, '#e1bee7');
+            } else {
+                this._showFloatingText('虚空裂隙已闭合…', this.width / 2, this.height * 0.3, '#b39ddb');
+            }
         }
     }
 
@@ -4702,6 +4951,106 @@ class Game {
         this.screenShake = Math.max(this.screenShake, 0.1);
         this._showFloatingText(`✨ 祝福降临  伤害 +${Math.round((B.dmg - 1) * 100)}%  移速 +${Math.round((B.speed - 1) * 100)}%`,
             this.width / 2, this.height * 0.3, '#e1bee7');
+    }
+
+    // ── 虚空裂隙:主动交互挑战石碑 ──
+    _placeVoidRift(ev) {
+        const players = this._livingPlayers(), m = 120;
+        let x = this.width / 2, y = this.height / 2;
+        for (let i = 0; i < 16; i++) {
+            x = m + Math.random() * (this.width - m * 2);
+            y = m + Math.random() * (this.height - m * 2);
+            if (players.every(p => Math.hypot(p.x + p.size / 2 - x, p.y + p.size / 2 - y) > 180)) break;
+        }
+        ev.rx = x; ev.ry = y;
+        ev.activated = false;
+        ev.charge = 0;           // 靠近引导蓄力进度 (0~1)
+        ev.needTime = 1.2;       // 引导所需时间
+        ev.challengeTime = 20;   // 激活后挑战时限
+        ev.spawnTimer = 0.5;
+        this.spawnBurstRing(x, y, 70, '#ba68c8', 20);
+        this.effects.push({ type: 'shockwave', x, y, radius: 8, maxRadius: 70, color: '#8e24aa', ttl: 0.45, maxTtl: 0.45 });
+    }
+
+    _tickVoidRift(ev) {
+        if (!ev.activated) {
+            // 阶段 0: 靠近引导
+            let near = false;
+            for (const p of this._livingPlayers()) {
+                if (Math.hypot(p.x + p.size / 2 - ev.rx, p.y + p.size / 2 - ev.ry) <= 80) {
+                    near = true;
+                    break;
+                }
+            }
+            if (near) {
+                ev.charge = Math.min(1, ev.charge + DT / ev.needTime);
+                if (Math.random() < 0.3) {
+                    this.spawnParticles(ev.rx, ev.ry, '#ba68c8', 2, 0.8, 2.5, 1.5, 3.5, 0.04);
+                }
+            } else {
+                ev.charge = Math.max(0, ev.charge - DT * 0.6);
+            }
+            if (ev.charge >= 1) {
+                // 引导完成: 开启虚空挑战
+                ev.activated = true;
+                ev.timer = ev.challengeTime;
+                this.screenShake = Math.max(this.screenShake, 0.25);
+                this.effects.push({ type: 'shockwave', x: ev.rx, y: ev.ry, radius: 10, maxRadius: 220, color: '#e1bee7', ttl: 0.6, maxTtl: 0.6 });
+                this.spawnParticles(ev.rx, ev.ry, '#ba68c8', 35, 2, 8, 2, 6, 0.04);
+                Sound.play('bossWarning');
+                this._showFloatingText('⚡ 虚空挑战开启! 歼灭虚空怪潮!', this.width / 2, this.height * 0.25, '#e1bee7');
+
+                // 召唤第一批虚空精锐(含词缀精英)
+                for (let k = 0; k < 4; k++) {
+                    const pos = this._edgeSpawnPos();
+                    const e = this._newEnemy(pos.x, pos.y, 'chaser');
+                    if (e) {
+                        this.enemies.push(e);
+                        if (k === 0) e.makeElite(false, 'vortex');
+                        else if (k === 1) e.makeElite(false, 'gale');
+                    }
+                }
+            }
+        } else {
+            // 阶段 1: 挑战进行中
+            ev.spawnTimer -= DT;
+            if (ev.spawnTimer <= 0 && ev.timer > 3) {
+                ev.spawnTimer = 2.5;
+                const pos = this._edgeSpawnPos();
+                const e = this._newEnemy(pos.x, pos.y, Math.random() < 0.5 ? 'splitter' : 'dasher');
+                if (e) {
+                    this.enemies.push(e);
+                    if (Math.random() < 0.4) e.makeElite(false);
+                }
+            }
+            // 倒计时结束时只要有玩家活着就成功
+            if (ev.timer <= 0) {
+                ev.success = true;
+                this._voidRiftSuccess(ev);
+            }
+        }
+    }
+
+    _voidRiftSuccess(ev) {
+        const cx = ev.rx, cy = ev.ry;
+        // 全屏清场冲击波
+        this.effects.push({ type: 'shockwave', x: cx, y: cy, radius: 15, maxRadius: this.width * 0.9, color: '#ba68c8', ttl: 0.7, maxTtl: 0.7 });
+        this.spawnBurstRing(cx, cy, 120, '#e1bee7', 30);
+        this.spawnParticles(cx, cy, '#ba68c8', 45, 2.5, 9, 2.5, 6, 0.03);
+        this.screenShake = Math.max(this.screenShake, 0.3);
+        Sound.play('levelUp');
+
+        // 震晕/消灭场内普通敌人
+        for (const e of this.enemies) {
+            e.takeDamage(120);
+        }
+
+        // 爆仓掉落: 高阶技能石 + 史诗限时装备 + 经验之书 + 生命药水
+        this._dropGem(cx - 30, cy);
+        this._dropGear(cx + 30, cy);
+        this.items.push(new Item(cx, cy - 35, 'exp_book', 'epic'));
+        this.items.push(new Item(cx, cy + 35, 'potion', 'rare'));
+        this.score += 800 * (this.scoreMult || 1);
     }
 
     // 敌人从场外随机一侧进场
@@ -4917,6 +5266,7 @@ class Game {
         if (ev.type === 'elite') label += `  剩余 ${ev.left}`;
         else if (ev.type === 'horde') label += '  经验×2';
         else if (ev.type === 'altar') label += `  ${Math.floor((ev.charge || 0) * 100)}%`;
+        else if (ev.type === 'void_rift') label += ev.activated ? `  挑战中!` : `  引导 ${Math.floor((ev.charge || 0) * 100)}%`;
         label += `  ${Math.ceil(ev.timer)}s`;
         ctx.fillStyle = '#ffffff';
         ctx.font = 'bold 14px Arial';
@@ -4938,6 +5288,60 @@ class Game {
                 // 联机时每个敌人追离它最近的存活玩家,不再只盯房主
                 const t = this._nearestPlayer(e.x, e.y);
                 e.update(t.x, t.y, this.width, this.height, t.size);
+
+                // 词缀精英机制驱动
+                if (e.elite) {
+                    const ecx = e.x + e.size / 2, ecy = e.y + e.size / 2;
+                    const affix = e.affix || AFFIX_TYPES[e.id % AFFIX_TYPES.length];
+                    if (affix === 'gale') {
+                        // 疾风:移动时身后留下微风粒子
+                        if (Math.random() < 0.25) {
+                            this.spawnParticles(ecx, ecy, '#00e5ff', 1, 0.4, 1.2, 1, 2.5, 0.05);
+                        }
+                    } else if (affix === 'tenacity') {
+                        // 坚毅:脱战后刷新护盾
+                        if (e.tenacityShield < (e.maxTenacityShield || 0)) {
+                            e.shieldRegenTimer = (e.shieldRegenTimer || 6) - DT;
+                            if (e.shieldRegenTimer <= 0) {
+                                e.tenacityShield = e.maxTenacityShield;
+                                e.shieldRegenTimer = 6;
+                                this.spawnBurstRing(ecx, ecy, e.size * 0.9, '#ffd54f', 12);
+                            }
+                        }
+                    } else if (affix === 'frost') {
+                        // 极寒:周围 130px 范围内的存活玩家减速 30%
+                        for (const p of this._livingPlayers()) {
+                            if (Math.hypot(p.x + p.size / 2 - ecx, p.y + p.size / 2 - ecy) <= 130) {
+                                p._frostSlowTimer = 0.25;
+                            }
+                        }
+                    } else if (affix === 'vortex') {
+                        // 引力:每 3.2s 蓄力 0.8s 施加向心吸附力
+                        e.vortexTimer = (e.vortexTimer || 2.8) - DT;
+                        if (e.vortexTimer <= 0.8) {
+                            e.vortexSucking = true;
+                            // 蓄力与牵引存活玩家
+                            for (const p of this._livingPlayers()) {
+                                const pcx = p.x + p.size / 2, pcy = p.y + p.size / 2;
+                                const dist = Math.hypot(pcx - ecx, pcy - ecy);
+                                if (dist <= 230 && dist > 10) {
+                                    const pull = 1.6 * (1 - dist / 230);
+                                    p.x += (ecx - pcx) / dist * pull;
+                                    p.y += (ecy - pcy) / dist * pull;
+                                }
+                            }
+                            if (Math.random() < 0.35) {
+                                this.spawnParticles(ecx, ecy, '#ba68c8', 2, 0.5, 2.0, 1.5, 3, 0.04);
+                            }
+                        } else {
+                            e.vortexSucking = false;
+                        }
+                        if (e.vortexTimer <= 0) {
+                            e.vortexTimer = 3.6;
+                            e.vortexSucking = false;
+                        }
+                    }
+                }
             }
             if (e._sfx) { Sound.play(e._sfx); e._sfx = null; }
             // 自爆者引信燃尽:原地爆炸(不算击杀,不给经验)
@@ -5373,13 +5777,27 @@ class Game {
         this.items.push(new Item(x, y, 'gear_' + kind));
     }
 
-    // 给 this.player 穿上装备:同款续满时长,换款直接替换
+    // 给 this.player 穿上装备:同款升阶为 Lv2 觉醒状态并续满/延长时长,换款替换
     _equipGear(kind) {
         const def = GEARS[kind];
         if (!def) return;
         const p = this.player;
-        if (p.gear && p.gear.type === kind) { p.gear.timer = def.duration; return; }
-        p.gear = { type: kind, timer: def.duration, max: def.duration, cd: 0.3 };
+        const pcx = p.x + p.size / 2, pcy = p.y + p.size / 2;
+        if (p.gear && p.gear.type === kind) {
+            // 升阶为 Lv2 觉醒装备
+            p.gear.level = 2;
+            const newMax = def.duration * 1.5;
+            p.gear.max = newMax;
+            p.gear.timer = Math.min(newMax, p.gear.timer + def.duration * 0.8);
+            this.effects.push({ type: 'shockwave', x: pcx, y: pcy, radius: 10, maxRadius: 100, color: '#ffd700', ttl: 0.5, maxTtl: 0.5 });
+            this.spawnBurstRing(pcx, pcy, 50, '#ffe082', 20);
+            this.spawnParticles(pcx, pcy, '#ffd700', 25, 2, 7, 2, 5, 0.03);
+            this.screenShake = Math.max(this.screenShake, 0.15);
+            Sound.play('levelUp');
+            return true;
+        }
+        p.gear = { type: kind, level: 1, timer: def.duration, max: def.duration, cd: 0.3 };
+        return false;
     }
 
     collectItem(item) {
@@ -5454,8 +5872,13 @@ class Game {
             default:
                 if (item.type.startsWith('gear_')) {
                     const kind = item.type.slice(5);
-                    this._equipGear(kind);
-                    label = `${GEARS[kind].name}  ${GEARS[kind].desc}`;
+                    const isEvo = this._equipGear(kind);
+                    const def = GEARS[kind];
+                    if (isEvo) {
+                        label = `🌟 ${def.evoName} Lv.2 觉醒!  ${def.evoDesc}`;
+                    } else {
+                        label = `${def.name}  ${def.desc}`;
+                    }
                 } else if (item.gem) {
                     label = this._grantGem(item.gem);
                 }
@@ -6644,9 +7067,12 @@ class Game {
     // 攻击伤害最终结算:叠加暴怒(损血)/战士血怒(怒气)/嗜血战意(满怒)等加成
     _computeAttackDamage(base) {
         let dmg = base;
-        // 限时装备的攻击倍率
+        // 限时装备的攻击倍率(Lv2 觉醒时生效强化倍率)
         const gear = this.player.gear && GEARS[this.player.gear.type];
-        if (gear && gear.atkMult) dmg *= gear.atkMult;
+        if (gear) {
+            const mult = (this.player.gear.level === 2 && gear.evoAtkMult) ? gear.evoAtkMult : gear.atkMult;
+            if (mult) dmg *= mult;
+        }
         if (this.player.blessTimer > 0) dmg *= Game.BLESS.dmg;
         // 暴怒天赋:每损失 10% 生命,攻击力 +5%
         if (this.player.wrathBonus) {
@@ -6703,7 +7129,17 @@ class Game {
             }
             this.effects.push({ type: 'shockwave', x: cx, y: cy, radius: 6, maxRadius: 90, color: '#76ff03', ttl: 0.35, maxTtl: 0.35 });
         }
-        if (e && e.elite) this._eliteReward(e);
+        if (e && e.elite) {
+            this._eliteReward(e);
+            // 剧毒词缀:死亡时原地留下一滩持续 4 秒的腐蚀毒雾洼地
+            if (e.affix === 'venom') {
+                const cx = e.x + e.size / 2, cy = e.y + e.size / 2;
+                if (!this.toxicPuddles) this.toxicPuddles = [];
+                this.toxicPuddles.push({ x: cx, y: cy, radius: 60, timer: 4.0, max: 4.0 });
+                this.effects.push({ type: 'shockwave', x: cx, y: cy, radius: 10, maxRadius: 65, color: '#69f0ae', ttl: 0.4, maxTtl: 0.4 });
+                this.spawnParticles(cx, cy, '#69f0ae', 18, 1.5, 4, 2, 4, 0.04);
+            }
+        }
         // 技能石「尸爆」:当前技能位打死的敌人原地爆炸(爆炸本身不再带宝石效果)
         const boom = e && this._ctx && this._gv(this.player, this._ctx.slot, 'explode');
         if (boom) {
@@ -7963,7 +8399,9 @@ class Game {
 
         this.renderBackground();
         this._renderMeteorMarks(ctx);
+        this._renderToxicPuddles(ctx);
         this._renderAltar(ctx);
+        this._renderVoidRift(ctx);
 
         this.player.render(this.ctx);
         this._renderBlessAura(this.player);
@@ -9758,8 +10196,11 @@ class Player {
 
     _move(keys, width, height) {
         const gear = this.gear && GEARS[this.gear.type];
+        const gearSpd = gear ? ((this.gear.level === 2 && gear.evoSpeedMult) ? gear.evoSpeedMult : (gear.speedMult || 1)) : 1;
         const frenzyMult = 1 + (this.frenzyTier || 0) * 0.025;
-        const spd = this.speed * (gear && gear.speedMult || 1) * frenzyMult * (this.blessTimer > 0 ? Game.BLESS.speed : 1);
+        if (this._frostSlowTimer > 0) this._frostSlowTimer -= DT;
+        const frostSlow = (this._frostSlowTimer > 0) ? 0.7 : 1.0;
+        const spd = this.speed * gearSpd * frenzyMult * frostSlow * (this.blessTimer > 0 ? Game.BLESS.speed : 1);
         // 虚拟摇杆(模拟量方向)
         const jx = keys._jx || 0, jy = keys._jy || 0;
         if (jx || jy) {
@@ -9837,7 +10278,7 @@ class Player {
         if (t.evade && Math.random() < t.evade) { this._evadeFx = true; return 0; }
         const flatReduction = this.flatDamageReduction || 0;
         const gear = this.gear && GEARS[this.gear.type];
-        const gearDef = gear && gear.defBonus || 0;
+        const gearDef = gear ? ((this.gear.level === 2 && gear.evoDefBonus) ? gear.evoDefBonus : (gear.defBonus || 0)) : 0;
         const def = this.defense * Math.max(0, 1 + (t.defPct || 0));
         // 防御最多抵掉 80%:堆防不会把后期敌人的伤害压到 1 点
         let actualDamage = Math.max(1, damage * 0.2, damage - def - gearDef - flatReduction);
@@ -10288,7 +10729,8 @@ class Enemy {
     }
 
     // 精英化:体型 ×1.3、血量 ×3、攻防略升,画金框皇冠(guest 只用到体型与标记)
-    makeElite(isGuest = false) {
+    // 词缀精英体系 2.0: 支持 5 大机制词缀(疾风/坚毅/极寒/引力/剧毒)
+    makeElite(isGuest = false, forceAffix = null) {
         if (this.elite) return;
         this.elite = true;
         this.size = Math.round(this.size * 1.3);
@@ -10299,16 +10741,37 @@ class Enemy {
         this.speed *= 1.1;
         if (this.type === 'dasher') this.dashDist *= 1.15;
 
-        // 词缀根据 e.id % 2 决定: 0 =「疾风」移速 ×1.35; 1 =「坚毅」最大生命再 ×1.5(当前血量同步)
-        // 移速/血量只在主机/单人生效,客机的血量来自快照不要重复乘
-        const affix = (this.id % 2 === 0) ? 'gale' : 'tenacity';
+        // 词缀从 5 种中挑选: 0:gale, 1:tenacity, 2:frost, 3:vortex, 4:venom
+        const affix = forceAffix || AFFIX_TYPES[this.id % AFFIX_TYPES.length];
         this.affix = affix;
         if (!isGuest) {
-            if (affix === 'gale') {
-                this.speed *= 1.35;
-            } else {
-                this.maxHealth = Math.round(this.maxHealth * 1.5);
-                this.currentHealth = this.maxHealth;
+            switch (affix) {
+                case 'gale':
+                    this.speed *= 1.35;
+                    if (this.type === 'dasher') this.dashDist *= 1.2;
+                    break;
+                case 'tenacity':
+                    this.maxHealth = Math.round(this.maxHealth * 1.6);
+                    this.currentHealth = this.maxHealth;
+                    this.tenacityShield = Math.round(this.maxHealth * 0.25);
+                    this.maxTenacityShield = this.tenacityShield;
+                    this.shieldRegenTimer = 6;
+                    break;
+                case 'frost':
+                    this.maxHealth = Math.round(this.maxHealth * 1.2);
+                    this.currentHealth = this.maxHealth;
+                    this.frostRadius = 130;
+                    break;
+                case 'vortex':
+                    this.maxHealth = Math.round(this.maxHealth * 1.3);
+                    this.currentHealth = this.maxHealth;
+                    this.vortexTimer = 2.8;
+                    this.vortexRadius = 230;
+                    break;
+                case 'venom':
+                    this.maxHealth = Math.round(this.maxHealth * 1.2);
+                    this.currentHealth = this.maxHealth;
+                    break;
             }
         }
     }
@@ -10555,7 +11018,19 @@ class Enemy {
     }
     
     takeDamage(damage) {
-        const actualDamage = Math.max(1, damage - this.defense);
+        let actualDamage = Math.max(1, damage - this.defense);
+        // 坚毅词缀:优先扣除坚毅护盾
+        if (this.affix === 'tenacity' && this.tenacityShield > 0) {
+            if (this.tenacityShield >= actualDamage) {
+                this.tenacityShield -= actualDamage;
+                this._dn = (this._dn || 0) + actualDamage;
+                this.flash(!!this._dnCrit);
+                return actualDamage;
+            } else {
+                actualDamage -= this.tenacityShield;
+                this.tenacityShield = 0;
+            }
+        }
         if (Enemy.onDamage) Enemy.onDamage(Math.min(actualDamage, this.currentHealth));
         this.currentHealth = Math.max(0, this.currentHealth - actualDamage);
         this._dn = (this._dn || 0) + actualDamage; // 伤害数字:本帧累计,由 Game._flushDmgNums 统一出数
@@ -10572,11 +11047,12 @@ class Enemy {
         }
     }
 
-    // 击退位移(冻结/眩晕时也生效),限制在场地内
+    // 击退位移(冻结/眩晕时也生效),限制在场地内;坚毅词缀拥有 40% 击退抗性
     applyKnockback(width, height) {
         if (!this.kbX && !this.kbY) return;
-        this.x = Math.max(0, Math.min(width - this.size, this.x + this.kbX));
-        this.y = Math.max(0, Math.min(height - this.size, this.y + this.kbY));
+        const res = (this.affix === 'tenacity') ? 0.6 : 1.0;
+        this.x = Math.max(0, Math.min(width - this.size, this.x + this.kbX * res));
+        this.y = Math.max(0, Math.min(height - this.size, this.y + this.kbY * res));
         this.kbX *= 0.8;
         this.kbY *= 0.8;
         if (Math.abs(this.kbX) + Math.abs(this.kbY) < 0.1) this.kbX = this.kbY = 0;
@@ -10663,6 +11139,62 @@ class Enemy {
                 ctx.arc(cx, cy, e.size * (0.55 + 1.6 * (1 - k)), 0, Math.PI * 2);
                 ctx.stroke();
                 continue;
+            }
+            // 词缀精英专属地面光环(冰环/引力圈/毒雾/风旋/坚盾)
+            if (e.elite) {
+                const ecx = e.x + e.size / 2, ecy = e.y + e.size / 2;
+                const affixKey = e.affix || AFFIX_TYPES[e.id % AFFIX_TYPES.length];
+                const info = AFFIX_INFO[affixKey] || AFFIX_INFO.gale;
+                const now = performance.now() * 0.002;
+                if (affixKey === 'frost') {
+                    // 极寒:130px 冰霜减速光环
+                    ctx.save();
+                    ctx.fillStyle = 'rgba(79, 195, 247, 0.08)';
+                    ctx.beginPath();
+                    ctx.arc(ecx, ecy, 130, 0, Math.PI * 2);
+                    ctx.fill();
+                    ctx.strokeStyle = 'rgba(79, 195, 247, 0.4)';
+                    ctx.lineWidth = 1.5;
+                    ctx.setLineDash([8, 6]);
+                    ctx.beginPath();
+                    ctx.arc(ecx, ecy, 130, now, now + Math.PI * 2);
+                    ctx.stroke();
+                    ctx.setLineDash([]);
+                    ctx.restore();
+                } else if (affixKey === 'vortex') {
+                    // 引力:230px 旋涡牵引圈(蓄力时高亮旋转)
+                    const isSucking = e.vortexSucking;
+                    ctx.save();
+                    ctx.fillStyle = isSucking ? 'rgba(186, 104, 200, 0.15)' : 'rgba(186, 104, 200, 0.05)';
+                    ctx.beginPath();
+                    ctx.arc(ecx, ecy, 230, 0, Math.PI * 2);
+                    ctx.fill();
+                    ctx.strokeStyle = isSucking ? 'rgba(225, 190, 231, 0.8)' : 'rgba(186, 104, 200, 0.35)';
+                    ctx.lineWidth = isSucking ? 2.5 : 1;
+                    ctx.beginPath();
+                    ctx.arc(ecx, ecy, 230, -now * 2, -now * 2 + Math.PI * 2);
+                    ctx.stroke();
+                    ctx.restore();
+                } else if (affixKey === 'tenacity') {
+                    // 坚毅:护盾存在时脚下金符文
+                    if (e.tenacityShield > 0) {
+                        ctx.save();
+                        ctx.strokeStyle = 'rgba(255, 213, 79, 0.5)';
+                        ctx.lineWidth = 2;
+                        ctx.beginPath();
+                        ctx.arc(ecx, ecy, e.size * 0.8, now, now + Math.PI * 2);
+                        ctx.stroke();
+                        ctx.restore();
+                    }
+                } else if (affixKey === 'venom') {
+                    // 剧毒:浅绿腐蚀毒沼预兆
+                    ctx.save();
+                    ctx.fillStyle = 'rgba(105, 240, 174, 0.07)';
+                    ctx.beginPath();
+                    ctx.arc(ecx, ecy, e.size * 1.1, 0, Math.PI * 2);
+                    ctx.fill();
+                    ctx.restore();
+                }
             }
             if (e.state !== 1) continue;
             const cx = e.x + e.size / 2, cy = e.y + e.size / 2;
@@ -10808,13 +11340,25 @@ class Enemy {
         }
         if (this.elite) {
             SpriteCache.drawPx(ctx, Enemy.eliteSprite(this.size, this.type === 'giant' ? 10 : 6), this.x, this.y, snap);
-            const isGale = (this.id % 2 === 0);
+            const affixKey = this.affix || AFFIX_TYPES[this.id % AFFIX_TYPES.length];
+            const info = AFFIX_INFO[affixKey] || AFFIX_INFO.gale;
             ctx.save();
+            // 头顶词缀胶囊徽标
+            const hx = this.x + this.size / 2 + 10, hy = this.y - 19;
+            ctx.fillStyle = 'rgba(0, 0, 0, 0.65)';
+            roundRect(ctx, hx - 2, hy - 7, 16, 14, 3);
+            ctx.fill();
+            ctx.strokeStyle = info.glow;
+            ctx.lineWidth = 1;
+            roundRect(ctx, hx - 2, hy - 7, 16, 14, 3);
+            ctx.stroke();
             ctx.font = 'bold 11px Arial';
-            ctx.textAlign = 'left';
+            ctx.textAlign = 'center';
             ctx.textBaseline = 'middle';
-            ctx.fillStyle = isGale ? '#00e5ff' : '#e0e0e0';
-            ctx.fillText(isGale ? '疾' : '坚', this.x + this.size / 2 + 11, this.y - 19);
+            ctx.fillStyle = info.color;
+            ctx.shadowBlur = 6;
+            ctx.shadowColor = info.glow;
+            ctx.fillText(info.char, hx + 6, hy);
             ctx.restore();
         }
         if (this.stunTimer > 0 && this.type !== 'gunner') {
