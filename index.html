@@ -32,6 +32,10 @@
                     <button id="openTips" class="mp-btn mp-btn-ghost">玩法说明</button>
                     <button id="openProgress" class="mp-btn mp-btn-ghost">成就与外观</button>
                 </div>
+                <div class="mp-extra-row">
+                    <button id="openMetagrowth" class="mp-btn mp-btn-ghost" style="border-color:#ffd700; color:#ffe082;">🌟 星图天赋</button>
+                    <button id="mutationToggle" class="mp-btn mp-btn-ghost" style="border-color:#ba68c8; color:#e1bee7;">🌌 每日秘境:<span id="mutationLabel">关</span></button>
+                </div>
                 <button id="openControl" class="mp-btn mp-btn-ghost mp-control-btn">操控方式:<span id="controlLabel">摇杆</span></button>
                 <div class="mp-extra-row">
                     <button id="diffToggle" class="mp-btn mp-btn-ghost">难度:<span id="diffLabel">普通</span></button>
@@ -125,6 +129,19 @@
             <div class="panel-subtitle">成就 <span id="achCount"></span></div>
             <div id="achList" class="ach-list"></div>
             <button id="closeProgress" class="mp-btn mp-btn-primary">返回</button>
+        </div>
+    </div>
+
+    <!-- 🌟 星图星盘局外天赋面板 -->
+    <div id="metaOverlay" class="panel-overlay" style="display:none">
+        <div class="panel-card" style="max-width: 600px;">
+            <h3 class="panel-title" style="color: #ffd700;">🌟 永恒星图 · 局外天赋</h3>
+            <div style="display: flex; justify-content: space-between; align-items: center; margin-bottom: 12px; font-size: 13px; color: #e0e0e0;">
+                <div>拥有星之砂: <span id="starDustCount" style="color: #ffd700; font-weight: bold; font-size: 16px;">0</span> 粒</div>
+                <button id="resetMeta" class="mp-btn mp-btn-ghost" style="padding: 4px 10px; font-size: 12px;">免费洗点</button>
+            </div>
+            <div id="constellationList" class="constellation-list" style="display: grid; grid-template-columns: 1fr; gap: 10px; max-height: 52vh; overflow-y: auto; margin-bottom: 15px;"></div>
+            <button id="closeMeta" class="mp-btn mp-btn-primary">返回大厅</button>
         </div>
     </div>
 
