@@ -263,7 +263,8 @@ const GAME_EVENTS = {
     meteor:   { name: '流星雨',   icon: '🌠', color: '#ff9100', dur: 10, desc: '躲开地面红圈,陨石也会砸伤敌人' },
     treasure: { name: '宝藏方块', icon: '💰', color: '#ffd740', dur: 14, desc: '追上并击败它,掉落装备和一堆道具' },
     elite:    { name: '精英来袭', icon: '♛', color: '#ffc400', dur: 20, desc: '击败金框精英怪获得额外奖励' },
-    horde:    { name: '怪潮',     icon: '🌊', color: '#40c4ff', dur: 12, desc: '敌人大量涌来,击杀经验和分数翻倍' }
+    horde:    { name: '怪潮',     icon: '🌊', color: '#40c4ff', dur: 12, desc: '敌人大量涌来,击杀经验和分数翻倍' },
+    altar:    { name: '祝福祭坛', icon: '✨', color: '#b388ff', dur: 18, desc: '站进光圈为祭坛充能,充满后全队获得祝福' }
 };
 const EVENT_TYPES = Object.keys(GAME_EVENTS);
 const MP_ITEM_TYPES = ['potion', 'exp_book', 'snowflake', 'bomb', 'heart', 'potion_invicible',
@@ -756,6 +757,15 @@ const Sound = {
                 // 敌方「医」治疗脉冲:柔和上行的两声
                 [587, 880].forEach((f, i) => this._tone(f, 0.18, 'sine', 0.1, 1.3, i * 0.07));
                 break;
+            case 'bless':
+                // 祭坛祝福:明亮的上行琶音 + 一层柔和长音
+                [523, 659, 784, 1047, 1319].forEach((f, i) => this._tone(f, 0.22, 'triangle', 0.13, 1, i * 0.06));
+                this._tone(262, 0.7, 'sine', 0.12, 1.5);
+                break;
+            case 'record':
+                [784, 988, 1175, 1568].forEach((f, i) => this._tone(f, 0.14, 'square', 0.1, 1, i * 0.08));
+                this._tone(1568, 0.4, 'triangle', 0.12, 1, 0.34);
+                break;
             case 'treasure':
                 [1047, 1319, 1568, 2093].forEach((f, i) => this._tone(f, 0.1, 'triangle', 0.14, 1, i * 0.05));
                 break;
@@ -778,6 +788,10 @@ class Game {
     static STAR_LEVELS = 5;  // 星星闪烁亮度档位数
     static QUALITY = [{ dpr: 2, fx: 1 }, { dpr: 1.5, fx: 0.6 }, { dpr: 1, fx: 0.4 }];
     static DN_MERGE = 0.25;   // 同一目标多少秒内的伤害并进同一个伤害数字
+    // 祝福祭坛:光圈半径、单人充满所需秒数(每多一人站进来 +50% 速度)、祝福效果
+    static ALTAR_R = 62;
+    static ALTAR_NEED = 4;
+    static BLESS = { dur: 15, dmg: 1.25, speed: 1.15, heal: 0.4 };
     static DN_MAX = 60;       // 同屏伤害数字上限(超出丢最早的)
     static fmtDmg(v) {
         v = Math.max(1, Math.round(v));
@@ -1793,7 +1807,7 @@ class Game {
     //   i: [id, 类型序号, 落点x, 落点y, 剩余时长]
     //     e 的标志位:1 眩晕 / 2 受击闪白 / 4 精英 / 8 中毒 / 16 燃烧
     //   p: [id, 种类(0 普通弹/1 穿透箭/2 装备弹/3 奥术弹/4 爆裂火球), x, y, 角度]
-    //   ev: [事件序号(EVENT_TYPES), 剩余, 总时长, 剩余精英数] 或 0;mt: [id, x, y, 半径, 落地倒计时, 总时长]
+    //   ev: [事件序号(EVENT_TYPES), 剩余, 总时长, 剩余精英数, (祭坛) x, y, 充能 0~1] 或 0;bt: 魔王 idle 倒计时mt: [id, x, y, 半径, 落地倒计时, 总时长]
     //   b: [id, x, y, 角度]
     //   boss: [x, y, hp, maxHp, 击退中(0/1), 受击闪白(0/1), 招式序号(BlockBoss.ATK_CODES), 招式阶段, 阶段剩余, 阶段总长, 招式角度, 狂暴(0/1), 等级, 激光扫向(±1)]
     serializeState() {
@@ -1821,7 +1835,9 @@ class Game {
                 q2(Math.atan2(p.dy, p.dx))]),
             b: this.enemyBullets.map(b => [b.id, q1(b.x), q1(b.y), q2(b.angle)]),
             players,
-            ev: this.event ? [EVENT_TYPES.indexOf(this.event.type), q1(this.event.timer), this.event.dur, this.event.left || 0] : 0,
+            ev: this.event ? [EVENT_TYPES.indexOf(this.event.type), q1(this.event.timer), this.event.dur, this.event.left || 0,
+                ...(this.event.type === 'altar' ? [q1(this.event.ax), q1(this.event.ay), q2(this.event.charge)] : [])] : 0,
+            bt: this.bossState === 'idle' ? q1(this.bossTimer) : 0,
             mt: this.meteors.map(m => [m.id, q1(m.x), q1(m.y), q1(m.r), q2(m.t), m.dur]),
             tk: this.treasureKills, ek: this.eliteKills, dm: this.diffMode,
             ef: this._mpTakeNewEffects(),
@@ -1870,6 +1886,7 @@ class Game {
             cb: p.combo > 0 ? [p.combo, q2(p.comboTimer)] : 0, mc: p.maxCombo || 0,
             // 限时装备 [种类序号, 剩余, 总时长, 法球角度]
             g: p.gear ? [GEAR_TYPES.indexOf(p.gear.type), q1(p.gear.timer), p.gear.max, q2(p.gear.angle || 0)] : 0,
+            bl: p.blessTimer > 0 ? q1(p.blessTimer) : 0,  // 祭坛祝福剩余秒数
             // 拾取过的技能石(host 判定拾取,guest 据此得到宝石;镶嵌以 guest 本地为准)
             gl: p.gemLog || undefined,
             // 伤害构成(约每秒一次,按 DMG_SRCS 顺序取整)
@@ -1993,7 +2010,9 @@ class Game {
 
         // 随机事件与陨石(陨石落地倒计时在 _mpInterpolate 里本地推进)
         const evRow = snapshot.ev;
-        this.event = evRow ? { type: EVENT_TYPES[evRow[0]], timer: evRow[1], dur: evRow[2], left: evRow[3] } : null;
+        this.event = evRow ? { type: EVENT_TYPES[evRow[0]], timer: evRow[1], dur: evRow[2], left: evRow[3],
+            ax: evRow[4], ay: evRow[5], charge: evRow[6] || 0 } : null;
+        if (snapshot.bt !== undefined) this.bossTimer = snapshot.bt;
         const mt = this._mpSyncList(this.meteors, snapshot.mt || [], () => ({}),
             (m, r) => { m.x = r[1]; m.y = r[2]; m.r = r[3]; m.t = r[4]; m.dur = r[5]; });
         this.meteors = mt.list;
@@ -2040,6 +2059,7 @@ class Game {
             this.player.maxCombo = myData.mc || 0;
             if (myData.ds) DMG_SRCS.forEach((k, i) => { this.player.dmgStats[k] = myData.ds[i]; });
             this.player.gear = this._mpGear(myData.g);
+            this.player.blessTimer = myData.bl || 0;
             // 新捡到的技能石:追加到本地背包并自动镶嵌
             const gl = myData.gl || '';
             const mine = this.player.gemLog;
@@ -2238,7 +2258,7 @@ class Game {
                 id, x: gp.x, y: gp.y, size: gp.size, color: gp.color,
                 currentHealth: gp.currentHealth, maxHealth: gp.maxHealth,
                 class: gp.class, hurtCooldown: gp.hurtCooldown, invincibleTimer: gp.invincibleTimer,
-                gear: gp.gear, sp: gp.spec, aw: gp.awakened ? 1 : 0, still: gp.stillTime
+                gear: gp.gear, sp: gp.spec, aw: gp.awakened ? 1 : 0, still: gp.stillTime, bl: gp.blessTimer
             });
         }
     }
@@ -2328,9 +2348,95 @@ class Game {
             ctx.fillStyle = color;
             ctx.font = '10px Arial'; ctx.textAlign = 'center'; ctx.textBaseline = 'bottom';
             ctx.fillText(`P${p.id}`, p.x + p.size / 2, p.y - 12);
+            this._renderBlessAura(p);
             this._renderGearAura(p);
             this._renderClassAura(p, p.class, !!p.aw, p.still || 0);
         }
+    }
+
+    // 祝福增益:脚下一圈缓慢转动的淡紫光点,最后 3 秒闪烁(只用填充,无 shadowBlur)
+    _renderBlessAura(p) {
+        const t = p && p.blessTimer;
+        if (!(t > 0) || p.currentHealth <= 0) return;
+        const ctx = this.ctx;
+        const cx = p.x + p.size / 2, cy = p.y + p.size / 2;
+        const blink = t < 3 ? 0.35 + 0.65 * Math.abs(Math.sin(this.bgTime * 10)) : 1;
+        const r = p.size * 0.72 + 14, rot = this.bgTime * 1.6;
+        ctx.save();
+        ctx.globalAlpha = 0.16 * blink;
+        ctx.fillStyle = '#b388ff';
+        ctx.beginPath();
+        ctx.arc(cx, cy, r + 4, 0, Math.PI * 2);
+        ctx.fill();
+        ctx.globalAlpha = 0.9 * blink;
+        ctx.fillStyle = '#e1bee7';
+        for (let i = 0; i < 6; i++) {
+            const a = rot + i * Math.PI / 3;
+            const s = 2.5 + 1.2 * Math.sin(this.bgTime * 5 + i);
+            ctx.fillRect(cx + Math.cos(a) * r - s / 2, cy + Math.sin(a) * r - s / 2, s, s);
+        }
+        ctx.restore();
+    }
+
+    // 祝福祭坛:地面光圈 + 转动符文 + 充能进度弧;有人站在圈里时光柱升起
+    _renderAltar(ctx) {
+        const ev = this.event;
+        if (!ev || ev.type !== 'altar' || ev.ax === undefined) return;
+        const R = Game.ALTAR_R, x = ev.ax, y = ev.ay, c = ev.charge || 0, t = this.bgTime;
+        const pulse = 0.5 + 0.5 * Math.sin(t * 3);
+        ctx.save();
+        // 底圈
+        ctx.fillStyle = `rgba(124, 77, 255, ${0.10 + 0.12 * c})`;
+        ctx.beginPath();
+        ctx.arc(x, y, R, 0, Math.PI * 2);
+        ctx.fill();
+        ctx.strokeStyle = `rgba(179, 136, 255, ${0.45 + 0.3 * pulse})`;
+        ctx.lineWidth = 2;
+        ctx.setLineDash([10, 8]);
+        ctx.lineDashOffset = -t * 20;
+        ctx.beginPath();
+        ctx.arc(x, y, R, 0, Math.PI * 2);
+        ctx.stroke();
+        ctx.setLineDash([]);
+        // 充能弧
+        if (c > 0) {
+            ctx.strokeStyle = '#e1bee7';
+            ctx.lineWidth = 5;
+            ctx.lineCap = 'round';
+            ctx.beginPath();
+            ctx.arc(x, y, R - 6, -Math.PI / 2, -Math.PI / 2 + Math.PI * 2 * c);
+            ctx.stroke();
+        }
+        // 中央符文:两个反向转动的方块
+        ctx.translate(x, y);
+        ctx.lineWidth = 2;
+        for (const [k, a] of [[0.34, t * 0.8], [0.22, -t * 1.3]]) {
+            ctx.save();
+            ctx.rotate(a);
+            ctx.strokeStyle = `rgba(225, 190, 231, ${0.5 + 0.5 * c})`;
+            const s = R * k;
+            ctx.strokeRect(-s, -s, s * 2, s * 2);
+            ctx.restore();
+        }
+        // 光柱:充能越多越亮越高
+        if (c > 0) {
+            const h = 40 + 90 * c;
+            const g = ctx.createLinearGradient(0, 0, 0, -h);
+            g.addColorStop(0, `rgba(225, 190, 231, ${0.35 + 0.3 * c})`);
+            g.addColorStop(1, 'rgba(179, 136, 255, 0)');
+            ctx.fillStyle = g;
+            ctx.fillRect(-R * 0.3, -h, R * 0.6, h);
+        }
+        // 没人充能时给个提示
+        if (c < 0.02) {
+            ctx.globalAlpha = 0.6 + 0.4 * pulse;
+            ctx.fillStyle = '#e1bee7';
+            ctx.font = 'bold 12px Arial';
+            ctx.textAlign = 'center';
+            ctx.textBaseline = 'middle';
+            ctx.fillText('站进来充能', 0, R + 14);
+        }
+        ctx.restore();
     }
 
     // 职业状态光环:觉醒玩家身边转动的职业色虚线环;弓手站定专注时脚下一圈瞄准刻度
@@ -2446,12 +2552,24 @@ class Game {
     }
 
     // 左上角状态面板下方:当前装备的图标、名字和剩余时间条(最后 3 秒闪烁)
+    // 统计面板下方的限时增益条:装备在上,祭坛祝福在下
     _renderGearHUD() {
-        const g = this.player.gear;
-        if (!g || !GEARS[g.type]) return;
-        const def = GEARS[g.type];
+        const p = this.player;
+        let y = 72;
+        const g = p.gear;
+        if (g && GEARS[g.type]) {
+            const def = GEARS[g.type];
+            this._renderBuffPill(y, def.icon, def.name, def.color, g.timer, g.max);
+            y += 34;
+        }
+        if (p.blessTimer > 0) this._renderBuffPill(y, '✨', '祝福', '#b388ff', p.blessTimer, Game.BLESS.dur);
+    }
+
+    _renderBuffPill(y, icon, name, color, timer, max) {
+        const def = { icon, name, color };
+        const g = { timer, max };
         const ctx = this.ctx;
-        const x = 10, y = 72, w = 100, h = 30;
+        const x = 10, w = 100, h = 30;
         const ratio = Math.max(0, Math.min(1, g.timer / (g.max || 1)));
         const blink = g.timer < 3 ? 0.45 + 0.55 * Math.abs(Math.sin(this.bgTime * 10)) : 1;
         ctx.save();
@@ -2812,6 +2930,9 @@ class Game {
         this._progBossPrev = this.bossState;
         this._runRecorded = false;
         this._profileAtStart = Progress.load();
+        // 本局开始时的最高分:超过它时提示一次「新纪录」(各端本地判断,不同步)
+        this._bestAtStart = Store.get('blockrun.best', { score: 0 }).score || 0;
+        this._recordShown = false;
         this.player.skin = Progress.currentSkin();
     }
 
@@ -2832,6 +2953,11 @@ class Game {
         if (this._progTimer >= 0.5) {
             this._progTimer = 0;
             for (const a of Progress.checkAchievements(this._runStats())) this._pushAchievement(a);
+        }
+        if (!this._recordShown && this._bestAtStart > 0 && this.score > this._bestAtStart) {
+            this._recordShown = true;
+            this.achToasts.push({ icon: '🏆', title: '新纪录', name: '打破最高分!', desc: `超过了之前的 ${this._bestAtStart} 分`, t: 0 });
+            Sound.play('record');
         }
         for (const t of this.achToasts) t.t += DT;
         this.achToasts = this.achToasts.filter(t => t.t < 3);
@@ -2900,7 +3026,7 @@ class Game {
                       q: p.skillQ.cooldown, e: p.skillE.cooldown, kills: p.killCount || 0,
                       dash: p.dashCooldown || 0, dodge: p.dodgeCount || 0, gear: p.gear ? p.gear.type : '',
                       atk: b && b.atk ? b.atk + b.atkPhase : '', rage: !!(b && b.enraged),
-                      ev: this.event ? this.event.type : '', cb: p.combo || 0 };
+                      ev: this.event ? this.event.type : '', cb: p.combo || 0, bless: p.blessTimer || 0 };
         const prev = this._sfxPrev;
         this._sfxPrev = cur;
         if (!prev) return;
@@ -2924,6 +3050,7 @@ class Game {
             this.effects.push({ type: 'levelUp', lv: cur.level, ttl: 1.3, maxTtl: 1.3, _mpSent: true });
         }
         if (cur.gear !== prev.gear) Sound.play(cur.gear ? 'gearOn' : 'gearOff');
+        if (cur.bless > prev.bless + 1) Sound.play('bless');
         if (cur.q > prev.q + 0.2 || cur.e > prev.e + 0.2) Sound.play('skill');
         if (cur.atk !== prev.atk && cur.atk) {
             if (cur.atk.endsWith('0')) Sound.play('bossTell');
@@ -3079,6 +3206,7 @@ class Game {
     // 技能冷却 + 职业资源回复/衰减 + 圣光光环,作用于 this.player(guest 通过 _runAsPlayer 复用)
     _tickPlayerResources() {
         this._tickGear();
+        if (this.player.blessTimer > 0) this.player.blessTimer = Math.max(0, this.player.blessTimer - DT);
         if (this.player.comboTimer > 0) {
             this.player.comboTimer -= DT;
             if (this.player.comboTimer <= 0) {
@@ -4357,6 +4485,8 @@ class Game {
             } else if (ev.type === 'elite') {
                 ev.left = this.enemies.reduce((n, e) => n + (e.elite ? 1 : 0), 0);
                 if (ev.left === 0) { ev.success = true; ev.timer = 0; }
+            } else if (ev.type === 'altar') {
+                this._tickAltar(ev);
             } else if (ev.type === 'treasure') {
                 const t = this.enemies.find(e => e.type === 'treasure');
                 if (!t) ev.timer = 0;
@@ -4391,6 +4521,7 @@ class Game {
         this.effects.push({ type: 'floatText', text: def.desc, x: this.width / 2, y: this.height * 0.17 + 28, color: '#ffffff', ttl: 2.2, maxTtl: 2.2 });
         if (type === 'treasure') this._spawnTreasure();
         else if (type === 'elite') this._spawnElites();
+        else if (type === 'altar') this._placeAltar(this.event);
     }
 
     _endEvent() {
@@ -4411,7 +4542,61 @@ class Game {
             this._showFloatingText('精英全灭!', this.width / 2, this.height * 0.3, '#ffc400');
         } else if (ev.type === 'horde') {
             this._showFloatingText('怪潮退去', this.width / 2, this.height * 0.3, '#80d8ff');
+        } else if (ev.type === 'altar' && !ev.success) {
+            this.spawnBurstRing(ev.ax, ev.ay, Game.ALTAR_R, '#7e57c2', 14);
+            this._showFloatingText('祭坛熄灭了…', this.width / 2, this.height * 0.3, '#b39ddb');
         }
+    }
+
+    // ── 祝福祭坛:在离玩家有一段距离的场内空地出现,站进光圈充能,没人时缓慢回落 ──
+    _placeAltar(ev) {
+        const players = this._livingPlayers(), m = 110;
+        let x = this.width / 2, y = this.height / 2;
+        for (let i = 0; i < 16; i++) {
+            x = m + Math.random() * (this.width - m * 2);
+            y = m + Math.random() * (this.height - m * 2);
+            if (players.every(p => Math.hypot(p.x + p.size / 2 - x, p.y + p.size / 2 - y) > 200)) break;
+        }
+        ev.ax = x; ev.ay = y; ev.charge = 0;
+        this.spawnBurstRing(x, y, Game.ALTAR_R, '#b388ff', 18);
+    }
+
+    _tickAltar(ev) {
+        let n = 0;
+        for (const p of this._livingPlayers()) {
+            if (Math.hypot(p.x + p.size / 2 - ev.ax, p.y + p.size / 2 - ev.ay) <= Game.ALTAR_R) n++;
+        }
+        if (n > 0) {
+            ev.charge = Math.min(1, ev.charge + DT * (1 + 0.5 * (n - 1)) / Game.ALTAR_NEED);
+            ev.sparkle = (ev.sparkle || 0) - DT;
+            if (ev.sparkle <= 0) {
+                ev.sparkle = 0.1;
+                const a = Math.random() * Math.PI * 2, r = Game.ALTAR_R * (0.4 + Math.random() * 0.6);
+                this.spawnParticles(ev.ax + Math.cos(a) * r, ev.ay + Math.sin(a) * r, '#d1c4e9', 1, 0.5, 1.5, 1.5, 3, 0.03);
+            }
+        } else {
+            ev.charge = Math.max(0, ev.charge - DT * 0.08);
+        }
+        if (ev.charge >= 1) {
+            ev.success = true;
+            ev.timer = 0;
+            this._altarBless(ev);
+        }
+    }
+
+    // 全队回血 + 一段时间的祝福(伤害、移速提升);死亡中的玩家不受益
+    _altarBless(ev) {
+        const B = Game.BLESS;
+        for (const p of this._livingPlayers()) {
+            p.heal(p.maxHealth * B.heal);
+            p.blessTimer = B.dur;
+            this.spawnBurstRing(p.x + p.size / 2, p.y + p.size / 2, 30, '#e1bee7', 12);
+        }
+        this.effects.push({ type: 'shockwave', x: ev.ax, y: ev.ay, radius: 10, maxRadius: Game.ALTAR_R * 2.2, color: '#b388ff', ttl: 0.6, maxTtl: 0.6 });
+        this.spawnParticles(ev.ax, ev.ay, '#e1bee7', 26, 2, 7, 2, 5, 0.03);
+        this.screenShake = Math.max(this.screenShake, 0.1);
+        this._showFloatingText(`✨ 祝福降临  伤害 +${Math.round((B.dmg - 1) * 100)}%  移速 +${Math.round((B.speed - 1) * 100)}%`,
+            this.width / 2, this.height * 0.3, '#e1bee7');
     }
 
     // 敌人从场外随机一侧进场
@@ -4626,6 +4811,7 @@ class Game {
         let label = `${def.icon} ${def.name}`;
         if (ev.type === 'elite') label += `  剩余 ${ev.left}`;
         else if (ev.type === 'horde') label += '  经验×2';
+        else if (ev.type === 'altar') label += `  ${Math.floor((ev.charge || 0) * 100)}%`;
         label += `  ${Math.ceil(ev.timer)}s`;
         ctx.fillStyle = '#ffffff';
         ctx.font = 'bold 14px Arial';
@@ -6265,6 +6451,7 @@ class Game {
         // 限时装备的攻击倍率
         const gear = this.player.gear && GEARS[this.player.gear.type];
         if (gear && gear.atkMult) dmg *= gear.atkMult;
+        if (this.player.blessTimer > 0) dmg *= Game.BLESS.dmg;
         // 暴怒天赋:每损失 10% 生命,攻击力 +5%
         if (this.player.wrathBonus) {
             const lost = 1 - (this.player.currentHealth / this.player.maxHealth);
@@ -7580,8 +7767,10 @@ class Game {
 
         this.renderBackground();
         this._renderMeteorMarks(ctx);
+        this._renderAltar(ctx);
 
         this.player.render(this.ctx);
+        this._renderBlessAura(this.player);
         this._renderGearAura(this.player);
         this._renderClassAura(this.player, this.player.class, this.player.awakened, this.player.stillTime);
 
@@ -7897,8 +8086,9 @@ class Game {
         const mm = Math.floor(t / 60), ss = String(t % 60).padStart(2, '0');
         ctx.font = '11px Arial';
         ctx.textAlign = 'left';
-        ctx.fillStyle = '#ffd54f';
-        ctx.fillText(`★ ${this.score}`, x + 8, y + 44);
+        // 破纪录后分数换成奖杯 + 橙金色,让玩家一眼知道这局在刷新纪录
+        ctx.fillStyle = this._recordShown ? '#ffab40' : '#ffd54f';
+        ctx.fillText(`${this._recordShown ? '🏆' : '★'} ${this.score}`, x + 8, y + 44);
         ctx.textAlign = 'right';
         ctx.fillStyle = 'rgba(200,232,255,0.8)';
         ctx.fillText(`${mm}:${ss}`, x + w - 8, y + 44);
@@ -8006,6 +8196,28 @@ class Game {
 
     _renderBossHUD() {
         const ctx = this.ctx;
+        // 魔王将至:最后 15 秒在顶部显示倒计时小牌(有事件横幅时排在它下方),给玩家留出准备时间
+        if (this.bossState === 'idle' && this.bossTimer > 0 && this.bossTimer <= 15) {
+            const urgent = this.bossTimer <= 6;
+            const a = urgent ? 0.55 + 0.45 * Math.abs(Math.sin(this.bgTime * 6)) : 0.85;
+            const w = 128, h = 22, x = (this.width - w) / 2, y = this.event ? 46 : 10;
+            ctx.save();
+            ctx.fillStyle = 'rgba(30, 6, 12, 0.72)';
+            roundRect(ctx, x, y, w, h, 11);
+            ctx.fill();
+            ctx.globalAlpha = a;
+            ctx.strokeStyle = '#ff1744';
+            ctx.lineWidth = 1.5;
+            roundRect(ctx, x, y, w, h, 11);
+            ctx.stroke();
+            ctx.fillStyle = urgent ? '#ff8a80' : '#ffcdd2';
+            ctx.font = 'bold 12px Arial';
+            ctx.textAlign = 'center';
+            ctx.textBaseline = 'middle';
+            ctx.fillText(`💀 魔王将至  ${Math.ceil(this.bossTimer)}s`, this.width / 2, y + h / 2 + 1);
+            ctx.restore();
+            return;
+        }
         // 预告:红色边框 + 中央倒计时
         if (this.bossState === 'warning') {
             const alpha = 0.3 + 0.4 * Math.abs(Math.sin(this.bossWarningTimer * 8));
@@ -9112,6 +9324,7 @@ class Player {
         this.defense = 10;
         this.potentialPoints = 0;
         this.frenzyTier = 0;
+        this.blessTimer = 0;          // 祝福祭坛的增益剩余秒数(伤害/移速见 Game.BLESS)
         
         this.class = null;
 
@@ -9293,7 +9506,7 @@ class Player {
     _move(keys, width, height) {
         const gear = this.gear && GEARS[this.gear.type];
         const frenzyMult = 1 + (this.frenzyTier || 0) * 0.025;
-        const spd = this.speed * (gear && gear.speedMult || 1) * frenzyMult;
+        const spd = this.speed * (gear && gear.speedMult || 1) * frenzyMult * (this.blessTimer > 0 ? Game.BLESS.speed : 1);
         // 虚拟摇杆(模拟量方向)
         const jx = keys._jx || 0, jy = keys._jy || 0;
         if (jx || jy) {
