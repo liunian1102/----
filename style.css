@@ -35,7 +35,11 @@ html, body {
     display: none;
     flex-direction: column;
     justify-content: center;
+    justify-content: safe center; /* 矮屏(横屏手机)内容超高时从顶部开始,可滚动 */
     align-items: center;
+    overflow-y: auto;
+    padding: 12px 0;
+    box-sizing: border-box;
     color: white;
     z-index: 200;
     backdrop-filter: blur(6px);
@@ -926,4 +930,44 @@ kbd {
 }
 @media (max-width: 420px) {
     .run-summary { grid-template-columns: repeat(2, minmax(0, 1fr)); }
+}
+.dmg-break {
+    width: min(420px, calc(100vw - 32px));
+    margin: 0 0 12px;
+    text-align: left;
+}
+.dmg-break:empty { display: none; }
+.dmg-break .db-head {
+    font-size: 0.78em;
+    color: rgba(200, 232, 255, 0.7);
+    margin-bottom: 5px;
+}
+.dmg-break .db-bar {
+    display: flex;
+    height: 8px;
+    border-radius: 4px;
+    overflow: hidden;
+    background: rgba(255, 255, 255, 0.08);
+}
+.dmg-break .db-list {
+    display: grid;
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+    gap: 3px 14px;
+    margin-top: 7px;
+    font-size: 0.78em;
+}
+.dmg-break .db-row { display: flex; align-items: center; gap: 6px; min-width: 0; }
+.dmg-break .db-row i { width: 8px; height: 8px; border-radius: 2px; flex: none; }
+.dmg-break .db-n { color: rgba(230, 240, 255, 0.85); }
+.dmg-break .db-v { margin-left: auto; color: #ffffff; font-weight: 700; white-space: nowrap; }
+
+/* 矮屏(横屏手机):结算弹窗收紧,放得下伤害构成 */
+@media (max-height: 520px) {
+    .game-over h2 { font-size: 2em; margin-bottom: 6px; }
+    .game-over p { margin: 4px 0; font-size: 1em; }
+    .run-summary { grid-template-columns: repeat(6, minmax(0, 1fr)); width: min(640px, calc(100vw - 32px)); gap: 6px; margin: 2px 0 8px; }
+    .run-summary .rs-item { padding: 4px 4px; }
+    .dmg-break { width: min(640px, calc(100vw - 32px)); margin-bottom: 6px; }
+    .dmg-break .db-list { grid-template-columns: repeat(3, minmax(0, 1fr)); }
+    .game-over-btns { margin-top: 8px; }
 }

@@ -240,7 +240,14 @@ const nextEntityId = () => ++_entityIdSeq;
 // 联机快照数值量化,缩小网络包
 const q1 = v => Math.round(v * 10) / 10;
 const q2 = v => Math.round(v * 100) / 100;
-const MP_ENEMY_TYPES = ['chaser', 'patroller', 'giant', 'gunner', 'dasher', 'bomber', 'treasure', 'healer'];
+// 伤害来源(统计顺序 / 名称 / 颜色),见 Game._recDmg 与暂停面板、结算页的伤害构成条
+const DMG_SRCS = ['a', 'q', 'e', 'dot', 'gear', 'body', 'other'];
+const DMG_SRC_INFO = {
+    a: { name: '普攻', color: '#4fc3f7' }, q: { name: 'Q 技能', color: '#ffb74d' }, e: { name: 'E 技能', color: '#ce93d8' },
+    dot: { name: '持续', color: '#9ccc65' }, gear: { name: '装备', color: '#ffd54f' },
+    body: { name: '碰撞', color: '#ef9a9a' }, other: { name: '其他', color: '#90a4ae' }
+};
+const MP_ENEMY_TYPES = ['chaser', 'patroller', 'giant', 'gunner', 'dasher', 'bomber', 'treasure', 'healer', 'splitter', 'shard'];
 
 // 随机事件(两次魔王之间触发,由 host/单人调度,经快照 ev 下发给 guest)
 const GAME_EVENTS = {
@@ -1121,6 +1128,7 @@ class Game {
     }
 
     init() {
+        Enemy.onDamage = v => this._creditDmg(v);
         this.bindEvents();
         this.updateUI();
         this.showingPotentialMenu = false;
@@ -1701,6 +1709,7 @@ class Game {
     //   b: [id, x, y, 角度]
     //   boss: [x, y, hp, maxHp, 击退中(0/1), 受击闪白(0/1), 招式序号(BlockBoss.ATK_CODES), 招式阶段, 阶段剩余, 阶段总长, 招式角度, 狂暴(0/1), 等级, 激光扫向(±1)]
     serializeState() {
+        this._mpSnapSeq = (this._mpSnapSeq || 0) + 1;
         const players = [this._serializePlayer(this.player, 0)];
         for (const [id, gp] of this.mpGuestPlayers) {
             players.push(this._serializePlayer(gp, id));
@@ -1775,6 +1784,8 @@ class Game {
             g: p.gear ? [GEAR_TYPES.indexOf(p.gear.type), q1(p.gear.timer), p.gear.max, q2(p.gear.angle || 0)] : 0,
             // 拾取过的技能石(host 判定拾取,guest 据此得到宝石;镶嵌以 guest 本地为准)
             gl: p.gemLog || undefined,
+            // 伤害构成(约每秒一次,按 DMG_SRCS 顺序取整)
+            ds: this._mpSnapSeq % 20 === 0 ? DMG_SRCS.map(k => Math.round((p.dmgStats && p.dmgStats[k]) || 0)) : undefined,
             skillQ: { cooldown: q2(p.skillQ.cooldown), maxCooldown: q2(p.skillQ.maxCooldown), level: p.skillQ.level },
             skillE: { cooldown: q2(p.skillE.cooldown), maxCooldown: q2(p.skillE.maxCooldown), level: p.skillE.level }
         };
@@ -1937,6 +1948,7 @@ class Game {
             this.player.combo = myData.cb ? myData.cb[0] : 0;
             this.player.comboTimer = myData.cb ? myData.cb[1] : 0;
             this.player.maxCombo = myData.mc || 0;
+            if (myData.ds) DMG_SRCS.forEach((k, i) => { this.player.dmgStats[k] = myData.ds[i]; });
             this.player.gear = this._mpGear(myData.g);
             // 新捡到的技能石:追加到本地背包并自动镶嵌
             const gl = myData.gl || '';
@@ -2437,6 +2449,61 @@ class Game {
         ];
     }
 
+    // 本局伤害构成:总伤害、秒伤与按来源排好序的占比(只列有伤害的来源)
+    _dmgBreakdown(p) {
+        const st = (p && p.dmgStats) || {};
+        const total = DMG_SRCS.reduce((a, k) => a + (st[k] || 0), 0);
+        const parts = DMG_SRCS.filter(k => st[k] > 0).map(k => ({ k, ...DMG_SRC_INFO[k], v: st[k], pct: st[k] / total }))
+            .sort((a, b) => b.v - a.v);
+        return { total, dps: total / Math.max(1, this.gameTime), parts };
+    }
+
+    static fmtNum(v) {
+        return v >= 1e6 ? (v / 1e6).toFixed(1) + 'M' : v >= 1e4 ? (v / 1e3).toFixed(1) + 'k' : String(Math.round(v));
+    }
+
+    // 暂停面板里的伤害构成条:标题行 + 分段条 + 图例(最多 4 项)
+    _renderDmgBar(ctx, x, y, w) {
+        const b = this._dmgBreakdown(this.player);
+        ctx.textAlign = 'left';
+        ctx.font = '10px Arial';
+        ctx.fillStyle = 'rgba(200,232,255,0.55)';
+        ctx.fillText('伤害构成', x + 6, y);
+        ctx.textAlign = 'right';
+        ctx.fillStyle = 'rgba(255,255,255,0.85)';
+        ctx.fillText(b.total > 0 ? `总 ${Game.fmtNum(b.total)} · 秒伤 ${Game.fmtNum(b.dps)}` : '还没有造成伤害', x + w - 6, y);
+        const bx = x + 6, bw = w - 12, by = y + 9, bh = 8;
+        ctx.fillStyle = 'rgba(255,255,255,0.08)';
+        roundRect(ctx, bx, by, bw, bh, 4);
+        ctx.fill();
+        if (b.total > 0) {
+            ctx.save();
+            roundRect(ctx, bx, by, bw, bh, 4);
+            ctx.clip();
+            let cx = bx;
+            for (const part of b.parts) {
+                const pw = part.pct * bw;
+                ctx.fillStyle = part.color;
+                ctx.fillRect(cx, by, pw + 0.5, bh);
+                cx += pw;
+            }
+            ctx.restore();
+            ctx.textAlign = 'left';
+            ctx.font = '10px Arial';
+            let lx = bx;
+            for (const part of b.parts.slice(0, 4)) {
+                const txt = `${part.name} ${Math.round(part.pct * 100)}%`;
+                const tw = ctx.measureText(txt).width;
+                if (lx + tw + 10 > bx + bw) break;
+                ctx.fillStyle = part.color;
+                ctx.fillRect(lx, by + 17, 6, 6);
+                ctx.fillStyle = 'rgba(230,240,255,0.85)';
+                ctx.fillText(txt, lx + 9, by + 20.5);
+                lx += tw + 20;
+            }
+        }
+    }
+
     // 暂停面板:本局概况 + 继续 / 静音 / 结束本局(联机客机为离开房间,需再点一次确认)
     _renderPauseOverlay() {
         const ctx = this.ctx;
@@ -2471,7 +2538,7 @@ class Game {
         const rows = this._runSummaryRows();
         const colW = (pw - 32) / 2;
         rows.forEach(([k, v], i) => {
-            const cx = px + 16 + (i % 2) * colW, cy = py + 84 + Math.floor(i / 2) * 36;
+            const cx = px + 16 + (i % 2) * colW, cy = py + 76 + Math.floor(i / 2) * 33;
             ctx.textAlign = 'left';
             ctx.font = '10px Arial';
             ctx.fillStyle = 'rgba(200,232,255,0.55)';
@@ -2482,16 +2549,17 @@ class Game {
             while (txt.length > 2 && ctx.measureText(txt).width > colW - 12) txt = txt.slice(0, -2) + '…';
             ctx.fillText(txt, cx + 6, cy + 24);
         });
+        this._renderDmgBar(ctx, px + 16, py + 186, pw - 32);
         ctx.restore();
 
-        const bw = pw - 48, bh = 40, bx = px + 24;
-        let by = py + 196;
+        const bw = pw - 48, bh = 36, bx = px + 24;
+        let by = py + 230;
         this.drawButton(bx, by, bw, bh, '#00b0ff', '继续游戏', 'resume');
-        by += bh + 10;
+        by += bh + 8;
         this.drawButton(bx, by, bw, bh, '#546e7a', Sound.muted ? '🔇 声音:关' : '🔊 声音:开', 'mute');
-        by += bh + 10;
+        by += bh + 8;
         this.drawButton(bx, by, bw, bh, '#546e7a', this.showDmgNums ? '伤害数字:开' : '伤害数字:关', 'dmgNums');
-        by += bh + 10;
+        by += bh + 8;
         const quitText = this.mpMode === 'guest' ? '离开房间' : '结束本局';
         this.drawButton(bx, by, bw, bh, this._pauseQuitArmed ? '#ff1744' : '#8d3b3b',
                         this._pauseQuitArmed ? `再点一次${quitText}` : quitText, 'quit');
@@ -2950,7 +3018,7 @@ class Game {
                         const dx = e.x + e.size / 2 - pcx;
                         const dy = e.y + e.size / 2 - pcy;
                         if (Math.sqrt(dx * dx + dy * dy) <= auraR) {
-                            e.takeDamage(auraDmgTick);
+                            this._withSrc('e', () => e.takeDamage(auraDmgTick));
                             auraHits++;
                             if (e.currentHealth <= 0) {
                                 this.spawnHitParticles(e.x + e.size / 2, e.y + e.size / 2, e.color, 10);
@@ -2967,7 +3035,7 @@ class Game {
                         const bx = this.boss.x + this.boss.size / 2;
                         const by = this.boss.y + this.boss.size / 2;
                         if (Math.sqrt((bx - pcx) ** 2 + (by - pcy) ** 2) <= auraR + this.boss.size / 2) {
-                            this.boss.takeDamage(auraDmgTick);
+                            this._withSrc('e', () => this.boss.takeDamage(auraDmgTick));
                             this.bossDamageDealt += auraDmgTick;
                         }
                     }
@@ -3020,6 +3088,10 @@ class Game {
 
     // ── 限时装备:计时 + 特殊攻击(作用于 this.player,guest 由 host 在 _runAsPlayer 里推进) ──
     _tickGear() {
+        if (this.player.gear) this._withSrc('gear', () => this._tickGearInner());
+    }
+
+    _tickGearInner() {
         const p = this.player, g = p.gear;
         if (!g) return;
         g.timer -= DT;
@@ -3191,6 +3263,32 @@ class Game {
     //  构筑:天赋树 / 技能石 —— 规则与战斗钩子(面板见 openBuild)
     // ══════════════════════════════════════════════════════════════════
 
+    // ── 伤害统计:按来源(普攻/Q/E/持续/装备/其他)累计每个玩家本局造成的伤害,只由 host/单人记录 ──
+    // 敌人/魔王 takeDamage 回调 _creditDmg;来源默认取技能位上下文,_withSrc 可临时指定('none' 不计入任何人)
+    _withSrc(src, fn) {
+        const prev = this._dmgSrc;
+        this._dmgSrc = src;
+        try { return fn(); } finally { this._dmgSrc = prev; }
+    }
+
+    _creditDmg(v) {
+        const src = this._dmgSrc || (this._ctx ? this._ctx.slot : 'other');
+        if (src !== 'none') this._recDmg(this._dmgOwner || this.player, src, v);
+    }
+
+    // 投射物命中:伤害记在发射者名下(房主替 guest 打出的子弹不算房主的)
+    _creditTo(owner, fn) {
+        const prev = this._dmgOwner;
+        this._dmgOwner = owner || null;
+        try { return fn(); } finally { this._dmgOwner = prev; }
+    }
+
+    _recDmg(p, src, v) {
+        if (!p || !(v > 0) || this.mpMode === 'guest') return;
+        const s = p.dmgStats || (p.dmgStats = {});
+        s[src] = (s[src] || 0) + v;
+    }
+
     // 以技能位(a 普攻 / q / e)为上下文执行 fn,命中/击杀时据此读取该位置的技能石。
     // fn 内新排入的延迟动作和投射物会记住上下文,之后结算时同样生效;显式写了 ctx(含 null)的不覆盖
     _withCtx(ctx, fn) {
@@ -3347,6 +3445,7 @@ class Game {
         t.burnT -= DT;
         const o = t.burnOwner;
         const dmg = t.burn * DT * (1 + ((o && o.tree && o.tree.dot) || 0));
+        this._recDmg(o || this.player, 'dot', Math.min(dmg, t.currentHealth));
         t.currentHealth = Math.max(0, t.currentHealth - dmg);
         t._dnDot = (t._dnDot || 0) + dmg;
         if (t === this.boss) this.bossDamageDealt += dmg;
@@ -3796,7 +3895,7 @@ class Game {
                         const prevCtx = this._ctx;
                         this._ctx = proj.ctx || null;
                         const dmg = this._applyHitMods(proj.owner, this.boss, proj.damage != null ? proj.damage : 15);
-                        this.boss.takeDamage(dmg);
+                        this._creditTo(proj.owner, () => this.boss.takeDamage(dmg));
                         this._afterHit(proj.owner, this.boss, dmg);
                         if (proj.splash) this._projSplash(proj, this.boss);
                         this._ctx = prevCtx;
@@ -4262,7 +4361,7 @@ class Game {
             if (e.currentHealth <= 0) continue;
             const d = Math.hypot(e.x + e.size / 2 - m.x, e.y + e.size / 2 - m.y);
             if (d > m.r + e.size / 2) continue;
-            e.takeDamage(e.type === 'treasure' ? edmg * 0.4 : edmg);
+            this._withSrc('none', () => e.takeDamage(e.type === 'treasure' ? edmg * 0.4 : edmg));
             this._knockbackFrom(e, m.x, m.y, 6);
         }
     }
@@ -4469,6 +4568,20 @@ class Game {
     }
 
     // 自爆者爆炸。armed=true:引信燃尽,伤玩家也伤周围敌人;false:被击杀后殉爆,只伤敌人(引到怪堆里打爆它)
+    _splitEnemy(e) {
+        const cx = e.x + e.size / 2, cy = e.y + e.size / 2, a0 = Math.random() * Math.PI * 2;
+        for (let k = 0; k < 3; k++) {
+            const a = a0 + k * Math.PI * 2 / 3;
+            const s = new Enemy(cx - 8 + Math.cos(a) * 6, cy - 8 + Math.sin(a) * 6, 'shard', e.difficulty);
+            if (e.elite) { s.maxHealth *= 2; s.currentHealth = s.maxHealth; }
+            s.kbX = Math.cos(a) * 7;
+            s.kbY = Math.sin(a) * 7;
+            s.spawnHold = 0.3; // 迸开后稍一停顿再扑上来,给玩家反应时间
+            this.enemies.push(s);
+        }
+        this.spawnParticles(cx, cy, '#84ffff', 10, 1.5, 4, 2, 4, 0.05);
+    }
+
     _bomberExplode(e, armed) {
         e.exploded = true;
         const cx = e.x + e.size / 2, cy = e.y + e.size / 2, r = e.blastRadius;
@@ -4491,7 +4604,7 @@ class Game {
             if (o === e || o.currentHealth <= 0) continue;
             const ox = o.x + o.size / 2, oy = o.y + o.size / 2;
             if (Math.hypot(ox - cx, oy - cy) > r + o.size / 2) continue;
-            o.takeDamage(dmg);
+            this._withSrc(armed ? 'none' : 'other', () => o.takeDamage(dmg));
             this._knockbackFrom(o, cx, cy, 6);
         }
     }
@@ -4539,7 +4652,7 @@ class Game {
                     this.spawnHitParticles(this.player.x + this.player.size / 2, this.player.y + this.player.size / 2, '#ff4444', 8);
                     this._knockbackFrom(this.enemies[i], this.player.x + this.player.size / 2, this.player.y + this.player.size / 2, 5);
                 }
-                this.enemies[i].takeDamage(this.player.attack);
+                this._withSrc('body', () => this.enemies[i].takeDamage(this.player.attack));
                 
                 // 简单的碰撞后分离，避免持续碰撞
                 const dx = this.player.x - this.enemies[i].x;
@@ -4615,7 +4728,7 @@ class Game {
                     // 有限穿透:已命中过的同一敌人跳过
                     if (proj.hitEnemies && proj.hitEnemies.has(this.enemies[j])) continue;
                     const dmg = this._applyHitMods(proj.owner, this.enemies[j], proj.damage != null ? proj.damage : 15);
-                    this.enemies[j].takeDamage(dmg);
+                    this._creditTo(proj.owner, () => this.enemies[j].takeDamage(dmg));
                     this._afterHit(proj.owner, this.enemies[j], dmg);
                     if (proj.freeze) this.enemies[j].stunTimer = Math.max(this.enemies[j].stunTimer, proj.freeze);
                     if (proj.splash) splashAt = this.enemies[j];
@@ -4686,6 +4799,8 @@ class Game {
             if (this.gameTime >= 50) pool.push(['bomber', 8]);
             // 医疗兵 70 秒后加入,场上最多 3 个(太多会把战斗拖成消耗战)
             if (this.gameTime >= 70 && this.enemies.filter(e => e.type === 'healer').length < 3) pool.push(['healer', 6]);
+            // 分裂者 90 秒后加入:死后裂成 3 块碎片
+            if (this.gameTime >= 90) pool.push(['splitter', 7]);
             let roll = Math.random() * pool.reduce((a, w) => a + w[1], 0);
             let type = pool[0][0];
             for (const [t, w] of pool) { if ((roll -= w) < 0) { type = t; break; } }
@@ -5165,6 +5280,7 @@ class Game {
             t.poisonTick += 0.5;
             const owner = t.poisonOwner || this.player;
             const dmg = t.poison * 0.2 * owner.attack * 0.5 * (1 + ((owner.tree && owner.tree.dot) || 0));
+            this._recDmg(owner, 'dot', Math.min(dmg, t.currentHealth));
             t.currentHealth = Math.max(0, t.currentHealth - dmg);
             t._dnDot = (t._dnDot || 0) + dmg;
             if (t === this.boss) this.bossDamageDealt += dmg;
@@ -6006,6 +6122,11 @@ class Game {
             // 碎裂:方块裂成四块飞散(特效随快照同步给 guest)
             this.effects.push({ type: 'shatter', x: e.x + e.size / 2, y: e.y + e.size / 2, s: e.size, color: e.color,
                                 ttl: 0.5, maxTtl: 0.5 });
+        }
+        // 分裂者碎成 3 块碎片向外迸开(下一帧再加进 enemies,避免调用方遍历时改数组)
+        if (e && e.type === 'splitter' && !e.split) {
+            e.split = true;
+            this.pendingActions.push({ delay: 0.02, ctx: null, fn: () => this._splitEnemy(e) });
         }
         // 被击杀的自爆者殉爆(稍等一帧,避免在调用方遍历 enemies 时改动数组)
         if (e && e.type === 'bomber' && !e.exploded) {
@@ -6956,6 +7077,35 @@ class Game {
         this._showGameOver(Math.floor(this.gameTime), this.score);
     }
 
+    // 结算页的伤害构成:标题 + 分段条 + 每个来源一行(名称、数值、占比)
+    _renderDmgBreakdownDom(el) {
+        if (!el) return;
+        el.innerHTML = '';
+        const b = this._dmgBreakdown(this.player);
+        if (!(b.total > 0)) return;
+        const head = document.createElement('div');
+        head.className = 'db-head';
+        head.textContent = `伤害构成 · 总 ${Game.fmtNum(b.total)} · 秒伤 ${Game.fmtNum(b.dps)}`;
+        const bar = document.createElement('div');
+        bar.className = 'db-bar';
+        const list = document.createElement('div');
+        list.className = 'db-list';
+        for (const part of b.parts) {
+            const seg = document.createElement('span');
+            seg.style.width = (part.pct * 100).toFixed(2) + '%';
+            seg.style.background = part.color;
+            bar.appendChild(seg);
+            const row = document.createElement('div');
+            row.className = 'db-row';
+            row.innerHTML = '<i></i><span class="db-n"></span><span class="db-v"></span>';
+            row.children[0].style.background = part.color;
+            row.children[1].textContent = part.name;
+            row.children[2].textContent = `${Game.fmtNum(part.v)} · ${Math.round(part.pct * 100)}%`;
+            list.appendChild(row);
+        }
+        el.append(head, bar, list);
+    }
+
     // 结算弹窗 + 最高纪录(分数与生存时间分别记录,存 localStorage)
     _showGameOver(time, score) {
         this.closeBuild();
@@ -6981,6 +7131,7 @@ class Game {
                 sumEl.appendChild(d);
             }
         }
+        this._renderDmgBreakdownDom(document.getElementById('dmgBreak'));
         const bestEl = document.getElementById('bestRecord');
         if (bestEl) {
             const b = Store.get('blockrun.best', { score: 0, time: 0 });
@@ -8792,6 +8943,7 @@ class Player {
         this.combo = 0;                // 连杀数:击杀间隔不超过 Game.COMBO_WINDOW 秒就累加
         this.comboTimer = 0;           // 连杀剩余时间(秒),归零时连杀中断
         this.maxCombo = 0;             // 本局最高连杀
+        this.dmgStats = {};            // 本局造成伤害按来源累计 { a, q, e, dot, gear, body, other }(见 Game._recDmg)
         this.faceX = 1;                // 最近一次移动方向(冲刺方向)
         this.faceY = 0;
         this._dashGhosts = [];         // 冲刺残影(纯视觉,render 时记录)
@@ -9131,10 +9283,12 @@ class Player {
 
 class Enemy {
     static SPAWN_IN = 0.5;
+    static onDamage = null; // 伤害统计回调(Game._creditDmg),敌人和魔王共用
     static INTROS = {
         dasher: { text: '新敌人「冲」:蓄力后直线冲刺,看准路线侧身躲开', color: '#ffe57f' },
         bomber: { text: '新敌人「爆」:贴身会自爆,先打爆它还能炸伤周围敌人', color: '#ff80ab' },
-        healer: { text: '新敌人「医」:躲在远处给周围敌人回血,优先打掉它', color: '#69f0ae' }
+        healer: { text: '新敌人「医」:躲在远处给周围敌人回血,优先打掉它', color: '#69f0ae' },
+        splitter: { text: '新敌人「裂」:被打碎会裂成三块小碎片,别被包围', color: '#84ffff' }
     };
 
     constructor(x, y, type, difficulty) {
@@ -9277,6 +9431,24 @@ class Enemy {
                 this.healRadius = 140;
                 this.healCD = 2 + Math.random() * 1.5;
                 break;
+            case 'splitter': // 分裂者:皮厚走得慢,死亡时裂成 3 块碎片(碎片不再分裂)
+                this.size = 34;
+                this.speed = Math.min(4, 1.9 * this.difficulty);
+                this.maxHealth = 75 * this.difficulty;
+                this.currentHealth = this.maxHealth;
+                this.attack = 12 * this.difficulty;
+                this.defense = 4 * this.difficulty;
+                this.color = '#00bcd4';
+                break;
+            case 'shard': // 碎片:又小又快又脆,成群扑上来
+                this.size = 16;
+                this.speed = Math.min(5.5, 2.4 + 0.8 * this.difficulty);
+                this.maxHealth = 14 * this.difficulty;
+                this.currentHealth = this.maxHealth;
+                this.attack = 5 * this.difficulty;
+                this.defense = 1 * this.difficulty;
+                this.color = '#4dd0e1';
+                break;
             default: // 默认追击者
                 this.type = 'chaser';
                 this.size = 30;
@@ -9290,6 +9462,7 @@ class Enemy {
     }
     
     update(playerX, playerY, width, height, playerSize = 30) {
+        if (this.spawnHold > 0) { this.spawnHold -= DT; return; }
         if (this.stunTimer > 0) {
             this.stunTimer -= DT;
             // 冲锋者蓄力/冲刺中被控 = 打断;自爆者引信只是暂停
@@ -9305,6 +9478,8 @@ class Enemy {
         }
         switch (this.type) {
             case 'chaser':
+            case 'splitter':
+            case 'shard':
                 this.updateChaser(playerX, playerY);
                 break;
             case 'patroller':
@@ -9615,6 +9790,7 @@ class Enemy {
     
     takeDamage(damage) {
         const actualDamage = Math.max(1, damage - this.defense);
+        if (Enemy.onDamage) Enemy.onDamage(Math.min(actualDamage, this.currentHealth));
         this.currentHealth = Math.max(0, this.currentHealth - actualDamage);
         this._dn = (this._dn || 0) + actualDamage; // 伤害数字:本帧累计,由 Game._flushDmgNums 统一出数
         this.flash();
@@ -9882,14 +10058,14 @@ class Enemy {
                 g.stroke();
                 return;
             }
-            const glowColors = { chaser: '#ff1744', patroller: '#2979ff', giant: '#d500f9', dasher: '#ffd600', bomber: '#ff4081', treasure: '#ffd740', healer: '#00e676' };
-            const lightColors = { chaser: '#ff6b6b', patroller: '#64b5f6', giant: '#e040fb', dasher: '#fff59d', bomber: '#ff80ab', treasure: '#fffde7', healer: '#b9f6ca' };
-            const darkColors = { chaser: '#b71c1c', patroller: '#0d47a1', giant: '#6a0080', dasher: '#f57f17', bomber: '#880e4f', treasure: '#c79100', healer: '#00695c' };
-            const labels = { chaser: '追', patroller: '巡', giant: '巨', dasher: '冲', bomber: '爆', treasure: '宝', healer: '医' };
+            const glowColors = { chaser: '#ff1744', patroller: '#2979ff', giant: '#d500f9', dasher: '#ffd600', bomber: '#ff4081', treasure: '#ffd740', healer: '#00e676', splitter: '#00e5ff', shard: '#18ffff' };
+            const lightColors = { chaser: '#ff6b6b', patroller: '#64b5f6', giant: '#e040fb', dasher: '#fff59d', bomber: '#ff80ab', treasure: '#fffde7', healer: '#b9f6ca', splitter: '#84ffff', shard: '#b2ebf2' };
+            const darkColors = { chaser: '#b71c1c', patroller: '#0d47a1', giant: '#6a0080', dasher: '#f57f17', bomber: '#880e4f', treasure: '#c79100', healer: '#00695c', splitter: '#006064', shard: '#00838f' };
+            const labels = { chaser: '追', patroller: '巡', giant: '巨', dasher: '冲', bomber: '爆', treasure: '宝', healer: '医', splitter: '裂', shard: '' };
             const glow = glowColors[type] || '#ff1744';
             const r = type === 'giant' ? 10 : 6;
 
-            g.shadowBlur = SpriteCache.blur(type === 'giant' ? 20 : 12);
+            g.shadowBlur = SpriteCache.blur(type === 'giant' ? 20 : type === 'shard' ? 8 : 12);
             g.shadowColor = glow;
             const grad = g.createLinearGradient(0, 0, size, size);
             grad.addColorStop(0, lightColors[type] || '#ff6b6b');
@@ -9903,6 +10079,19 @@ class Enemy {
             g.lineWidth = 1.5;
             roundRect(g, 0, 0, size, size, r);
             g.stroke();
+            // 分裂者 / 碎片:身上的裂纹提示「会碎」
+            if (type === 'splitter' || type === 'shard') {
+                g.strokeStyle = 'rgba(224,255,255,0.75)';
+                g.lineWidth = type === 'shard' ? 1.2 : 1.6;
+                g.beginPath();
+                g.moveTo(size * 0.12, size * 0.2);
+                g.lineTo(size * 0.42, size * 0.42);
+                g.lineTo(size * 0.32, size * 0.62);
+                g.lineTo(size * 0.62, size * 0.9);
+                g.moveTo(size * 0.42, size * 0.42);
+                g.lineTo(size * 0.85, size * 0.3);
+                g.stroke();
+            }
 
             g.fillStyle = type === 'treasure' ? '#6d4c00' : 'rgba(255,255,255,0.9)';
             g.font = `bold ${Math.floor(size * 0.38)}px Arial`;
@@ -10456,6 +10645,7 @@ class BlockBoss {
 
     takeDamage(damage) {
         // 魔王不死,血量归零由 Game 端判定击退
+        if (Enemy.onDamage) Enemy.onDamage(damage);
         this.currentHealth = Math.max(0, this.currentHealth - damage);
         this._dn = (this._dn || 0) + damage;
         this.flash();
@@ -10666,7 +10856,7 @@ class PiercingArrow {
                 const prevCtx = g._ctx;
                 g._ctx = this.ctx || null;
                 const dmg = g._applyHitMods(this.owner, e, this.damage * (e.elite ? this.eliteMult || 1 : 1));
-                e.takeDamage(dmg);
+                g._creditTo(this.owner, () => e.takeDamage(dmg));
                 g._afterHit(this.owner, e, dmg);
                 this.game._knockbackDir(e, this.dx, this.dy, 4);
                 this.game.spawnHitParticles(ex, ey, '#aaff44', 6);
@@ -10688,7 +10878,7 @@ class PiercingArrow {
                 const prevCtx = g._ctx;
                 g._ctx = this.ctx || null;
                 const bdmg = g._applyHitMods(this.owner, boss, this.damage * (this.eliteMult || 1));
-                boss.takeDamage(bdmg);
+                g._creditTo(this.owner, () => boss.takeDamage(bdmg));
                 g._afterHit(this.owner, boss, bdmg);
                 g._ctx = prevCtx;
                 this.game.bossDamageDealt += bdmg;
