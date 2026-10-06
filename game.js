@@ -283,7 +283,8 @@ const GAME_EVENTS = {
     elite:     { name: '精英来袭', icon: '♛', color: '#ffc400', dur: 20, desc: '击败金框精英怪获得额外奖励' },
     horde:     { name: '怪潮',     icon: '🌊', color: '#40c4ff', dur: 12, desc: '敌人大量涌来,击杀经验和分数翻倍' },
     altar:     { name: '祝福祭坛', icon: '✨', color: '#b388ff', dur: 18, desc: '站进光圈为祭坛充能,充满后全队获得祝福' },
-    void_rift: { name: '虚空裂隙', icon: '🌀', color: '#ba68c8', dur: 22, desc: '靠近石碑引导开启挑战,击破虚空怪潮夺取史诗宝藏' }
+    void_rift: { name: '虚空裂隙', icon: '🌀', color: '#ba68c8', dur: 22, desc: '靠近石碑引导开启挑战,击破虚空怪潮夺取史诗宝藏' },
+    greed:     { name: '贪婪祭坛', icon: '⚖️', color: '#ffd700', dur: 20, desc: '靠近签订高风险契约,换取全队质变强化' }
 };
 const EVENT_TYPES = Object.keys(GAME_EVENTS);
 const MP_ITEM_TYPES = ['potion', 'exp_book', 'snowflake', 'bomb', 'heart', 'potion_invicible',
@@ -1966,6 +1967,7 @@ class Game {
             dc: q2(p.dashCooldown), dt: q2(p.dashTimer), dg: p.dodgeCount || 0,
             // 终极觉醒奥义充能(0~100)与激活中标记
             uc: q1(p.ultCharge || 0), ua: p.ultActiveTimer > 0 ? 1 : 0,
+            gc: p.greedContract || 0, // 贪婪契约
             // 连杀 [连杀数, 剩余秒] 与本局最高连杀
             cb: p.combo > 0 ? [p.combo, q2(p.comboTimer)] : 0, mc: p.maxCombo || 0,
             // 限时装备 [种类序号, 剩余, 总时长, 法球角度, 等级(1/2)]
@@ -2165,6 +2167,7 @@ class Game {
             if (myData.ds) DMG_SRCS.forEach((k, i) => { this.player.dmgStats[k] = myData.ds[i]; });
             this.player.gear = this._mpGear(myData.g);
             this.player.blessTimer = myData.bl || 0;
+            this.player.greedContract = myData.gc || null;
             // 新捡到的技能石:追加到本地背包并自动镶嵌
             const gl = myData.gl || '';
             const mine = this.player.gemLog;
@@ -2670,6 +2673,65 @@ class Game {
         ctx.restore();
     }
 
+    // 贪婪祭坛:暗金天平底座 + 悬浮契约符文 + 靠近引导进度弧
+    _renderGreedAltar(ctx) {
+        const ev = this.event;
+        if (!ev || ev.type !== 'greed' || ev.gx === undefined) return;
+        const x = ev.gx, y = ev.gy, t = this.bgTime;
+        const pulse = 0.5 + 0.5 * Math.sin(t * 3.5);
+        ctx.save();
+        const R = 80;
+        const c = ev.charge || 0;
+        // 地面暗金符文圈
+        ctx.fillStyle = `rgba(255, 215, 0, ${0.10 + 0.12 * c})`;
+        ctx.beginPath();
+        ctx.arc(x, y, R, 0, Math.PI * 2);
+        ctx.fill();
+        ctx.strokeStyle = `rgba(255, 215, 0, ${0.45 + 0.35 * pulse})`;
+        ctx.lineWidth = 2;
+        ctx.setLineDash([8, 6]);
+        ctx.lineDashOffset = -t * 18;
+        ctx.beginPath();
+        ctx.arc(x, y, R, 0, Math.PI * 2);
+        ctx.stroke();
+        ctx.setLineDash([]);
+        // 蓄力引导弧
+        if (c > 0) {
+            ctx.strokeStyle = '#fff59d';
+            ctx.lineWidth = 4;
+            ctx.lineCap = 'round';
+            ctx.beginPath();
+            ctx.arc(x, y, R - 4, -Math.PI / 2, -Math.PI / 2 + Math.PI * 2 * c);
+            ctx.stroke();
+        }
+        // 中央悬浮天平主体
+        const bob = Math.sin(t * 2.8) * 5;
+        ctx.translate(x, y + bob);
+        ctx.shadowBlur = 14 + 8 * pulse;
+        ctx.shadowColor = '#ffd700';
+        ctx.font = '24px Arial';
+        ctx.textAlign = 'center';
+        ctx.textBaseline = 'middle';
+        ctx.fillText('⚖️', 0, 0);
+
+        const contractNames = {
+            blood: '【血契】受伤+30% 收益翻倍',
+            gale:  '【狂风契】敌速+25% 暴伤大增',
+            death: '【死誓契】禁回血 击退+2潜能'
+        };
+        const name = contractNames[ev.contract] || '贪婪契约';
+        ctx.font = 'bold 11px Arial';
+        ctx.fillStyle = '#fff9c4';
+        ctx.shadowBlur = 4;
+        ctx.shadowColor = '#000000';
+        ctx.fillText(name, 0, 26);
+        ctx.font = '10px Arial';
+        ctx.fillStyle = c > 0 ? '#ffd54f' : 'rgba(255,255,255,0.7)';
+        ctx.fillText(c > 0 ? `引导签订中 ${Math.round(c * 100)}%` : '靠近站立签订', 0, 40);
+
+        ctx.restore();
+    }
+
     // 职业状态光环:觉醒玩家身边转动的职业色虚线环;弓手站定专注时脚下一圈瞄准刻度
     _renderClassAura(p, cls, awakened, still) {
         if (!cls) return;
@@ -2811,7 +2873,33 @@ class Game {
             this._renderBuffPill(y, def.icon, name, color, g.timer, g.max, isEvo);
             y += 34;
         }
-        if (p.blessTimer > 0) this._renderBuffPill(y, '✨', '祝福', '#b388ff', p.blessTimer, Game.BLESS.dur, false);
+        if (p.blessTimer > 0) {
+            this._renderBuffPill(y, '✨', '祝福', '#b388ff', p.blessTimer, Game.BLESS.dur, false);
+            y += 34;
+        }
+        if (p.greedContract) {
+            const names = { blood: '血契', gale: '狂风契', death: '死誓契' };
+            const desc = names[p.greedContract] || '契约';
+            const ctx = this.ctx;
+            const x = 10, w = 100, h = 26;
+            ctx.save();
+            ctx.fillStyle = 'rgba(25, 20, 5, 0.75)';
+            roundRect(ctx, x, y, w, h, 6);
+            ctx.fill();
+            ctx.strokeStyle = '#ffd700';
+            ctx.lineWidth = 1.2;
+            roundRect(ctx, x, y, w, h, 6);
+            ctx.stroke();
+            ctx.font = '12px Arial';
+            ctx.textAlign = 'center';
+            ctx.textBaseline = 'middle';
+            ctx.fillText('⚖️', x + 14, y + 13);
+            ctx.font = 'bold 11px Arial';
+            ctx.fillStyle = '#fff9c4';
+            ctx.textAlign = 'left';
+            ctx.fillText(desc, x + 28, y + 13);
+            ctx.restore();
+        }
     }
 
     _renderBuffPill(y, icon, name, color, timer, max, isEvo = false) {
@@ -3525,9 +3613,11 @@ class Game {
         } else {
             this.player.frenzyTier = 0;
         }
-        // 天赋「嗜血回春」:每秒回复最大生命的一部分
+        // 天赋「嗜血回春」:每秒回复最大生命的一部分(死誓契禁用回血)
         const regen = this.player.tree && this.player.tree.regen;
-        if (regen && this.player.currentHealth > 0) this.player.heal(this.player.maxHealth * regen * DT);
+        if (regen && this.player.currentHealth > 0 && this.player.greedContract !== 'death') {
+            this.player.heal(this.player.maxHealth * regen * DT);
+        }
         const cdDt = DT * (1 + (this.player.frenzyTier || 0) * 0.04);
         if (this.player.skillQ.cooldown > 0) this.player.skillQ.cooldown = Math.max(0, this.player.skillQ.cooldown - cdDt);
         if (this.player.skillE.cooldown > 0) this.player.skillE.cooldown = Math.max(0, this.player.skillE.cooldown - cdDt);
@@ -4586,7 +4676,29 @@ class Game {
         const b = this.boss;
         const bcx = b.x + b.size / 2, bcy = b.y + b.size / 2;
 
-        if (!b.enraged && (this.bossDamageDealt >= this._bossDmgGoal() * 0.5
+        // 绝境二阶段暴走:血量低于 35% 或累计伤害达 65% 触发转阶段演出
+        const p2Trigger = (b.currentHealth <= b.maxHealth * 0.35) || (this.bossDamageDealt >= this._bossDmgGoal() * 0.65);
+        if (!b.phase2 && p2Trigger) {
+            b.phase2 = true;
+            b.enraged = true;
+            b.speed *= 1.35;
+            b.barrier = Math.round(b.maxHealth * 0.15);
+            b.maxBarrier = b.barrier;
+            this.screenShake = Math.max(this.screenShake, 0.45);
+            Sound.play('bossEnrage');
+            this._showFloatingText('💀 魔王暴走! 绝境降临!', bcx, b.y - 25, '#d500f9');
+            this.effects.push({ type: 'shockwave', x: bcx, y: bcy, radius: 15, maxRadius: 260, color: '#d500f9', ttl: 0.7, maxTtl: 0.7 });
+            this.spawnBurstRing(bcx, bcy, 120, '#ea80fc', 30);
+            this.spawnParticles(bcx, bcy, '#d500f9', 35, 2, 7, 2, 5, 0.04);
+            // 清空周围敌弹并震退玩家
+            this.enemyBullets.length = 0;
+            for (const pl of this._livingPlayers()) {
+                const pcx = pl.x + pl.size / 2, pcy = pl.y + pl.size / 2;
+                const d = Math.hypot(pcx - bcx, pcy - bcy) || 1;
+                pl.x = Math.max(0, Math.min(this.width - pl.size, pl.x + (pcx - bcx) / d * 40));
+                pl.y = Math.max(0, Math.min(this.height - pl.size, pl.y + (pcy - bcy) / d * 40));
+            }
+        } else if (!b.enraged && (this.bossDamageDealt >= this._bossDmgGoal() * 0.5
                 || this.bossActiveTimer >= this.bossDuration * 0.5)) {
             b.enraged = true;
             b.speed *= 1.25;
@@ -4617,7 +4729,8 @@ class Game {
             const w = {
                 charge: dist > 200 ? 3 : 1, ring: 2, slam: dist < 180 ? 3 : 0.5,
                 laser: b.tier >= 2 ? (dist > 140 ? 2.5 : 1.2) : 0,
-                summon: b.tier >= 3 && this.enemies.length < 30 ? 1.5 : 0
+                summon: b.tier >= 3 && this.enemies.length < 30 ? 1.5 : 0,
+                cross: b.phase2 ? (dist > 100 ? 3 : 1.5) : 0
             };
             if (b.lastAtk) w[b.lastAtk] = 0;
             const keys = Object.keys(w);
@@ -4626,8 +4739,8 @@ class Game {
             for (const k of keys) { if ((r -= w[k]) < 0) { atk = k; break; } }
             b.atk = b.lastAtk = atk;
             b.atkPhase = 0;
-            b.atkDur = b.atkTimer = { charge: 0.8, ring: 0.65, slam: 0.95, laser: 0.95, summon: 0.85 }[atk] * speedUp;
-            b.atkAngle = atk === 'ring' || atk === 'summon' ? Math.random() * Math.PI * 2 : Math.atan2(tcy - bcy, tcx - bcx);
+            b.atkDur = b.atkTimer = { charge: 0.8, ring: 0.65, slam: 0.95, laser: 0.95, summon: 0.85, cross: 1.1 }[atk] * speedUp;
+            b.atkAngle = atk === 'ring' || atk === 'summon' || atk === 'cross' ? Math.random() * Math.PI * 2 : Math.atan2(tcy - bcy, tcx - bcx);
             b.atkSweep = Math.random() < 0.5 ? 1 : -1;
             return;
         }
@@ -4642,6 +4755,7 @@ class Game {
             b.atkAngle = Math.atan2(tcy - bcy, tcx - bcx);
         }
         if (b.atk === 'laser' && b.atkPhase === 1) this._bossLaserTick(b, bcx, bcy);
+        if (b.atk === 'cross' && b.atkPhase === 1) this._bossCrossLaserTick(b, bcx, bcy);
         if (b.atk === 'charge' && b.atkPhase === 1) {
             // 朝外撞到边界就提前停下(从屏幕外冲进来的不算)
             const m = 10, c = Math.cos(b.atkAngle), sn = Math.sin(b.atkAngle);
@@ -4658,7 +4772,7 @@ class Game {
             b.atkPhase = 1;
             this._releaseBossAttack(b, bcx, bcy);
             b.atkDur = b.atkTimer = { charge: BlockBoss.CHARGE_TIME, ring: 0.4, slam: 0.35,
-                laser: b.enraged ? 1.1 : 1.3, summon: 0.4 }[b.atk];
+                laser: b.enraged ? 1.1 : 1.3, summon: 0.4, cross: 1.4 }[b.atk];
         } else {
             if (b.atk === 'ring' && b.enraged) this._bossRing(b, bcx, bcy, b.atkAngle + Math.PI / BlockBoss.ringCount(true));
             b.atk = null;
@@ -4704,6 +4818,11 @@ class Game {
                 this.spawnBurstRing(x, y, 22, '#b388ff', 10);
             });
             this.effects.push({ type: 'shockwave', x: bcx, y: bcy, radius: 10, maxRadius: 90, color: '#b388ff', ttl: 0.4, maxTtl: 0.4 });
+        } else if (b.atk === 'cross') {
+            this.screenShake = Math.max(this.screenShake, 0.4);
+            Sound.play('bossLaser');
+            this.effects.push({ type: 'shockwave', x: bcx, y: bcy, radius: 15, maxRadius: 180, color: '#ff1744', ttl: 0.5, maxTtl: 0.5 });
+            this.spawnBurstRing(bcx, bcy, 45, '#ff5252', 20);
         }
     }
 
@@ -4730,6 +4849,30 @@ class Game {
             if (d > 60 && sx >= 0 && sx <= this.width && sy >= 0 && sy <= this.height) {
                 this.spawnParticles(sx, sy, '#ea80fc', 1, 1, 3, 2, 3, 0.06);
             }
+        }
+    }
+
+    // 二阶段绝境招式:十字歼灭死光(4 道正交旋转暗红死光扫荡全场)
+    _bossCrossLaserTick(b, bcx, bcy) {
+        const rot = (b.atkAngle || 0) + (1 - b.atkTimer / b.atkDur) * Math.PI;
+        const hw = 14;
+        const checkArm = (ang, p) => {
+            const c = Math.cos(ang), sn = Math.sin(ang);
+            const px = p.x + p.size / 2 - bcx, py = p.y + p.size / 2 - bcy;
+            const along = px * c + py * sn;
+            if (along < 0) return false;
+            return Math.abs(px * sn - py * c) <= hw + p.size / 2;
+        };
+        for (const p of this._livingPlayers()) {
+            for (let i = 0; i < 4; i++) {
+                if (checkArm(rot + i * Math.PI / 2, p)) {
+                    this._bossHitPlayer(p, b.attack * 0.4, '#ff1744', '十字歼灭死光');
+                    break;
+                }
+            }
+        }
+        if (Math.random() < 0.35) {
+            this.screenShake = Math.max(this.screenShake, 0.15);
         }
     }
 
@@ -4810,9 +4953,10 @@ class Game {
 
     _repelBoss(perfect = false) {
         if (!this.boss) return;
-        // 奖励: 基础奖励保持不变, perfect 时本次分数奖励翻倍
+        // 奖励: 基础奖励保持不变, perfect 时本次分数奖励翻倍;死誓契额外奖励 2 点潜能点
         this.life = Math.min(this.life + 1, this.maxLife);
-        this.player.addPotentialPoints(1);
+        const deathBonus = (this.player.greedContract === 'death') ? 2 : 0;
+        this.player.addPotentialPoints(1 + deathBonus);
         const baseScore = Math.round(100 * (this.scoreMult || 1) * diffDef(this.diffMode).score);
         this.score += perfect ? baseScore * 2 : baseScore;
         // 击退动画
@@ -4873,6 +5017,8 @@ class Game {
                 this._tickAltar(ev);
             } else if (ev.type === 'void_rift') {
                 this._tickVoidRift(ev);
+            } else if (ev.type === 'greed') {
+                this._tickGreedAltar(ev);
             } else if (ev.type === 'treasure') {
                 const t = this.enemies.find(e => e.type === 'treasure');
                 if (!t) ev.timer = 0;
@@ -4934,6 +5080,7 @@ class Game {
         else if (type === 'elite') this._spawnElites();
         else if (type === 'altar') this._placeAltar(this.event);
         else if (type === 'void_rift') this._placeVoidRift(this.event);
+        else if (type === 'greed') this._placeGreedAltar(this.event);
     }
 
     _endEvent() {
@@ -4962,6 +5109,12 @@ class Game {
                 this._showFloatingText('🌀 虚空挑战成功! 宝藏现世!', this.width / 2, this.height * 0.3, '#e1bee7');
             } else {
                 this._showFloatingText('虚空裂隙已闭合…', this.width / 2, this.height * 0.3, '#b39ddb');
+            }
+        } else if (ev.type === 'greed') {
+            if (ev.signed) {
+                this._showFloatingText('⚖️ 契约已缔结!', this.width / 2, this.height * 0.3, '#ffd700');
+            } else {
+                this._showFloatingText('贪婪天平隐没…', this.width / 2, this.height * 0.3, '#ffe082');
             }
         }
     }
@@ -5120,6 +5273,66 @@ class Game {
         this.items.push(new Item(cx, cy - 35, 'exp_book', 'epic'));
         this.items.push(new Item(cx, cy + 35, 'potion', 'rare'));
         this.score += 800 * (this.scoreMult || 1);
+    }
+
+    // ── 贪婪祭坛:签订高风险契约换取质变强化 ──
+    _placeGreedAltar(ev) {
+        const players = this._livingPlayers(), m = 120;
+        let x = this.width / 2, y = this.height / 2;
+        for (let i = 0; i < 16; i++) {
+            x = m + Math.random() * (this.width - m * 2);
+            y = m + Math.random() * (this.height - m * 2);
+            if (players.every(p => Math.hypot(p.x + p.size / 2 - x, p.y + p.size / 2 - y) > 180)) break;
+        }
+        ev.gx = x; ev.gy = y;
+        ev.charge = 0;
+        ev.needTime = 1.3;
+        ev.signed = false;
+        // 轮换本次提供的契约
+        const contracts = ['blood', 'gale', 'death'];
+        ev.contract = contracts[Math.floor(Math.random() * contracts.length)];
+        this.spawnBurstRing(x, y, 65, '#ffd700', 18);
+        this.effects.push({ type: 'shockwave', x, y, radius: 8, maxRadius: 65, color: '#ffb300', ttl: 0.4, maxTtl: 0.4 });
+    }
+
+    _tickGreedAltar(ev) {
+        if (ev.signed) return;
+        let near = false;
+        for (const p of this._livingPlayers()) {
+            if (Math.hypot(p.x + p.size / 2 - ev.gx, p.y + p.size / 2 - ev.gy) <= 80) {
+                near = true;
+                break;
+            }
+        }
+        if (near) {
+            ev.charge = Math.min(1, ev.charge + DT / ev.needTime);
+            if (Math.random() < 0.25) {
+                this.spawnParticles(ev.gx, ev.gy, '#ffd700', 2, 0.8, 2.0, 1, 3, 0.04);
+            }
+        } else {
+            ev.charge = Math.max(0, ev.charge - DT * 0.5);
+        }
+        if (ev.charge >= 1) {
+            ev.signed = true;
+            ev.timer = 0;
+            this._signGreedContract(ev.contract, ev.gx, ev.gy);
+        }
+    }
+
+    _signGreedContract(contract, cx, cy) {
+        this.player.greedContract = contract;
+        this.screenShake = Math.max(this.screenShake, 0.3);
+        Sound.play('record');
+        this.effects.push({ type: 'shockwave', x: cx, y: cy, radius: 10, maxRadius: 180, color: '#ffd700', ttl: 0.6, maxTtl: 0.6 });
+        this.spawnBurstRing(cx, cy, 90, '#ffe082', 25);
+        this.spawnParticles(cx, cy, '#ffd700', 35, 2, 6, 2, 5, 0.03);
+
+        const titles = {
+            blood: '⚖️ 缔结【血契】: 受伤+30% 击杀分数经验翻倍!',
+            gale:  '⚖️ 缔结【狂风契】: 敌人移速+25% 暴击+20% 暴伤+60%!',
+            death: '⚖️ 缔结【死誓契】: 禁用回血 击退魔王额外+2潜能点!'
+        };
+        this._showFloatingText(titles[contract] || '⚖️ 契约已签订!', this.width / 2, this.height * 0.28, '#ffd700');
     }
 
     // 敌人从场外随机一侧进场
@@ -5337,6 +5550,7 @@ class Game {
         else if (ev.type === 'horde') label += '  经验×2';
         else if (ev.type === 'altar') label += `  ${Math.floor((ev.charge || 0) * 100)}%`;
         else if (ev.type === 'void_rift') label += ev.activated ? `  挑战中!` : `  引导 ${Math.floor((ev.charge || 0) * 100)}%`;
+        else if (ev.type === 'greed') label += ev.signed ? `  已缔结!` : `  引导 ${Math.floor((ev.charge || 0) * 100)}%`;
         label += `  ${Math.ceil(ev.timer)}s`;
         ctx.fillStyle = '#ffffff';
         ctx.font = 'bold 14px Arial';
@@ -6282,8 +6496,11 @@ class Game {
         dmg *= this._buildDmgMult(p, slot) * (ctx ? ctx.mult : 1);
         let crit = (t.crit || 0) + this._gv(p, slot, 'crit');
         if (p.class === 'assassin') crit += 0.2 + (p.spec === 'shadow' ? 0.15 : 0);
+        // 贪婪诅咒【狂风契】:暴击率额外 +20%,暴击伤害额外 +60%
+        if (p.greedContract === 'gale') crit += 0.20;
         if (crit > 0 && Math.random() < crit) {
-            dmg *= 2 + (t.critDmg || 0);
+            const critBonus = (t.critDmg || 0) + (p.greedContract === 'gale' ? 0.6 : 0);
+            dmg *= 2 + critBonus;
             Sound.play('critHit');
             // 暴击命中时为本地玩家施加 50ms 的轻微顿帧,强化打击感
             if (p === this.player) this.hitStop = Math.max(this.hitStop, 0.05);
@@ -7380,9 +7597,10 @@ class Game {
         // 击杀计数随玩家快照下发,本机据此触发击杀顿帧/震动(guest 也能拿到自己的击杀反馈)
         this.player.killCount = (this.player.killCount || 0) + 1;
         const horde = this.event && this.event.type === 'horde' ? 2 : 1;
+        const greedBlood = (this.player.greedContract === 'blood') ? 2 : 1;
         const comboMult = this._registerCombo(e);
-        this.score += Math.round(10 * (this.scoreMult || 1) * horde * comboMult * diffDef(this.diffMode).score);
-        this.exp += 5 * horde;
+        this.score += Math.round(10 * (this.scoreMult || 1) * horde * greedBlood * comboMult * diffDef(this.diffMode).score);
+        this.exp += 5 * horde * greedBlood;
         if (e && e.type === 'treasure') this._treasureReward(e);
         else if (e && !e.elite && Math.random() < 0.006) this._dropGem(e.x, e.y);
         // 毒刃觉醒:中毒的敌人死亡时毒雾爆发
@@ -8670,6 +8888,7 @@ class Game {
         this._renderToxicPuddles(ctx);
         this._renderAltar(ctx);
         this._renderVoidRift(ctx);
+        this._renderGreedAltar(ctx);
 
         this.player.render(this.ctx);
         this._renderBlessAura(this.player);
@@ -10622,6 +10841,8 @@ class Player {
         if (this.class === 'warrior') mult *= 1 - 0.3 * Math.min(1, this.rage / this.maxRage);
         // 战士终极奥义「诸神黄昏」:狂暴期间受到伤害额外减免 35%
         if (this.ultActiveTimer > 0 && this.class === 'warrior') mult *= 0.65;
+        // 贪婪诅咒【血契】:受到所有伤害增加 30%
+        if (this.greedContract === 'blood') mult *= 1.3;
         // 守护者觉醒:神圣光环内减伤 50%;记下原始伤害,交给 Game 反弹
         if (this.auraGuard > 0) mult *= 0.5;
         actualDamage *= mult;
@@ -12231,12 +12452,18 @@ class BlockBoss {
         this.enraged = false;     // 狂暴:出招更快、移速更高、弹幕两波
         this.tier = 1;            // 本局第几只魔王:2 起会激光扫射,3 起会召唤爪牙
         this.atkSweep = 1;        // 激光扫射方向(±1)
+        // 绝境二阶段暴走
+        this.phase2 = false;      // 是否已触发二阶段
+        this.barrier = 0;         // 绝境暗影护盾
+        this.maxBarrier = 0;
+        this.vulnerableTimer = 0; // 破盾力竭硬直(受伤害额外 +50%)
     }
 
     get slamRadius() { return this.enraged ? 160 : 140; }
 
     update(playerX, playerY) {
         this.phase += 0.04;
+        if (this.vulnerableTimer > 0) this.vulnerableTimer = Math.max(0, this.vulnerableTimer - DT);
         if (this.retreating) {
             this.x += this.retreatVx;
             this.y += this.retreatVy;
@@ -12368,12 +12595,63 @@ class BlockBoss {
                 ctx.lineTo(cx + c * r1, cy + s * r1);
             }
             ctx.stroke();
+        } else if (this.atk === 'cross') {
+            // 十字歼灭死光:4 道正交旋转光束
+            const L = BlockBoss.LASER_LEN, hw = 12;
+            const rot = (this.atkAngle || 0) + (this.atkPhase === 1 ? (1 - this.atkTimer / this.atkDur) * Math.PI : 0);
+            ctx.beginPath(); ctx.rect(0, 0, 800, 600); ctx.clip();
+            ctx.translate(cx, cy);
+            ctx.rotate(rot);
+            if (this.atkPhase === 0) {
+                // 前摇:4 向暗红半透明危险警示带
+                ctx.fillStyle = `rgba(255, 23, 68, ${0.08 + 0.15 * t})`;
+                for (let i = 0; i < 4; i++) {
+                    ctx.save();
+                    ctx.rotate(i * Math.PI / 2);
+                    ctx.fillRect(0, -hw * 1.5, L, hw * 3);
+                    ctx.strokeStyle = `rgba(255, 82, 82, ${0.4 + 0.5 * t})`;
+                    ctx.lineWidth = 1.5;
+                    ctx.strokeRect(0, -hw * 1.5, L, hw * 3);
+                    ctx.restore();
+                }
+            } else {
+                // 释放阶段:4 道高速旋转的暗红歼灭死光
+                const flick = 0.85 + Math.random() * 0.15;
+                for (let i = 0; i < 4; i++) {
+                    ctx.save();
+                    ctx.rotate(i * Math.PI / 2);
+                    ctx.fillStyle = `rgba(213, 0, 0, ${0.35 * flick})`;
+                    ctx.fillRect(0, -hw * 2, L, hw * 4);
+                    ctx.fillStyle = `rgba(255, 82, 82, ${0.8 * flick})`;
+                    ctx.fillRect(0, -hw * 1.1, L, hw * 2.2);
+                    ctx.fillStyle = 'rgba(255, 255, 255, 0.95)';
+                    ctx.fillRect(0, -hw * 0.4, L, hw * 0.8);
+                    ctx.restore();
+                }
+            }
         }
         ctx.restore();
     }
 
     takeDamage(damage) {
-        // 魔王不死,血量归零由 Game 端判定击退
+        // 魔王不死,血量归零由 Game 端判定击退;破盾力竭硬直时受到伤害额外 +50%
+        if (this.vulnerableTimer > 0) damage *= 1.5;
+        // 绝境暗影护盾优先抵扣
+        if (this.barrier > 0) {
+            if (this.barrier >= damage) {
+                this.barrier -= damage;
+                this._dn = (this._dn || 0) + damage;
+                this.flash();
+                return damage;
+            } else {
+                damage -= this.barrier;
+                this.barrier = 0;
+                // 护盾破碎:触发 2.5 秒力竭硬直与破盾虚弱
+                this.vulnerableTimer = 2.5;
+                this.stunTimer = 2.5;
+                Sound.play('bomb');
+            }
+        }
         if (Enemy.onDamage) Enemy.onDamage(damage);
         this.currentHealth = Math.max(0, this.currentHealth - damage);
         this._dn = (this._dn || 0) + damage;
@@ -12447,6 +12725,33 @@ class BlockBoss {
         roundRect(ctx, this.x, this.y, this.size, this.size, 14);
         ctx.stroke();
 
+        // 绝境暗影护盾外层光环
+        if (this.barrier > 0) {
+            ctx.shadowBlur = 25;
+            ctx.shadowColor = '#d500f9';
+            ctx.strokeStyle = 'rgba(213, 0, 249, 0.85)';
+            ctx.lineWidth = 4;
+            ctx.beginPath();
+            ctx.arc(cx, cy, this.size * 0.72 + 6, 0, Math.PI * 2);
+            ctx.stroke();
+            // 护盾粒子/内晕
+            ctx.fillStyle = 'rgba(213, 0, 249, 0.12)';
+            ctx.beginPath();
+            ctx.arc(cx, cy, this.size * 0.72 + 6, 0, Math.PI * 2);
+            ctx.fill();
+        }
+
+        // 破盾力竭硬直虚弱状态
+        if (this.vulnerableTimer > 0) {
+            ctx.strokeStyle = '#ffd700';
+            ctx.lineWidth = 2.5;
+            ctx.setLineDash([8, 6]);
+            ctx.beginPath();
+            ctx.arc(cx, cy, this.size * 0.65, 0, Math.PI * 2);
+            ctx.stroke();
+            ctx.setLineDash([]);
+        }
+
         if (this.hitFlash > 0) {
             ctx.shadowBlur = 0;
             ctx.globalAlpha *= Math.min(1, this.hitFlash / 0.08) * 0.6;
@@ -12473,7 +12778,7 @@ class BlockBoss {
 BlockBoss.CHARGE_SPEED = 10;   // 冲撞速度(px/帧)
 BlockBoss.CHARGE_TIME = 0.55;  // 冲撞持续(秒)
 BlockBoss.ringCount = enraged => enraged ? 16 : 12;
-BlockBoss.ATK_CODES = [null, 'charge', 'ring', 'slam', 'laser', 'summon'];
+BlockBoss.ATK_CODES = [null, 'charge', 'ring', 'slam', 'laser', 'summon', 'cross'];
 BlockBoss.LASER_HALF = 13;     // 激光半宽
 BlockBoss.LASER_LEN = 1100;    // 激光长度(足够射出 800×600 的场地)
 // 扫射时光束的当前角度:从 atkAngle 一侧扫到另一侧,狂暴时扫得更宽
