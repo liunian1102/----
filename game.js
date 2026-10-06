@@ -612,7 +612,7 @@ const Sound = {
     _last: {},
     _noiseBuf: null,
     // 同名音效最短间隔(秒),避免一帧内多次击杀叠成噪音
-    minGap: { kill: 0.05, skill: 0.08, pickup: 0.06, hurt: 0.1, dash: 0.12, fuse: 0.2, bomb: 0.08, meteor: 0.1, enemyHeal: 0.25, cdReady: 0.1 },
+    minGap: { kill: 0.05, skill: 0.08, pickup: 0.06, hurt: 0.1, dash: 0.12, fuse: 0.2, bomb: 0.08, meteor: 0.1, enemyHeal: 0.25, cdReady: 0.1, critHit: 0.08, affixAlert: 0.4 },
 
     init() {
         if (this.ctx) {
@@ -800,6 +800,33 @@ const Sound = {
             case 'cdReady':
                 // 冷却就绪:柔和短促高音
                 this._tone(988, 0.08, 'sine', 0.1, 1.25);
+                break;
+            case 'gearAwaken':
+                // 装备觉醒:4重上行琶音大和弦 + 穿透金属共鸣长音
+                [523, 659, 784, 1047].forEach((f, i) => this._tone(f, 0.16, 'square', 0.14, 1, i * 0.06));
+                this._tone(1319, 0.35, 'triangle', 0.18, 1.05, 0.24);
+                this._noise(0.2, 0.12, 'highpass', 2200, 0.1);
+                break;
+            case 'riftOpen':
+                // 虚空裂隙激活:深沉低频次声波 + 暗物质高频蜂鸣
+                this._tone(65, 0.65, 'sawtooth', 0.28, 0.6);
+                this._tone(130, 0.5, 'sine', 0.2, 0.8, 0.1);
+                this._noise(0.4, 0.2, 'bandpass', 600, 0.15);
+                break;
+            case 'riftWin':
+                // 虚空挑战成功:明亮大三和弦 + 清脆胜利泛音
+                [659, 831, 988, 1319].forEach((f, i) => this._tone(f, 0.2, 'triangle', 0.16, 1, i * 0.07));
+                this._tone(1976, 0.45, 'sine', 0.16, 1, 0.28);
+                break;
+            case 'affixAlert':
+                // 词缀精英警示:双音高频警报
+                this._tone(880, 0.1, 'square', 0.12, 1);
+                this._tone(1175, 0.12, 'square', 0.14, 1, 0.09);
+                break;
+            case 'critHit':
+                // 暴击命中:清脆金属高频切割声
+                this._tone(1200 + Math.random() * 300, 0.06, 'sawtooth', 0.15, 0.4);
+                this._noise(0.05, 0.12, 'highpass', 3500);
                 break;
         }
     }
@@ -2870,7 +2897,10 @@ class Game {
             ['击杀', String(p.killCount || 0)],
             ['最高连杀', String(p.maxCombo || 0)],
             ['击退魔王', `${this.runBossRepels || 0} 次`],
-            ['完美闪避', `${p.dodgeCount || 0} 次`]
+            ['完美闪避', `${p.dodgeCount || 0} 次`],
+            ['词缀精英', `${this.affixEliteKills || 0} 只`],
+            ['装备觉醒', `${this.gearAwakenedCount || 0} 次`],
+            ['虚空挑战', `${this.voidRiftClearedCount || 0} 次`]
         ];
         // 致命一击只在本机记录到时显示(客机的受击在主机结算,拿不到来源)
         if (this.fatalBlow) rows.push(['致命一击', `${this.fatalBlow.src} (${Math.round(this.fatalBlow.dmg)})`]);
@@ -3433,6 +3463,29 @@ class Game {
             ctx.lineWidth = 2 + (1 - wavePhase) * 3;
             ctx.stroke();
         }
+        ctx.restore();
+    }
+
+    // 连杀狂热全屏视觉反馈:高连击时屏幕边缘呈现动态金色/赤红烈焰光晕脉冲
+    _renderFrenzyVignette() {
+        const p = this.player;
+        if (!p || (p.combo || 0) < 15 || p.currentHealth <= 0) return;
+        const ctx = this.ctx;
+        const W = this.width, H = this.height;
+        const tier = (p.combo >= 50) ? 3 : (p.combo >= 30) ? 2 : 1;
+        const t = this.bgTime;
+        const pulse = 0.5 + 0.5 * Math.sin(t * (tier === 3 ? 8 : tier === 2 ? 6 : 4));
+        const alpha = Math.min(0.38, 0.12 * tier + 0.08 * pulse);
+        const color = (tier === 3) ? '255, 61, 0' : (tier === 2) ? '255, 145, 0' : '255, 215, 0';
+
+        ctx.save();
+        ctx.globalAlpha = alpha;
+        const grad = ctx.createRadialGradient(W / 2, H / 2, Math.min(W, H) * 0.35, W / 2, H / 2, Math.max(W, H) * 0.62);
+        grad.addColorStop(0, `rgba(${color}, 0)`);
+        grad.addColorStop(0.7, `rgba(${color}, 0.25)`);
+        grad.addColorStop(1, `rgba(${color}, 0.85)`);
+        ctx.fillStyle = grad;
+        ctx.fillRect(0, 0, W, H);
         ctx.restore();
     }
 
@@ -4787,6 +4840,9 @@ class Game {
         this.toxicPuddles = [];       // 剧毒精英死亡留下的腐蚀毒雾洼地
         this.treasureKills = 0;
         this.eliteKills = 0;
+        this.affixEliteKills = 0;
+        this.gearAwakenedCount = 0;
+        this.voidRiftClearedCount = 0;
         this._lastEventType = null;
     }
 
@@ -4997,7 +5053,7 @@ class Game {
                 this.screenShake = Math.max(this.screenShake, 0.25);
                 this.effects.push({ type: 'shockwave', x: ev.rx, y: ev.ry, radius: 10, maxRadius: 220, color: '#e1bee7', ttl: 0.6, maxTtl: 0.6 });
                 this.spawnParticles(ev.rx, ev.ry, '#ba68c8', 35, 2, 8, 2, 6, 0.04);
-                Sound.play('bossWarning');
+                Sound.play('riftOpen');
                 this._showFloatingText('⚡ 虚空挑战开启! 歼灭虚空怪潮!', this.width / 2, this.height * 0.25, '#e1bee7');
 
                 // 召唤第一批虚空精锐(含词缀精英)
@@ -5010,6 +5066,7 @@ class Game {
                         else if (k === 1) e.makeElite(false, 'gale');
                     }
                 }
+                Sound.play('affixAlert');
             }
         } else {
             // 阶段 1: 挑战进行中
@@ -5020,7 +5077,10 @@ class Game {
                 const e = this._newEnemy(pos.x, pos.y, Math.random() < 0.5 ? 'splitter' : 'dasher');
                 if (e) {
                     this.enemies.push(e);
-                    if (Math.random() < 0.4) e.makeElite(false);
+                    if (Math.random() < 0.4) {
+                        e.makeElite(false);
+                        Sound.play('affixAlert');
+                    }
                 }
             }
             // 倒计时结束时只要有玩家活着就成功
@@ -5038,7 +5098,8 @@ class Game {
         this.spawnBurstRing(cx, cy, 120, '#e1bee7', 30);
         this.spawnParticles(cx, cy, '#ba68c8', 45, 2.5, 9, 2.5, 6, 0.03);
         this.screenShake = Math.max(this.screenShake, 0.3);
-        Sound.play('levelUp');
+        Sound.play('riftWin');
+        this.voidRiftClearedCount = (this.voidRiftClearedCount || 0) + 1;
 
         // 震晕/消灭场内普通敌人
         for (const e of this.enemies) {
@@ -5093,6 +5154,7 @@ class Game {
             e.makeElite();
             this.enemies.push(e);
         }
+        Sound.play('affixAlert');
     }
 
     _spawnMeteor() {
@@ -5793,7 +5855,8 @@ class Game {
             this.spawnBurstRing(pcx, pcy, 50, '#ffe082', 20);
             this.spawnParticles(pcx, pcy, '#ffd700', 25, 2, 7, 2, 5, 0.03);
             this.screenShake = Math.max(this.screenShake, 0.15);
-            Sound.play('levelUp');
+            Sound.play('gearAwaken');
+            this.gearAwakenedCount = (this.gearAwakenedCount || 0) + 1;
             return true;
         }
         p.gear = { type: kind, level: 1, timer: def.duration, max: def.duration, cd: 0.3 };
@@ -6213,6 +6276,9 @@ class Game {
         if (p.class === 'assassin') crit += 0.2 + (p.spec === 'shadow' ? 0.15 : 0);
         if (crit > 0 && Math.random() < crit) {
             dmg *= 2 + (t.critDmg || 0);
+            Sound.play('critHit');
+            // 暴击命中时为本地玩家施加 50ms 的轻微顿帧,强化打击感
+            if (p === this.player) this.hitStop = Math.max(this.hitStop, 0.05);
             // 开着伤害数字时暴击直接用放大的金色数字表现,不再额外飘「暴击」
             if (this.showDmgNums) target._dnCrit = true;
             else this._showFloatingText('暴击', target.x + target.size / 2, target.y - 8, '#ff80ab');
@@ -7131,6 +7197,7 @@ class Game {
         }
         if (e && e.elite) {
             this._eliteReward(e);
+            this.affixEliteKills = (this.affixEliteKills || 0) + 1;
             // 剧毒词缀:死亡时原地留下一滩持续 4 秒的腐蚀毒雾洼地
             if (e.affix === 'venom') {
                 const cx = e.x + e.size / 2, cy = e.y + e.size / 2;
@@ -7168,6 +7235,7 @@ class Game {
         const n = p.combo;
         if (Game.comboMilestone(n)) {
             this.score += Math.round(n * 5 * (this.scoreMult || 1));
+            this.comboPop = 1.0;
             const cx = p.x + p.size / 2, cy = p.y;
             this.effects.push({ type: 'floatText', x: cx, y: cy - 26, text: `${n} 连杀! +${Math.round(n * 5 * (this.scoreMult || 1))}`,
                                 color: n >= 100 ? '#ff4081' : n >= 50 ? '#ffab40' : '#ffd740', ttl: 1.1, maxTtl: 1.1, size: n >= 50 ? 20 : 16 });
@@ -8440,6 +8508,7 @@ class Game {
 
         // HUD 与菜单（在缩放坐标系内，无震动）
         this._renderHurtVignette();
+        this._renderFrenzyVignette();
         this._renderFreezeOverlay();
         this.skillButtons = [];
         this._withHud(() => {
@@ -11072,12 +11141,13 @@ class Enemy {
     render(ctx, snap) {
         const cx = this.x + this.size / 2;
         const cy = this.y + this.size / 2;
-        const s = this.squash > 0.001 ? this.squash * Math.cos((1 - this.squash) * Math.PI * 2.5) : 0;
+        // 受击弹性形变(Squash & Stretch):受击时横向拉宽纵向压扁,随后以阻尼余弦振荡平滑回弹
+        const s = this.squash > 0.001 ? this.squash * Math.cos((1 - this.squash) * Math.PI * 3) : 0;
         const useSquash = Math.abs(s) > 0.001;
         if (useSquash) {
             ctx.save();
             ctx.translate(cx, cy);
-            ctx.scale(1 + 0.22 * s, 1 - 0.18 * s);
+            ctx.scale(1 + 0.28 * s, 1 - 0.22 * s);
             ctx.translate(-cx, -cy);
         }
         const fadeIn = this.type === 'gunner' ? this.spawnProgress() : 1;
