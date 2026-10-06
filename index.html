@@ -33,7 +33,10 @@
                     <button id="openProgress" class="mp-btn mp-btn-ghost">成就与外观</button>
                 </div>
                 <button id="openControl" class="mp-btn mp-btn-ghost mp-control-btn">操控方式:<span id="controlLabel">摇杆</span></button>
-                <button id="immersiveToggle" class="mp-btn mp-btn-ghost mp-control-btn" style="display:none">横屏全屏:<span id="immersiveLabel">开</span></button>
+                <div class="mp-extra-row">
+                    <button id="diffToggle" class="mp-btn mp-btn-ghost">难度:<span id="diffLabel">普通</span></button>
+                    <button id="immersiveToggle" class="mp-btn mp-btn-ghost" style="display:none">横屏全屏:<span id="immersiveLabel">开</span></button>
+                </div>
             </div>
             <div id="mpStatus" class="mp-status"></div>
             <div id="mpLobby" class="mp-lobby" style="display:none">
@@ -190,7 +193,7 @@
     <div id="gameOver" class="game-over">
         <h2>游戏结束</h2>
         <p>生存时间: <span id="finalTime">0</span>秒</p>
-        <p>最终分数: <span id="finalScore">0</span></p>
+        <p>最终分数: <span id="finalScore">0</span> <span id="finalDiff" class="diff-tag"></span></p>
         <div id="runSummary" class="run-summary"></div>
         <div id="dmgBreak" class="dmg-break"></div>
         <p id="bestRecord" class="best-record"></p>

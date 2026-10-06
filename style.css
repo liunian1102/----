@@ -1001,3 +1001,15 @@ kbd {
 .rotate-sub { font-size: 0.9em; opacity: 0.8; }
 .rotate-hint .mp-btn { width: auto; padding: 12px 28px; }
 .rotate-note { font-size: 0.75em; opacity: 0.55; max-width: 280px; line-height: 1.5; }
+
+/* ── 难度标签(结算) ── */
+.diff-tag {
+    display: inline-block;
+    margin-left: 6px;
+    padding: 0 6px;
+    border: 1px solid currentColor;
+    border-radius: 6px;
+    font-size: 0.75em;
+    vertical-align: middle;
+}
+.diff-tag:empty { display: none; }
