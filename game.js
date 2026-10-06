@@ -437,6 +437,47 @@ const Store = {
     }
 };
 
+// ── 沉浸式横屏全屏(触屏设备):进入游戏时请求全屏 + 锁定横屏 ──
+// 全屏 / 方向锁定只能在用户手势(点击)里发起,所以由大厅按钮和局内点按调用 enter()。
+// iPhone Safari 不支持网页全屏与方向锁定:那里靠竖屏提示引导转横屏,「添加到主屏幕」后按 manifest 全屏横屏打开。
+const Immersive = {
+    // 主输入是手指的设备(手机/平板);带触摸屏的笔记本主输入仍是鼠标,不强制全屏
+    isTouch: !!(window.matchMedia && matchMedia('(pointer: coarse)').matches),
+    get enabled() { return this.isTouch && Store.get('blockrun.immersive', true); },
+    setEnabled(on) {
+        Store.set('blockrun.immersive', !!on);
+        if (!on) this.exit();
+    },
+    isFullscreen() { return !!(document.fullscreenElement || document.webkitFullscreenElement); },
+    isPortrait() { return window.innerHeight > window.innerWidth; },
+    // 必须在点击/触摸回调里同步调用
+    enter() {
+        if (!this.enabled) return;
+        const el = document.documentElement;
+        const lock = () => {
+            try {
+                const o = screen.orientation;
+                if (o && o.lock) o.lock('landscape').catch(() => {}); // 不支持/被拒时静默,改由竖屏提示兜底
+            } catch (e) { /* 忽略 */ }
+        };
+        if (this.isFullscreen()) { lock(); return; }
+        const req = el.requestFullscreen || el.webkitRequestFullscreen;
+        if (!req) return;
+        try {
+            const r = req.call(el, { navigationUI: 'hide' });
+            if (r && r.then) r.then(lock, () => {}); else lock();
+        } catch (e) { /* 忽略 */ }
+    },
+    exit() {
+        try {
+            if (screen.orientation && screen.orientation.unlock) screen.orientation.unlock();
+        } catch (e) { /* 忽略 */ }
+        if (!this.isFullscreen()) return;
+        const ex = document.exitFullscreen || document.webkitExitFullscreen;
+        if (ex) { try { const r = ex.call(document); if (r && r.catch) r.catch(() => {}); } catch (e) { /* 忽略 */ } }
+    }
+};
+
 // ── 局外成长:成就 + 外观解锁(localStorage `blockrun.profile`,与 blockrun.best 并列) ──
 // run = 本局实时数据 { score, time, level, bossRepels, cls };profile 为跨局累计
 const ACHIEVEMENTS = [
@@ -1176,6 +1217,7 @@ class Game {
         });
         
         document.getElementById('restartBtn').addEventListener('click', () => {
+        if (!game.mpMode) Immersive.enter(); // 单人「再来一局」直接开局
             this.restartGame();
         });
         
@@ -1368,6 +1410,19 @@ class Game {
         document.addEventListener('visibilitychange', () => {
             if (document.hidden && this.isRunning && !this.isPaused) this.togglePause();
         });
+        // 沉浸模式:局中被系统手势退出全屏、或转成竖屏时自动暂停;下一次点按(继续游戏)顺带重新进入全屏横屏
+        const immersiveCheck = () => {
+            this._updateRotateHint();
+            if (!Immersive.enabled || !this.isRunning || this.isPaused) return;
+            if (!Immersive.isFullscreen() || Immersive.isPortrait()) this.togglePause();
+        };
+        document.addEventListener('fullscreenchange', immersiveCheck);
+        document.addEventListener('webkitfullscreenchange', immersiveCheck);
+        window.addEventListener('resize', () => this._updateRotateHint());
+        setInterval(() => this._updateRotateHint(), 500); // 开局/结束/断线等各处状态变化统一兜底
+        document.addEventListener('pointerup', () => {
+            if (Immersive.enabled && this.isRunning && (!Immersive.isFullscreen() || Immersive.isPortrait())) Immersive.enter();
+        });
         // 失焦时清空按键状态,避免切回来后方向键"卡住"一直移动
         window.addEventListener('blur', () => { this.keys = {}; endJoy(); endAim(true); });
     }
@@ -1465,6 +1520,15 @@ class Game {
     _fxCount(count) {
         const k = Game.QUALITY[this.quality || 0].fx;
         return k >= 1 ? count : Math.max(1, Math.round(count * k));
+    }
+
+    // 沉浸模式下局中竖屏:盖一层「请横屏」提示(iPhone 等不能锁定方向的设备靠它引导)
+    _updateRotateHint() {
+        const el = document.getElementById('rotateHint');
+        if (!el) return;
+        const show = Immersive.enabled && this.isRunning && Immersive.isPortrait();
+        el.style.display = show ? 'flex' : 'none';
+        if (show && !this.isPaused) this.togglePause();
     }
 
     togglePause() {
@@ -11056,8 +11120,9 @@ window.addEventListener('load', () => {
         controlOverlay.style.display = 'flex';
     };
     // 进入游戏的入口统一走这里:勾过「不再询问」就直接开始
+    // 进入游戏都发生在一次点击里:顺带请求沉浸式全屏横屏(触屏设备、未关闭时)
     const withControlChoice = (then) => {
-        if (Store.get('blockrun.controlRemember', false)) then();
+        if (Store.get('blockrun.controlRemember', false)) { Immersive.enter(); then(); }
         else openControl(then);
     };
     moveOpts.forEach(o => o.addEventListener('click', () => { pickMove = o.dataset.mode; syncOpts(); }));
@@ -11070,13 +11135,28 @@ window.addEventListener('load', () => {
         controlOverlay.style.display = 'none';
         const then = controlThen;
         controlThen = null;
-        if (then) then();
+        if (then) { Immersive.enter(); then(); }
     });
     controlOverlay.addEventListener('click', (e) => {
         // 点遮罩空白处关闭(仅在大厅「更改」时;进入游戏前必须确定)
         if (e.target === controlOverlay && !controlThen) controlOverlay.style.display = 'none';
     });
     document.getElementById('openControl').addEventListener('click', () => openControl(null));
+
+    // ── 沉浸式横屏全屏开关(仅触屏设备显示) ──
+    const immersiveBtn = document.getElementById('immersiveToggle');
+    const updateImmersiveLabel = () => {
+        document.getElementById('immersiveLabel').textContent = Immersive.enabled ? '开' : '关';
+    };
+    if (Immersive.isTouch) {
+        immersiveBtn.style.display = '';
+        updateImmersiveLabel();
+        immersiveBtn.addEventListener('click', () => {
+            Immersive.setEnabled(!Immersive.enabled);
+            updateImmersiveLabel();
+        });
+    }
+    document.getElementById('rotateFullscreen').addEventListener('click', () => Immersive.enter());
 
     // ── 联机大厅按钮逻辑 ──
     const overlay      = document.getElementById('mpOverlay');
