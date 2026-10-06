@@ -847,7 +847,7 @@ class Game {
         this.skillMode = Store.get('blockrun.skillMode', 'tap') === 'aim' ? 'aim' : 'tap';
         this.showDmgNums = Store.get('blockrun.dmgNums', true) !== false; // 伤害数字开关(暂停面板里切换)
         // 拖拽瞄准状态:hcx/hcy 为按钮中心(HUD 坐标),sx/sy 为按下点(CSS px)
-        this.aim = { active: false, id: null, skill: null, hcx: 0, hcy: 0, sx: 0, sy: 0, ox: 0, oy: 0, dx: 0, dy: 0, armed: false };
+        this.aim = { active: false, id: null, skill: null, hcx: 0, hcy: 0, sx: 0, sy: 0, ox: 0, oy: 0, dx: 0, dy: 0, armed: false, wasArmed: false, cancel: false };
         this.freezeOverlay = null; // 全屏冰封特效数据
 
         this.keys = {};
@@ -1327,6 +1327,8 @@ class Game {
         };
         const tryStartJoy = (clientX, clientY, id) => {
             if (this.controlMode !== 'joystick' || this.joy.active) return false;
+            // 摇杆分区:只有屏幕左侧 60% 才生成摇杆;右侧未命中按钮的触摸不生成摇杆
+            if (clientX >= window.innerWidth * 0.6) return false;
             if (!this.isRunning || this.isPaused || this.showingPotentialMenu || this.showingClassSelection) return false;
             const { x, y } = toCanvas(clientX, clientY);
             const hit = (b) => b && x >= b.x && x <= b.x + b.w && y >= b.y && y <= b.y + b.h;
@@ -1372,7 +1374,8 @@ class Game {
             if (!btn || btn.skill === 'build') return false;
             Object.assign(this.aim, {
                 active: true, id, skill: btn.skill, hcx: btn.hcx, hcy: btn.hcy,
-                sx: clientX, sy: clientY, ox: 0, oy: 0, dx: 0, dy: 0, armed: false
+                sx: clientX, sy: clientY, ox: 0, oy: 0, dx: 0, dy: 0,
+                armed: false, wasArmed: false, cancel: false
             });
             return true;
         };
@@ -1380,15 +1383,22 @@ class Game {
             const a = this.aim;
             a.ox = clientX - a.sx; a.oy = clientY - a.sy;
             const d = Math.hypot(a.ox, a.oy);
-            a.armed = d > AIM_DEAD;
-            if (a.armed) { a.dx = a.ox / d; a.dy = a.oy / d; }
+            if (d > AIM_DEAD) {
+                a.armed = true;
+                a.wasArmed = true;
+                a.cancel = false;
+                a.dx = a.ox / d; a.dy = a.oy / d;
+            } else {
+                a.armed = false;
+                if (a.wasArmed) a.cancel = true;
+            }
         };
         const endAim = (cancel) => {
             const a = this.aim;
             if (!a.active) return;
             a.active = false;
             a.id = null;
-            if (cancel || !this.isRunning || this.isPaused) return;
+            if (cancel || a.cancel || !this.isRunning || this.isPaused) return;
             this._requestSkill(a.skill, a.armed ? [a.dx, a.dy] : null);
         };
 
@@ -1979,7 +1989,8 @@ class Game {
         const en = this._mpSyncList(this.enemies, snapshot.e || [],
             r => {
                 const e = new Enemy(r[2], r[3], MP_ENEMY_TYPES[r[1]] || 'chaser', 1);
-                if (r[6] & 4) e.makeElite();
+                e.id = r[0];
+                if (r[6] & 4) e.makeElite(true);
                 return e;
             },
             (e, r, isNew) => {
@@ -4252,12 +4263,12 @@ class Game {
                 // 改为:_warriorMeleeAttack 内补打 boss(已确保只在 shoot 时触发)
                 // 此处仅累计天赋触发的玩家命中伤害:_dealDamage 不进 boss,所以不重复
 
-                // 击退判定:HP 归零 或 累计伤害达标 或 时间到
+                // 击退判定:区分「HP 归零或累计伤害达标」(perfect) 与「时间到」(timeout)
                 const dmgGoal = this._bossDmgGoal();
-                const repelled = this.boss.currentHealth <= 0
-                    || this.bossDamageDealt >= dmgGoal
-                    || this.bossActiveTimer >= this.bossDuration;
-                if (repelled) this._repelBoss();
+                const perfect = this.boss.currentHealth <= 0 || this.bossDamageDealt >= dmgGoal;
+                const timeout = this.bossActiveTimer >= this.bossDuration;
+                if (perfect) this._repelBoss(true);
+                else if (timeout) this._repelBoss(false);
                 break;
             }
             case 'retreating': {
@@ -4518,23 +4529,30 @@ class Game {
         }
     }
 
-    _repelBoss() {
+    _repelBoss(perfect = false) {
         if (!this.boss) return;
-        // 奖励
+        // 奖励: 基础奖励保持不变, perfect 时本次分数奖励翻倍
         this.life = Math.min(this.life + 1, this.maxLife);
         this.player.addPotentialPoints(1);
-        this.score += Math.round(100 * (this.scoreMult || 1) * diffDef(this.diffMode).score);
+        const baseScore = Math.round(100 * (this.scoreMult || 1) * diffDef(this.diffMode).score);
+        this.score += perfect ? baseScore * 2 : baseScore;
         // 击退动画
-        // 击退必掉一件限时装备(落在魔王原位)
+        // 击退必掉一件限时装备与一颗技能石(落在魔王原位)
         this._dropGear(this.boss.x + this.boss.size / 2 - 12, this.boss.y + this.boss.size / 2 - 12);
         this._dropGem(this.boss.x + this.boss.size / 2 + 24, this.boss.y + this.boss.size / 2 - 12);
+        if (perfect) {
+            // perfect 时额外掉落一颗技能石(位置错开)
+            this._dropGem(this.boss.x + this.boss.size / 2 - 48, this.boss.y + this.boss.size / 2 - 12);
+        }
         this.boss.triggerRetreat(this.player.x, this.player.y);
         this.bossState = 'retreating';
         // 视效:闪白 + 大粒子爆发
         this.effects.push({ type: 'shockwave', x: this.boss.x + 40, y: this.boss.y + 40, radius: 10, maxRadius: 250, color: '#ffffff', ttl: 0.7, maxTtl: 0.7 });
         this.spawnParticles(this.boss.x + 40, this.boss.y + 40, '#ffeb3b', 40, 2, 7, 3, 6, 0.03);
         this.spawnParticles(this.boss.x + 40, this.boss.y + 40, '#ffffff', 20, 3, 8, 2, 5, 0.04);
-        this._showFloatingText('击退魔王!  +1 命  +1 潜能  +1 天赋点  掉落装备与技能石', this.width / 2, this.height * 0.4, '#ffeb3b');
+        const title = perfect ? '完美击退魔王!' : '魔王遁走…';
+        const color = perfect ? '#ffd700' : '#ffeb3b';
+        this._showFloatingText(`${title}  +1 命  +1 潜能  +1 天赋点  掉落装备与技能石`, this.width / 2, this.height * 0.4, color);
         this.screenShake = 0.5;
         // 立即弹天赋菜单(奖励的潜能点)
         this.showPotentialMenu();
@@ -5276,7 +5294,14 @@ class Game {
                 y = Math.random() < 0.5 ? -50 : this.height + 50;
             }
 
-            this.enemies.push(this._newEnemy(x, y, type));
+            const enemy = this._newEnemy(x, y, type);
+            // 对局时间超过 80 秒后，普通刷怪以 4% 几率将新生成的普通敌人变成精英
+            if (this.gameTime > 80 && Math.random() < 0.04) {
+                if (type !== 'treasure' && type !== 'shard' && type !== 'boss') {
+                    enemy.makeElite();
+                }
+            }
+            this.enemies.push(enemy);
         }
     }
 
@@ -5670,27 +5695,50 @@ class Game {
 
     _findClosestEnemies(count) {
         // 包含魔王(若存在且活跃),让技能能锁定魔王
-        // count=1 走 O(n) 单次扫描;否则才排序
+        // count <= 0 返回空; count=1 走 O(n) 单次扫描; count > 1 单次遍历维护长度为 count 的有序数组(插入排序),每个敌人只算一次 d2
+        if (count <= 0) return [];
         if (count === 1) {
             const t = this._findClosestTarget();
             return t ? [t] : [];
         }
-        const pool = this.enemies.slice();
-        if (this.boss && this.bossState === 'active') pool.push(this.boss);
         const px = this.player.x, py = this.player.y;
-        if (this.player._aim) {
-            // 拖拽瞄准:瞄准扇形内的敌人排在前面,其余按距离补位
-            const inCone = (e) => this._inAimCone(e) ? 0 : 1;
-            pool.sort((a, b) => (inCone(a) - inCone(b)) ||
-                ((a.x - px) ** 2 + (a.y - py) ** 2) - ((b.x - px) ** 2 + (b.y - py) ** 2));
-            return pool.slice(0, count);
+        const hasAim = !!this.player._aim;
+        const best = []; // 元素为 { e, d2, cone }, 保持升序排列, 最大长度 count
+
+        const isBetter = (cone1, d2_1, cone2, d2_2) => {
+            if (hasAim && cone1 !== cone2) return cone1 < cone2;
+            return d2_1 < d2_2;
+        };
+
+        const processTarget = (e) => {
+            const dx = e.x - px, dy = e.y - py;
+            const d2 = dx * dx + dy * dy;
+            const cone = hasAim ? (this._inAimCone(e) ? 0 : 1) : 0;
+
+            if (best.length === count) {
+                const last = best[count - 1];
+                if (!isBetter(cone, d2, last.cone, last.d2)) return;
+            }
+
+            let i = best.length - 1;
+            while (i >= 0 && isBetter(cone, d2, best[i].cone, best[i].d2)) {
+                i--;
+            }
+            best.splice(i + 1, 0, { e, d2, cone });
+            if (best.length > count) best.pop();
+        };
+
+        const enemies = this.enemies;
+        for (let i = 0; i < enemies.length; i++) {
+            processTarget(enemies[i]);
         }
-        pool.sort((a, b) => {
-            const dxa = a.x - px, dya = a.y - py;
-            const dxb = b.x - px, dyb = b.y - py;
-            return (dxa * dxa + dya * dya) - (dxb * dxb + dyb * dyb);
-        });
-        return pool.slice(0, count);
+        if (this.boss && this.bossState === 'active') {
+            processTarget(this.boss);
+        }
+
+        const out = new Array(best.length);
+        for (let i = 0; i < best.length; i++) out[i] = best[i].e;
+        return out;
     }
 
     // 敌人是否在本次拖拽瞄准的扇形内(±35°,520px 内)
@@ -7986,7 +8034,21 @@ class Game {
     // 拖拽瞄准:从玩家身上画出瞄准方向(冲刺显示实际冲刺距离,技能显示锁定扇形)
     _renderAimGuide() {
         const a = this.aim, p = this.player;
-        if (!a.active || !a.armed || this.isPaused || p.currentHealth <= 0) return;
+        if (!a.active || this.isPaused || !p || p.currentHealth <= 0) return;
+        if (a.cancel) {
+            this._withHud(() => {
+                const ctx = this.ctx;
+                ctx.save();
+                ctx.font = 'bold 13px Arial';
+                ctx.textAlign = 'center';
+                ctx.textBaseline = 'bottom';
+                ctx.fillStyle = '#ff4444';
+                ctx.fillText('松手取消', a.hcx, a.hcy - 36);
+                ctx.restore();
+            });
+            return;
+        }
+        if (!a.armed) return;
         const ctx = this.ctx;
         const cx = p.x + p.size / 2, cy = p.y + p.size / 2;
         const ang = Math.atan2(a.dy, a.dx);
@@ -9885,6 +9947,22 @@ class Player {
         ctx.lineWidth = 2;
         roundRect(ctx, this.x, this.y, this.size, this.size, 7);
         ctx.stroke();
+
+        // 玩家护盾外框: 当 shield > 0 时，在玩家方块外扩 3px 画淡蓝色半透明圆角描边
+        // 透明度随护盾占上限比例变化并有缓慢呼吸;处于受击无敌(hurtCooldown > 0)且有护盾时不额外处理。不用 shadowBlur。
+        // 联机里队友的 Player 也会走这个 render，确认 shield 字段在客机端存在（不存在就安全跳过）
+        if (typeof this.shield === 'number' && this.shield > 0) {
+            const cap = (this.maxHealth || 100) * (this.shieldCapRatio || 0.10);
+            const shieldRatio = cap > 0 ? Math.min(1, Math.max(0, this.shield / cap)) : 1;
+            const breath = 0.75 + 0.25 * Math.sin(performance.now() / 350);
+            const alpha = (0.25 + 0.55 * shieldRatio) * breath;
+            ctx.shadowBlur = 0;
+            ctx.strokeStyle = `rgba(100, 181, 246, ${alpha})`;
+            ctx.lineWidth = 2;
+            roundRect(ctx, this.x - 3, this.y - 3, this.size + 6, this.size + 6, 9);
+            ctx.stroke();
+        }
+
         ctx.restore();
 
         const healthBarWidth = this.size;
@@ -10205,7 +10283,7 @@ class Enemy {
     }
 
     // 精英化:体型 ×1.3、血量 ×3、攻防略升,画金框皇冠(guest 只用到体型与标记)
-    makeElite() {
+    makeElite(isGuest = false) {
         if (this.elite) return;
         this.elite = true;
         this.size = Math.round(this.size * 1.3);
@@ -10215,6 +10293,19 @@ class Enemy {
         this.defense *= 1.2;
         this.speed *= 1.1;
         if (this.type === 'dasher') this.dashDist *= 1.15;
+
+        // 词缀根据 e.id % 2 决定: 0 =「疾风」移速 ×1.35; 1 =「坚毅」最大生命再 ×1.5(当前血量同步)
+        // 移速/血量只在主机/单人生效,客机的血量来自快照不要重复乘
+        const affix = (this.id % 2 === 0) ? 'gale' : 'tenacity';
+        this.affix = affix;
+        if (!isGuest) {
+            if (affix === 'gale') {
+                this.speed *= 1.35;
+            } else {
+                this.maxHealth = Math.round(this.maxHealth * 1.5);
+                this.currentHealth = this.maxHealth;
+            }
+        }
     }
 
     // 宝藏方块:离玩家近就背向逃跑(带随机偏转),远了就闲逛;贴墙时被推回场内
@@ -10546,6 +10637,16 @@ class Enemy {
     // 第 0 遍:地面预警(冲锋者的冲刺路线、自爆者的爆炸范围),画在所有敌人身下。只有填充/描边,无 shadowBlur
     static renderTelegraphs(ctx, enemies) {
         for (const e of enemies) {
+            // 精英身下画对应颜色的细光环（疾风青色、坚毅银白）
+            if (e.elite) {
+                const cx = e.x + e.size / 2, cy = e.y + e.size / 2;
+                const isGale = (e.id % 2 === 0);
+                ctx.strokeStyle = isGale ? 'rgba(0, 229, 255, 0.75)' : 'rgba(230, 235, 245, 0.8)';
+                ctx.lineWidth = 1.5;
+                ctx.beginPath();
+                ctx.arc(cx, cy, e.size * 0.72, 0, Math.PI * 2);
+                ctx.stroke();
+            }
             if (e.type === 'gunner') {
                 // 炮手出场:橙色光圈向落点收缩
                 const k = e.spawnProgress();
@@ -10700,7 +10801,17 @@ class Enemy {
             }
             ctx.fill();
         }
-        if (this.elite) SpriteCache.drawPx(ctx, Enemy.eliteSprite(this.size, this.type === 'giant' ? 10 : 6), this.x, this.y, snap);
+        if (this.elite) {
+            SpriteCache.drawPx(ctx, Enemy.eliteSprite(this.size, this.type === 'giant' ? 10 : 6), this.x, this.y, snap);
+            const isGale = (this.id % 2 === 0);
+            ctx.save();
+            ctx.font = 'bold 11px Arial';
+            ctx.textAlign = 'left';
+            ctx.textBaseline = 'middle';
+            ctx.fillStyle = isGale ? '#00e5ff' : '#e0e0e0';
+            ctx.fillText(isGale ? '疾' : '坚', this.x + this.size / 2 + 11, this.y - 19);
+            ctx.restore();
+        }
         if (this.stunTimer > 0 && this.type !== 'gunner') {
             const cx = this.x + this.size / 2;
             const cy = this.y - 16;
@@ -11022,7 +11133,45 @@ class Item {
         ctx.restore();
     }
 
+    // 稀有掉落光柱:限时装备(金色)、技能石(紫色)在本体下方画垂直渐变光柱与地面扩散椭圆光圈(不用 shadowBlur)
+    _renderRarePillar(ctx) {
+        const isGear = !!this.gear;
+        const isGem = !!this.gem;
+        if (!isGear && !isGem) return;
+
+        const time = performance.now() / 1000;
+        const cx = this.x + this.size / 2;
+        const groundY = (this.landTimer > 0 ? this.targetY : this.y) + this.size;
+        const rgb = isGear ? '255, 215, 0' : '170, 60, 240'; // 装备金色、技能石紫色
+        const breath = 0.85 + 0.15 * Math.sin(time * 2.5 + this.spinPhase);
+        const beamH = 60 * (0.92 + 0.08 * Math.sin(time * 2 + this.spinPhase));
+        const beamW = this.size * 0.9;
+
+        ctx.save();
+        // 垂直渐变光柱:高约 60px,半透明向上渐隐,纯渐变无 shadowBlur
+        const grad = ctx.createLinearGradient(0, groundY, 0, groundY - beamH);
+        grad.addColorStop(0, `rgba(${rgb}, ${0.35 * breath})`);
+        grad.addColorStop(0.5, `rgba(${rgb}, ${0.15 * breath})`);
+        grad.addColorStop(1, `rgba(${rgb}, 0)`);
+        ctx.fillStyle = grad;
+        ctx.fillRect(cx - beamW / 2, groundY - beamH, beamW, beamH);
+
+        // 地面扩散淡出的椭圆光圈
+        const ringProg = ((time * 0.9 + this.spinPhase) % 1);
+        const rx = this.size * (0.4 + ringProg * 0.9);
+        const ry = rx * 0.35;
+        const ringAlpha = (1 - ringProg) * 0.55 * breath;
+        ctx.strokeStyle = `rgba(${rgb}, ${ringAlpha})`;
+        ctx.lineWidth = 1.5;
+        ctx.beginPath();
+        ctx.ellipse(cx, groundY, rx, ry, 0, 0, Math.PI * 2);
+        ctx.stroke();
+
+        ctx.restore();
+    }
+
     render(ctx) {
+        if (this.gear || this.gem) this._renderRarePillar(ctx);
         if (this.gem) { this._renderGem(ctx); return; }
         const time = Date.now() * 0.001;
         const cx = this.x + this.size / 2;
