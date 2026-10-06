@@ -1292,6 +1292,7 @@ class Game {
                 if (e.key === 'q' || e.key === 'Q') this._requestSkill('Q');
                 else if (e.key === 'e' || e.key === 'E') this._requestSkill('E');
                 else if (e.key === 'r' || e.key === 'R') this._requestSkill('ult');
+                else if ((e.key === 'f' || e.key === 'F') && !e.repeat) this._requestTacticalPing();
                 else if ((e.key === ' ' || e.key === 'Shift') && !e.repeat) this._requestSkill('dash');
             }
         });
@@ -1794,6 +1795,11 @@ class Game {
             case 'castSkill':
                 if (this.mpMode === 'host' && !this.isPaused) this._castGuestSkill(msg.playerId, msg.skill, msg.aim);
                 break;
+            case 'tacticalPing':
+                if (this.mpMode === 'host' && !this.isPaused) {
+                    this._addTacticalPing(msg.x, msg.y, msg.pingType);
+                }
+                break;
             case 'talentChoose':
                 if (this.mpMode === 'host') {
                     const gp = this.mpGuestPlayers.get(msg.playerId);
@@ -1922,6 +1928,7 @@ class Game {
                     this.event.type === 'void_rift' ? [q1(this.event.rx), q1(this.event.ry), q2(this.event.charge), this.event.activated ? 1 : 0] : [])] : 0,
             bt: this.bossState === 'idle' ? q1(this.bossTimer) : 0,
             mt: this.meteors.map(m => [m.id, q1(m.x), q1(m.y), q1(m.r), q2(m.t), m.dur]),
+            tp: (this.tacticalPings || []).map(t => [t.id, q1(t.x), q1(t.y), t.type, q1(t.timer)]),
             tk: this.treasureKills, ek: this.eliteKills, dm: this.diffMode,
             ef: this._mpTakeNewEffects(),
             fx: this._mpFx.splice(0),
@@ -1968,6 +1975,8 @@ class Game {
             // 终极觉醒奥义充能(0~100)与激活中标记
             uc: q1(p.ultCharge || 0), ua: p.ultActiveTimer > 0 ? 1 : 0,
             gc: p.greedContract || 0, // 贪婪契约
+            // 联机倒地信标状态 [剩余倒计时, 救援进度]
+            dn: p.downed ? [q1(p.downedTimer), q2(p.rescueCharge || 0)] : 0,
             // 连杀 [连杀数, 剩余秒] 与本局最高连杀
             cb: p.combo > 0 ? [p.combo, q2(p.comboTimer)] : 0, mc: p.maxCombo || 0,
             // 限时装备 [种类序号, 剩余, 总时长, 法球角度, 等级(1/2)]
@@ -2168,6 +2177,13 @@ class Game {
             this.player.gear = this._mpGear(myData.g);
             this.player.blessTimer = myData.bl || 0;
             this.player.greedContract = myData.gc || null;
+            if (myData.dn) {
+                this.player.downed = true;
+                this.player.downedTimer = myData.dn[0];
+                this.player.rescueCharge = myData.dn[1];
+            } else {
+                this.player.downed = false;
+            }
             // 新捡到的技能石:追加到本地背包并自动镶嵌
             const gl = myData.gl || '';
             const mine = this.player.gemLog;
@@ -2242,6 +2258,27 @@ class Game {
         this.bossActiveTimer   = snapshot.bossActiveTimer  || 0;
         this.bossDamageDealt   = snapshot.bossDamageDealt  || 0;
         this.screenShake       = snapshot.screenShake      || 0;
+
+        // 同步战术标记列表
+        if (snapshot.tp) {
+            const byId = new Map((this.tacticalPings || []).map(t => [t.id, t]));
+            this.tacticalPings = snapshot.tp.map(row => {
+                const existing = byId.get(row[0]);
+                if (existing) {
+                    existing.timer = row[4];
+                    return existing;
+                }
+                const info = {
+                    danger: { icon: '⚠️', color: '#ff1744', text: '危险!' },
+                    focus:  { icon: '🎯', color: '#ffd600', text: '集火!' },
+                    rally:  { icon: '🛡️', color: '#00e5ff', text: '集合!' }
+                }[row[3]] || { icon: '📍', color: '#ffffff', text: '标记' };
+                return {
+                    id: row[0], x: row[1], y: row[2], type: row[3], timer: row[4], maxTimer: 6.0,
+                    icon: info.icon, color: info.color, text: info.text
+                };
+            });
+        }
     }
 
     // ── Guest：每帧在两次快照之间插值位置,并在本地推进纯视觉动画 ──
@@ -2729,6 +2766,114 @@ class Game {
         ctx.fillStyle = c > 0 ? '#ffd54f' : 'rgba(255,255,255,0.7)';
         ctx.fillText(c > 0 ? `引导签订中 ${Math.round(c * 100)}%` : '靠近站立签订', 0, 40);
 
+        ctx.restore();
+    }
+
+    // 联机倒地灵魂信标:金色通天光柱 + 倒地玩家头顶救助倒计时与救援进度环
+    _renderSoulBeacons(ctx) {
+        const players = this._allPlayers ? this._allPlayers() : [this.player];
+        const t = this.bgTime;
+        for (const p of players) {
+            if (!p.downed && !p.guardianActive) continue;
+            const cx = p.x + p.size / 2, cy = p.y + p.size / 2;
+            ctx.save();
+            if (p.guardianActive) {
+                // 单人守护天使绝境光环
+                const pulse = 0.5 + 0.5 * Math.sin(t * 8);
+                ctx.fillStyle = `rgba(255, 215, 0, ${0.12 + 0.15 * pulse})`;
+                ctx.beginPath();
+                ctx.arc(cx, cy, 60, 0, Math.PI * 2);
+                ctx.fill();
+                ctx.strokeStyle = '#ffd700';
+                ctx.lineWidth = 2.5;
+                ctx.beginPath();
+                ctx.arc(cx, cy, 60, 0, Math.PI * 2);
+                ctx.stroke();
+                ctx.font = 'bold 12px Arial';
+                ctx.fillStyle = '#fff9c4';
+                ctx.textAlign = 'center';
+                ctx.textBaseline = 'middle';
+                ctx.fillText(`👼 守护反杀: ${p.guardianKills || 0}/2`, cx, cy - 40);
+            } else if (p.downed) {
+                // 联机灵魂共鸣信标
+                const pulse = 0.5 + 0.5 * Math.sin(t * 5);
+                // 金色地面光环
+                ctx.fillStyle = `rgba(128, 216, 255, ${0.12 + 0.12 * pulse})`;
+                ctx.beginPath();
+                ctx.arc(cx, cy, 75, 0, Math.PI * 2);
+                ctx.fill();
+                ctx.strokeStyle = `rgba(128, 216, 255, ${0.4 + 0.4 * pulse})`;
+                ctx.lineWidth = 2;
+                ctx.setLineDash([8, 6]);
+                ctx.lineDashOffset = -t * 20;
+                ctx.beginPath();
+                ctx.arc(cx, cy, 75, 0, Math.PI * 2);
+                ctx.stroke();
+                ctx.setLineDash([]);
+                // 救援进度环
+                const charge = p.rescueCharge || 0;
+                if (charge > 0) {
+                    ctx.strokeStyle = '#80d8ff';
+                    ctx.lineWidth = 4;
+                    ctx.lineCap = 'round';
+                    ctx.beginPath();
+                    ctx.arc(cx, cy, 70, -Math.PI / 2, -Math.PI / 2 + Math.PI * 2 * charge);
+                    ctx.stroke();
+                }
+                // 通天金色光柱
+                const beamW = 26;
+                const grad = ctx.createLinearGradient(cx - beamW / 2, 0, cx + beamW / 2, 0);
+                grad.addColorStop(0, 'rgba(128, 216, 255, 0)');
+                grad.addColorStop(0.5, 'rgba(128, 216, 255, 0.45)');
+                grad.addColorStop(1, 'rgba(128, 216, 255, 0)');
+                ctx.fillStyle = grad;
+                ctx.fillRect(cx - beamW / 2, 0, beamW, cy);
+                // 头顶文字标签
+                ctx.font = 'bold 12px Arial';
+                ctx.textAlign = 'center';
+                ctx.textBaseline = 'middle';
+                ctx.fillStyle = '#ff80ab';
+                ctx.shadowBlur = 4;
+                ctx.shadowColor = '#000000';
+                ctx.fillText(`⚠️ 援救倒计时: ${Math.ceil(p.downedTimer || 0)}s`, cx, cy - 36);
+                if (charge > 0) {
+                    ctx.fillStyle = '#80d8ff';
+                    ctx.fillText(`救援中 ${Math.round(charge * 100)}%`, cx, cy - 22);
+                } else {
+                    ctx.fillStyle = '#fff59d';
+                    ctx.fillText('靠近站立救助', cx, cy - 22);
+                }
+            }
+            ctx.restore();
+        }
+    }
+
+    // 联机快捷战术标记:地面脉冲光标 + 倒计时衰减
+    _renderTacticalPings(ctx) {
+        if (!this.tacticalPings || !this.tacticalPings.length) return;
+        const t = this.bgTime;
+        ctx.save();
+        for (const ping of this.tacticalPings) {
+            const alpha = Math.min(1, ping.timer / 0.5);
+            const pulse = 0.5 + 0.5 * Math.sin(t * 8);
+            ctx.globalAlpha = alpha;
+            // 地面脉冲圈
+            ctx.strokeStyle = ping.color;
+            ctx.lineWidth = 2.5;
+            ctx.beginPath();
+            ctx.arc(ping.x, ping.y, 22 + pulse * 6, 0, Math.PI * 2);
+            ctx.stroke();
+            // 图标与文字
+            ctx.font = '22px Arial';
+            ctx.textAlign = 'center';
+            ctx.textBaseline = 'middle';
+            ctx.fillText(ping.icon, ping.x, ping.y - 10 + Math.sin(t * 5) * 3);
+            ctx.font = 'bold 11px Arial';
+            ctx.fillStyle = ping.color;
+            ctx.shadowBlur = 6;
+            ctx.shadowColor = ping.color;
+            ctx.fillText(ping.text, ping.x, ping.y + 14);
+        }
         ctx.restore();
     }
 
@@ -3240,6 +3385,7 @@ class Game {
             this.updateParticles();
             this._updateBoss();
             this._updateEvents();
+            this._updateTacticalPings();
             this._tickPendingActions();
             this.checkCollisions();
             this._checkLocalDeath(); // 兜底:任何来源把血量打到 0 都能结算复活/扣命
@@ -3603,6 +3749,79 @@ class Game {
         this._tickGear();
         if (this.player.blessTimer > 0) this.player.blessTimer = Math.max(0, this.player.blessTimer - DT);
         if (this.player.ultActiveTimer > 0) this.player.ultActiveTimer = Math.max(0, this.player.ultActiveTimer - DT);
+        if (this.player.guardianCooldown > 0) this.player.guardianCooldown = Math.max(0, this.player.guardianCooldown - DT);
+
+        // 单人模式守护天使超时判定
+        if (!this.mpMode && this.player.guardianActive) {
+            if (this.player.hurtCooldown <= 0) {
+                // 超时未反杀 2 名敌人:守护失败,正常结算扣命
+                this.player.guardianActive = false;
+                this.player.currentHealth = 0;
+                this.life--;
+                if (this.life > 0) {
+                    this.player.x = this.width / 2 - this.player.size / 2;
+                    this.player.y = this.height / 2 - this.player.size / 2;
+                    this.player.currentHealth = this.player.maxHealth;
+                    this.player.hurtCooldown = 1.5;
+                } else {
+                    this.fatalBlow = this.player.lastHitInfo ? { ...this.player.lastHitInfo } : null;
+                }
+            }
+        }
+
+        // 联机模式灵魂信标救助推进
+        if (this.mpMode && this.player.downed) {
+            this.player.downedTimer -= DT;
+            let helperNear = false;
+            // 检查是否有存活队友在信标 75px 范围内
+            for (const other of this._livingPlayers()) {
+                if (other !== this.player) {
+                    const dist = Math.hypot(other.x - this.player.x, other.y - this.player.y);
+                    if (dist <= 75) { helperNear = true; break; }
+                }
+            }
+            if (helperNear) {
+                this.player.rescueCharge = Math.min(1, (this.player.rescueCharge || 0) + DT / 1.5);
+                if (Math.random() < 0.3) {
+                    this.spawnParticles(this.player.x + this.player.size / 2, this.player.y + this.player.size / 2, '#80d8ff', 2, 1, 2, 1.5, 3, 0.04);
+                }
+            } else {
+                this.player.rescueCharge = Math.max(0, (this.player.rescueCharge || 0) - DT * 0.4);
+            }
+
+            // 救援成功:零消耗原地复苏
+            if (this.player.rescueCharge >= 1) {
+                this.player.downed = false;
+                this.player.currentHealth = this.player.maxHealth * 0.5;
+                this.player.shield = Math.max(this.player.shield || 0, this.player.maxHealth * 0.4);
+                this.player.hurtCooldown = 2.0;
+                const pcx = this.player.x + this.player.size / 2, pcy = this.player.y + this.player.size / 2;
+                Sound.play('levelUp');
+                this._showFloatingText('✝️ 战术复苏成功! 救世冲击!', pcx, pcy - 25, '#80d8ff');
+                this.effects.push({ type: 'shockwave', x: pcx, y: pcy, radius: 15, maxRadius: 260, color: '#80d8ff', ttl: 0.6, maxTtl: 0.6 });
+                // 震退并击晕周围敌人
+                for (const e of this.enemies) {
+                    const ecx = e.x + e.size / 2, ecy = e.y + e.size / 2;
+                    if (Math.hypot(ecx - pcx, ecy - pcy) <= 220) {
+                        this._knockbackFrom(e, pcx, pcy, 6);
+                        e.stunTimer = Math.max(e.stunTimer || 0, 1.2);
+                    }
+                }
+            } else if (this.player.downedTimer <= 0) {
+                // 超时未被救助:扣除团队生命并在安全中心复苏
+                this.player.downed = false;
+                this.life--;
+                if (this.life > 0) {
+                    this.player.x = this.width / 2 - this.player.size / 2;
+                    this.player.y = this.height / 2 - this.player.size / 2;
+                    this.player.currentHealth = this.player.maxHealth;
+                    this.player.hurtCooldown = 1.5;
+                } else {
+                    this.fatalBlow = this.player.lastHitInfo ? { ...this.player.lastHitInfo } : null;
+                }
+            }
+        }
+
         if (this.player.comboTimer > 0) {
             this.player.comboTimer -= DT;
             if (this.player.comboTimer <= 0) {
@@ -4423,6 +4642,57 @@ class Game {
         this.spawnParticles(cx - p.faceX * 10, cy - p.faceY * 10, '#e0f7fa', 8, 1, 3, 2, 4, 0.03);
     }
 
+    // ── 联机快捷战术标记 (Tactical Ping) ──
+    _requestTacticalPing() {
+        const p = this.player;
+        const dist = 75;
+        const tx = Math.max(20, Math.min(this.width - 20, p.x + p.size / 2 + (p.faceX || 1) * dist));
+        const ty = Math.max(20, Math.min(this.height - 20, p.y + p.size / 2 + (p.faceY || 0) * dist));
+
+        // 轮流切换三种战术标记类型: danger(危险⚠️) -> focus(集火🎯) -> rally(集合🛡️)
+        const types = ['danger', 'focus', 'rally'];
+        this._pingSeq = ((this._pingSeq || 0) + 1) % types.length;
+        const type = types[this._pingSeq];
+
+        if (this.mpMode === 'guest') {
+            if (this.mpWs && this.mpWs.readyState === WebSocket.OPEN) {
+                this.mpWs.send(JSON.stringify({ type: 'tacticalPing', x: q1(tx), y: q1(ty), pingType: type }));
+            }
+            return;
+        }
+        this._addTacticalPing(tx, ty, type);
+    }
+
+    _addTacticalPing(x, y, type) {
+        if (!this.tacticalPings) this.tacticalPings = [];
+        const info = {
+            danger: { icon: '⚠️', color: '#ff1744', text: '危险!' },
+            focus:  { icon: '🎯', color: '#ffd600', text: '集火!' },
+            rally:  { icon: '🛡️', color: '#00e5ff', text: '集合!' }
+        }[type] || { icon: '📍', color: '#ffffff', text: '标记' };
+
+        this.tacticalPings.push({
+            id: nextEntityId(),
+            x, y, type,
+            timer: 6.0, maxTimer: 6.0,
+            icon: info.icon,
+            color: info.color,
+            text: info.text
+        });
+        Sound.play('cdReady');
+        this.effects.push({ type: 'shockwave', x, y, radius: 8, maxRadius: 55, color: info.color, ttl: 0.35, maxTtl: 0.35 });
+        this.spawnBurstRing(x, y, 35, info.color, 12);
+    }
+
+    _updateTacticalPings() {
+        if (!this.tacticalPings || !this.tacticalPings.length) return;
+        for (let i = this.tacticalPings.length - 1; i >= 0; i--) {
+            const ping = this.tacticalPings[i];
+            ping.timer -= DT;
+            if (ping.timer <= 0) this.tacticalPings.splice(i, 1);
+        }
+    }
+
     // 幻影冲锋天赋:冲刺途中撞到的敌人/魔王各结算一次伤害
     _tickDashStrike() {
         const p = this.player;
@@ -4900,11 +5170,43 @@ class Game {
         return true;
     }
 
-    // 本机玩家血量归零:扣一条命,还有命就在中央复活并给 1.5 秒无敌。
-    // 同一帧可能被多个来源判定死亡,生命已为 0 时不再重复扣(否则命数会变成负数)
+    // 玩家血量归零结算:
+    // 1. 联机模式:原地进入 12 秒「灵魂共鸣信标」倒地状态,队友靠近引导 1.5s 即可零消耗免扣命原地复苏!
+    // 2. 单人模式:触发「守护天使」绝境反扑(冷却 90s),在 2.5s 子弹时间内反杀 2 名敌人即可免死复苏!
     _checkLocalDeath() {
         const p = this.player;
-        if (p.currentHealth > 0 || this.life <= 0) return;
+        if (p.currentHealth > 0 || this.life <= 0 || p.downed || p.guardianActive) return;
+
+        // 单人模式守护天使反扑
+        if (!this.mpMode && (p.guardianCooldown || 0) <= 0) {
+            p.guardianActive = true;
+            p.guardianKills = 0;
+            p.guardianCooldown = 90;
+            p.currentHealth = 1;
+            p.hurtCooldown = 2.5;
+            this.hitStop = Math.max(this.hitStop, 0.1);
+            this.screenShake = Math.max(this.screenShake, 0.35);
+            Sound.play('bossWarn');
+            this._showFloatingText('👼 守护天使触发! 反杀 2 名敌人原地复苏!', this.width / 2, this.height * 0.35, '#ffd700');
+            this.effects.push({ type: 'shockwave', x: p.x + p.size / 2, y: p.y + p.size / 2, radius: 10, maxRadius: 180, color: '#ffd700', ttl: 0.6, maxTtl: 0.6 });
+            return;
+        }
+
+        // 联机模式灵魂信标
+        if (this.mpMode) {
+            p.downed = true;
+            p.downedTimer = 12;
+            p.rescueCharge = 0;
+            p.currentHealth = 0;
+            p.hurtCooldown = 12; // 倒地期间不再吃伤害
+            this.screenShake = Math.max(this.screenShake, 0.3);
+            Sound.play('death');
+            this._showFloatingText('⚠️ 倒地濒死! 等待队友救援!', p.x + p.size / 2, p.y - 28, '#ff5252');
+            this.effects.push({ type: 'shockwave', x: p.x + p.size / 2, y: p.y + p.size / 2, radius: 10, maxRadius: 100, color: '#ff1744', ttl: 0.5, maxTtl: 0.5 });
+            return;
+        }
+
+        // 普通死亡扣命
         this.life--;
         if (this.life > 0) {
             p.x = this.width / 2 - p.size / 2;
@@ -4990,6 +5292,7 @@ class Game {
         this.eventTimer = 25;         // 距离下一个事件的秒数
         this.meteors = [];            // { id, x, y, r, t, dur }:t 为落地倒计时
         this.toxicPuddles = [];       // 剧毒精英死亡留下的腐蚀毒雾洼地
+        this.tacticalPings = [];      // 联机快捷战术标记列表
         this.treasureKills = 0;
         this.eliteKills = 0;
         this.affixEliteKills = 0;
@@ -7639,6 +7942,19 @@ class Game {
         }
         this.player.gainRage(20);
         if (this.player.gainUltCharge) this.player.gainUltCharge(6);
+        // 单人守护天使绝境反扑:绝境期间击杀 2 名敌人即可免死复苏!
+        if (this.player.guardianActive) {
+            this.player.guardianKills = (this.player.guardianKills || 0) + 1;
+            if (this.player.guardianKills >= 2) {
+                this.player.guardianActive = false;
+                this.player.currentHealth = this.player.maxHealth * 0.5;
+                this.player.shield = Math.max(this.player.shield || 0, this.player.maxHealth * 0.4);
+                this.player.hurtCooldown = 2.0;
+                Sound.play('levelUp');
+                this._showFloatingText('👼 绝境重燃! 免死复苏!', this.player.x + this.player.size / 2, this.player.y - 25, '#ffd700');
+                this.effects.push({ type: 'shockwave', x: this.player.x + this.player.size / 2, y: this.player.y + this.player.size / 2, radius: 10, maxRadius: 160, color: '#ffd700', ttl: 0.5, maxTtl: 0.5 });
+            }
+        }
         this.checkLevelUp();
     }
     
@@ -8889,6 +9205,8 @@ class Game {
         this._renderAltar(ctx);
         this._renderVoidRift(ctx);
         this._renderGreedAltar(ctx);
+        this._renderSoulBeacons(ctx);
+        this._renderTacticalPings(ctx);
 
         this.player.render(this.ctx);
         this._renderBlessAura(this.player);
@@ -10569,6 +10887,15 @@ class Player {
         this.maxUltCharge = 100;
         this.ultActiveTimer = 0;         // > 0 表示大招持续进行中
         this.ultName = null;
+
+        // 灵魂共鸣援救与濒死状态
+        this.downed = false;             // 联机倒地信标状态
+        this.downedTimer = 0;            // 信标倒计时(12s)
+        this.downedMax = 12;
+        this.rescueCharge = 0;           // 队友救援蓄力进度(0~1)
+        this.guardianCooldown = 0;       // 单人守护天使反扑冷却(90s)
+        this.guardianActive = false;     // 单人守护天使绝境中
+        this.guardianKills = 0;          // 绝境击杀数(击杀2个原地复苏)
 
         this.mana = 10;
         this.maxMana = 10;
