@@ -1643,9 +1643,9 @@ class Game {
             j.x = b.x; j.y = b.y;
             const dd = Math.hypot(dx, dy);
             const mag = Math.min(1, dd / R);
-            if (mag < 0.18) { this._setJoyVector(0, 0); return; }   // 死区
-            // 推到 60% 以上即满速,轻推慢走
-            const v = Math.min(1, (mag - 0.18) / 0.42);
+            if (mag < 0.12) { this._setJoyVector(0, 0); return; }   // 缩小死区(原0.18->0.12),轻微拨动即响应
+            // 推到 55% 以上即满速,线性更加敏锐顺滑
+            const v = Math.min(1, (mag - 0.12) / 0.43);
             this._setJoyVector(dx / dd * v, dy / dd * v);
         };
         const endJoy = () => {
@@ -1655,7 +1655,7 @@ class Game {
         };
 
         // ── 拖拽瞄准:在技能/冲刺按钮上按下,拖向想要的方向,松手释放;轻点不拖仍自动瞄准 ──
-        const AIM_DEAD = 14;   // 拖动超过 14 CSS px 才算瞄准
+        const AIM_DEAD = 10;   // 调优死区(原14->10 CSS px),微滑即可触发定向瞄准，手感更跟手敏捷
         const tryStartAim = (clientX, clientY, id) => {
             if (this.skillMode !== 'aim' || this.aim.active) return false;
             if (!this.isRunning || this.isPaused || this.showingPotentialMenu || this.showingClassSelection) return false;
