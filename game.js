@@ -1066,7 +1066,7 @@ class Game {
         this.items = [];
         this.projectiles = [];
         this.enemyBullets = []; // 炮手发射的敌方投射物
-        this.effects = [];
+        this.effects = this._createSafeEffectsArray();
         this.particles = [];
 
         this.stars = this._initStars(120);
@@ -1854,7 +1854,7 @@ class Game {
         this.enemies = [];
         this.items = [];
         this.projectiles = [];
-        this.effects = [];
+        this.effects = this._createSafeEffectsArray();
         this.enemyBullets = [];
         this.keys = {};
         this.isRunning = false;
@@ -3422,7 +3422,8 @@ class Game {
             const names = { blood: '血契', gale: '狂风契', death: '死誓契' };
             const desc = names[p.greedContract] || '契约';
             const ctx = this.ctx;
-            const x = 10, w = 100, h = 26;
+            const x = (this._hud && this._hud.padLeft) ? this._hud.padLeft : 10;
+            const w = 100, h = 26;
             ctx.save();
             ctx.fillStyle = 'rgba(25, 20, 5, 0.75)';
             roundRect(ctx, x, y, w, h, 6);
@@ -3446,7 +3447,7 @@ class Game {
         // 永久暗金遗物勋章栏(最多 3 件)
         if (p.relics && p.relics.length > 0) {
             const ctx = this.ctx;
-            let rx = 10;
+            let rx = (this._hud && this._hud.padLeft) ? this._hud.padLeft : 10;
             const slotSize = 28;
             for (const rk of p.relics) {
                 const rdef = RELICS[rk];
@@ -3500,7 +3501,8 @@ class Game {
         const def = { icon, name, color };
         const g = { timer, max };
         const ctx = this.ctx;
-        const x = 10, w = isEvo ? 112 : 100, h = 30;
+        const x = (this._hud && this._hud.padLeft) ? this._hud.padLeft : 10;
+        const w = isEvo ? 112 : 100, h = 30;
         const ratio = Math.max(0, Math.min(1, g.timer / (g.max || 1)));
         const blink = g.timer < 3 ? 0.45 + 0.55 * Math.abs(Math.sin(this.bgTime * 10)) : 1;
         ctx.save();
@@ -4181,8 +4183,8 @@ class Game {
         }
     }
 
-    // 本机受击时屏幕四周泛红
-    _renderHurtVignette() {
+    // 本机受击时屏幕四周泛红(全屏视口空间)
+    _renderHurtVignette(scrW = this.width, scrH = this.height) {
         const p = this.player;
         const hpRatio = p.maxHealth > 0 ? p.currentHealth / p.maxHealth : 1;
         // 低血量心跳脉冲:每次心跳亮一下再慢慢暗下去
@@ -4198,7 +4200,7 @@ class Game {
         }
         if (this.hurtVignette <= 0 && beat <= 0) return;
         const ctx = this.ctx;
-        const W = this.width, H = this.height;
+        const W = scrW, H = scrH;
         const hurtA = Math.min(1, this.hurtVignette / 0.35) * 0.55;
         let a = Math.max(hurtA, beat);
         if (hpRatio < 0.25 && hpRatio > 0) a = Math.min(0.85, a * 1.25);
@@ -4235,12 +4237,12 @@ class Game {
         ctx.restore();
     }
 
-    // 连杀狂热全屏视觉反馈:高连击时屏幕边缘呈现动态金色/赤红烈焰光晕脉冲
-    _renderFrenzyVignette() {
+    // 连杀狂热全屏视觉反馈:高连击时屏幕边缘呈现动态金色/赤红烈焰光晕脉冲(全屏视口空间)
+    _renderFrenzyVignette(scrW = this.width, scrH = this.height) {
         const p = this.player;
         if (!p || (p.combo || 0) < 15 || p.currentHealth <= 0) return;
         const ctx = this.ctx;
-        const W = this.width, H = this.height;
+        const W = scrW, H = scrH;
         const tier = (p.combo >= 50) ? 3 : (p.combo >= 30) ? 2 : 1;
         const t = this.bgTime;
         const pulse = 0.5 + 0.5 * Math.sin(t * (tier === 3 ? 8 : tier === 2 ? 6 : 4));
@@ -6658,7 +6660,8 @@ class Game {
         const def = GAME_EVENTS[ev.type];
         if (!def) return;
         const ctx = this.ctx;
-        const w = 230, h = 30, x = (this.width - w) / 2, y = 10;
+        const hudW = (this._hud && this._hud.w) ? this._hud.w : this.width;
+        const w = 230, h = 30, x = (hudW - w) / 2, y = 10;
         const pct = Math.max(0, Math.min(1, ev.timer / (ev.dur || 1)));
         ctx.save();
         ctx.fillStyle = 'rgba(10,16,28,0.78)';
@@ -6684,7 +6687,7 @@ class Game {
         ctx.font = 'bold 14px Arial';
         ctx.textAlign = 'center';
         ctx.textBaseline = 'middle';
-        ctx.fillText(label, this.width / 2, y + h / 2 - 2);
+        ctx.fillText(label, hudW / 2, y + h / 2 - 2);
         ctx.restore();
     }
 
@@ -7431,8 +7434,51 @@ class Game {
         this.freezeOverlay = { duration, cracks, corners };
     }
 
+    // 创建带容量保护与同心波纹防堆积节流的特效安全数组容器
+    _createSafeEffectsArray() {
+        const arr = [];
+        const rawPush = arr.push.bind(arr);
+        arr.push = (...items) => {
+            for (const fx of items) {
+                if (!fx) continue;
+                // 同屏特效总量硬上限 60 个,超限时淘汰最老瞬态特效
+                if (arr.length >= 60) {
+                    arr.shift();
+                }
+                // 对同位置同类型的密集冲击波(shockwave/ring)进行近距去重节流
+                if (fx.type === 'shockwave' || fx.type === 'ring') {
+                    const last = arr[arr.length - 1];
+                    if (last && last.type === fx.type && Math.hypot(last.x - fx.x, last.y - fx.y) < 18 && (last.maxTtl - last.ttl) < 0.06) {
+                        continue; // 间隔极短且几乎同位置的同心波纹直接合并
+                    }
+                }
+                rawPush(fx);
+            }
+            return arr.length;
+        };
+        return arr;
+    }
+
     addEffect(x, y, radius, color, duration) {
+        if (this.effects.length >= 60) this.effects.shift();
         this.effects.push({ x, y, radius, color, ttl: duration, maxTtl: duration });
+    }
+
+    // 安全添加特效:防止怪潮/魔王高频碰撞时同屏堆积数十道同心波纹导致严重掉帧
+    _pushEffect(fx) {
+        if (!fx || !fx.type) return;
+        // 同屏特效总量硬上限 60 个,超限时淘汰最老特效
+        if (this.effects.length >= 60) {
+            this.effects.shift();
+        }
+        // 对同位置同类型的密集冲击波(shockwave/ring)进行近距去重节流
+        if (fx.type === 'shockwave' || fx.type === 'ring') {
+            const last = this.effects[this.effects.length - 1];
+            if (last && last.type === fx.type && Math.hypot(last.x - fx.x, last.y - fx.y) < 15 && (last.maxTtl - last.ttl) < 0.05) {
+                return; // 间隔极短且几乎完全重合的同心波纹直接合并
+            }
+        }
+        this.effects.push(fx);
     }
 
     updateEffects() {
@@ -10137,7 +10183,7 @@ class Game {
         ctx.restore();
     }
 
-    _renderFreezeOverlay() {
+    _renderFreezeOverlay(scrW = this.width, scrH = this.height) {
         if (!this.freezeOverlay || this.enemyFreezeTimer <= 0) {
             this.freezeOverlay = null;
             return;
@@ -10151,7 +10197,7 @@ class Game {
         if (alpha <= 0) return;
 
         const ctx = this.ctx;
-        const W = this.width, H = this.height;
+        const W = scrW, H = scrH;
 
         ctx.save();
 
@@ -10320,23 +10366,25 @@ class Game {
 
         ctx.restore(); // 结束震动变换
 
-        // HUD 与菜单（在缩放坐标系内，无震动）
-        this._renderHurtVignette();
-        this._renderFrenzyVignette();
-        this._renderFreezeOverlay();
+        // 全屏视口空间覆盖层:受击红边暗角、连杀狂热火焰、全屏冰冻遮罩、魔王全屏红边与预告
+        this._withScreen((scrW, scrH) => {
+            this._renderHurtVignette(scrW, scrH);
+            this._renderFrenzyVignette(scrW, scrH);
+            this._renderFreezeOverlay(scrW, scrH);
+            this._renderBossAlertScreen(scrW, scrH);
+        });
+
+        // HUD 与操作控件(全屏 HUD 视口:居中/靠边自适应)
         this.skillButtons = [];
         this._withHud(() => {
             this._renderSkillHUD();
             this._renderDashButton();
             this._renderBuildButton();
             this._renderAimKnob();
-        });
-        this._renderBossHUD();
-        this._renderEventHUD();
-        this._renderStatsHUD();
-        this._renderGearHUD();
-        // 右上角按钮与连杀计数:触屏时贴屏幕角落按固定尺寸绘制,竖屏也够大好点
-        this._withHud(() => {
+            this._renderBossHUD();
+            this._renderEventHUD();
+            this._renderStatsHUD();
+            this._renderGearHUD();
             this._renderMuteButton();
             this._renderComboHUD();
         });
@@ -10436,16 +10484,29 @@ class Game {
         try { fn(); } finally { ctx.restore(); }
     }
 
+    // 屏幕空间覆盖层坐标系:逻辑 CSS 像素,铺满整个视口(消除横屏/带鱼屏下 800×600 的黑边切断感)
+    _withScreen(fn) {
+        const ctx = this.ctx;
+        ctx.save();
+        ctx.setTransform(this.dpr, 0, 0, this.dpr, 0, 0);
+        const scrW = this.canvas.width / this.dpr;
+        const scrH = this.canvas.height / this.dpr;
+        try { fn(scrW, scrH); } finally { ctx.restore(); }
+    }
+
     _withHud(fn) {
         const ctx = this.ctx;
         let h;
-        if (('ontouchstart' in window) || navigator.maxTouchPoints > 0) {
+        const isTouch = ('ontouchstart' in window) || navigator.maxTouchPoints > 0;
+        if (isTouch) {
             const k = this.canvas.width / (this.canvas.getBoundingClientRect().width || this.canvas.width);
             const sc = Math.max(this.gameScale, k * 1.35);
-            h = { s: sc, ox: 0, oy: 0, w: this.canvas.width / sc, h: this.canvas.height / sc, k };
+            h = { s: sc, ox: 0, oy: 0, w: this.canvas.width / sc, h: this.canvas.height / sc, k,
+                  padLeft: 16, padRight: 16 };
         } else {
             h = { s: this.gameScale, ox: this.gameOffsetX, oy: this.gameOffsetY, w: this.width, h: this.height,
-                  k: this.canvas.width / (this.canvas.getBoundingClientRect().width || this.canvas.width) };
+                  k: this.canvas.width / (this.canvas.getBoundingClientRect().width || this.canvas.width),
+                  padLeft: 10, padRight: 10 };
         }
         this._hud = h;
         ctx.save();
@@ -10567,10 +10628,11 @@ class Game {
         ctx.restore();
     }
 
-    // 左上角状态面板:命数 / 等级 / 经验 / 分数 / 时间(宽 100,不与顶部魔王血条重叠)
+    // 左上角状态面板:命数 / 等级 / 经验 / 分数 / 时间(自适应安全边距,不与顶部魔王血条重叠)
     _renderStatsHUD() {
         const ctx = this.ctx;
-        const x = 10, y = 10, w = 100, h = 56;
+        const x = (this._hud && this._hud.padLeft) ? this._hud.padLeft : 10;
+        const y = 10, w = 100, h = 56;
         ctx.save();
         ctx.fillStyle = 'rgba(0, 10, 20, 0.55)';
         roundRect(ctx, x, y, w, h, 8);
@@ -10638,7 +10700,8 @@ class Game {
         this.comboPop = Math.max(0, pop - 0.03);
         const color = n >= 100 ? '#ff4081' : n >= 50 ? '#ffab40' : n >= 25 ? '#ffd740' : '#fff59d';
         const ctx = this.ctx;
-        const rx = this._hud.w - 12, y = 48;
+        const padRight = (this._hud && this._hud.padRight) ? this._hud.padRight : 12;
+        const rx = this._hud.w - padRight, y = 48;
         ctx.save();
         ctx.globalAlpha = Math.max(0, Math.min(1, show.a));
         ctx.textAlign = 'right';
@@ -10687,7 +10750,8 @@ class Game {
     }
 
     _renderMuteButton() {
-        const size = 30, x = this._hud.w - size - 10, y = 10;
+        const padRight = (this._hud && this._hud.padRight) ? this._hud.padRight : 10;
+        const size = 30, x = this._hud.w - size - padRight, y = 10;
         this.muteButton = this._hudRect(x, y, size, size);
         const ctx = this.ctx;
         // 静音按钮左边的暂停按钮(触屏没有 P 键)
@@ -10723,13 +10787,47 @@ class Game {
         ctx.restore();
     }
 
+    // 魔王全屏警戒与红边(全屏视口空间,消除宽屏中央的红框)
+    _renderBossAlertScreen(scrW = this.width, scrH = this.height) {
+        const ctx = this.ctx;
+        if (this.bossState === 'warning') {
+            const alpha = 0.3 + 0.4 * Math.abs(Math.sin(this.bossWarningTimer * 8));
+            ctx.save();
+            ctx.strokeStyle = `rgba(255, 23, 68, ${alpha})`;
+            ctx.lineWidth = 10;
+            ctx.shadowBlur = 24;
+            ctx.shadowColor = '#ff1744';
+            ctx.strokeRect(5, 5, scrW - 10, scrH - 10);
+            // 中央大字
+            ctx.fillStyle = `rgba(255, 23, 68, ${alpha + 0.3})`;
+            ctx.font = `bold ${Math.min(56, scrW * 0.12)}px Arial`;
+            ctx.textAlign = 'center';
+            ctx.textBaseline = 'middle';
+            ctx.fillText('魔王降临', scrW / 2, scrH * 0.42);
+            ctx.fillStyle = '#ffffff';
+            ctx.font = `bold ${Math.min(72, scrW * 0.16)}px Arial`;
+            ctx.fillText(`${Math.ceil(this.bossWarningTimer)}`, scrW / 2, scrH * 0.55);
+            ctx.restore();
+        } else if (this.bossState === 'active' && this.boss) {
+            ctx.save();
+            // 全屏四周持续发光红边
+            ctx.strokeStyle = 'rgba(255, 23, 68, 0.5)';
+            ctx.lineWidth = 6;
+            ctx.shadowBlur = 18;
+            ctx.shadowColor = '#ff1744';
+            ctx.strokeRect(3, 3, scrW - 6, scrH - 6);
+            ctx.restore();
+        }
+    }
+
     _renderBossHUD() {
         const ctx = this.ctx;
+        const hudW = (this._hud && this._hud.w) ? this._hud.w : this.width;
         // 魔王将至:最后 15 秒在顶部显示倒计时小牌(有事件横幅时排在它下方),给玩家留出准备时间
         if (this.bossState === 'idle' && this.bossTimer > 0 && this.bossTimer <= 15) {
             const urgent = this.bossTimer <= 6;
             const a = urgent ? 0.55 + 0.45 * Math.abs(Math.sin(this.bgTime * 6)) : 0.85;
-            const w = 128, h = 22, x = (this.width - w) / 2, y = this.event ? 46 : 10;
+            const w = 128, h = 22, x = (hudW - w) / 2, y = this.event ? 46 : 10;
             ctx.save();
             ctx.fillStyle = 'rgba(30, 6, 12, 0.72)';
             roundRect(ctx, x, y, w, h, 11);
@@ -10743,46 +10841,20 @@ class Game {
             ctx.font = 'bold 12px Arial';
             ctx.textAlign = 'center';
             ctx.textBaseline = 'middle';
-            ctx.fillText(`💀 魔王将至  ${Math.ceil(this.bossTimer)}s`, this.width / 2, y + h / 2 + 1);
+            ctx.fillText(`💀 魔王将至  ${Math.ceil(this.bossTimer)}s`, hudW / 2, y + h / 2 + 1);
             ctx.restore();
             return;
         }
-        // 预告:红色边框 + 中央倒计时
-        if (this.bossState === 'warning') {
-            const alpha = 0.3 + 0.4 * Math.abs(Math.sin(this.bossWarningTimer * 8));
-            ctx.save();
-            ctx.strokeStyle = `rgba(255, 23, 68, ${alpha})`;
-            ctx.lineWidth = 12;
-            ctx.shadowBlur = 30;
-            ctx.shadowColor = '#ff1744';
-            ctx.strokeRect(6, 6, this.width - 12, this.height - 12);
-            // 中央大字
-            ctx.fillStyle = `rgba(255, 23, 68, ${alpha + 0.3})`;
-            ctx.font = `bold ${Math.min(56, this.width * 0.12)}px Arial`;
-            ctx.textAlign = 'center';
-            ctx.textBaseline = 'middle';
-            ctx.fillText('魔王降临', this.width / 2, this.height * 0.42);
-            ctx.fillStyle = '#ffffff';
-            ctx.font = `bold ${Math.min(72, this.width * 0.16)}px Arial`;
-            ctx.fillText(`${Math.ceil(this.bossWarningTimer)}`, this.width / 2, this.height * 0.55);
-            ctx.restore();
-            return;
-        }
-        // 活跃:顶部血条 + 进度条
+        // warning 状态红边与倒计时已移至 _renderBossAlertScreen(全屏视口)
+        if (this.bossState === 'warning') return;
+
+        // 活跃:顶部血条 + 进度条(注意:全屏红边已移至 _renderBossAlertScreen)
         if (this.bossState === 'active' && this.boss) {
             ctx.save();
-            // 持续红边
-            ctx.strokeStyle = 'rgba(255, 23, 68, 0.5)';
-            ctx.lineWidth = 6;
-            ctx.shadowBlur = 18;
-            ctx.shadowColor = '#ff1744';
-            ctx.strokeRect(3, 3, this.width - 6, this.height - 6);
-            ctx.shadowBlur = 0;
-
-            // 顶部魔王血条
-            const barW = this.width * 0.7;
+            // 顶部魔王血条:根据视口宽度自适应居中,两端留出安全余量
+            const barW = Math.min(560, Math.max(340, hudW * 0.58));
             const barH = 18;
-            const bx = (this.width - barW) / 2;
+            const bx = (hudW - barW) / 2;
             const by = 18;
             const hpRatio = this.boss.currentHealth / this.boss.maxHealth;
 
@@ -14614,6 +14686,7 @@ class EnemyBullet {
 
 window.addEventListener('load', () => {
     const game = new Game();
+    window.game = game;
     game.render();
     updateBestScoreLabel();
     updateProgressLabel();
