@@ -2017,7 +2017,16 @@ class Game {
                 }
                 break;
             case 'game_over':
-                this._showGameOver(msg.stats.time, msg.stats.score);
+                if (msg.stats) {
+                    if (msg.stats.bossRepels !== undefined) this.runBossRepels = msg.stats.bossRepels;
+                    if (msg.stats.elites !== undefined) this.eliteKills = msg.stats.elites;
+                    if (msg.stats.treasures !== undefined) this.treasureKills = msg.stats.treasures;
+                    if (msg.stats.affixElites !== undefined) this.affixEliteKills = msg.stats.affixElites;
+                    if (msg.stats.gearAwakened !== undefined) this.gearAwakenedCount = msg.stats.gearAwakened;
+                    if (msg.stats.voidRifts !== undefined) this.voidRiftClearedCount = msg.stats.voidRifts;
+                    if (msg.stats.diff !== undefined) this.diffMode = msg.stats.diff;
+                }
+                this._showGameOver(msg.stats ? msg.stats.time : 0, msg.stats ? msg.stats.score : 0);
                 this.isRunning = false;
                 if (this._rafId) { cancelAnimationFrame(this._rafId); this._rafId = null; }
                 break;
@@ -8354,13 +8363,6 @@ class Game {
 
     _warriorQ(skill) {
         if (this.player.rage < 30 && !this.player._freeCast) return;
-        if (this.player.spec === 'berserker') {
-            const hasTarget = this.enemies.some(e => e.currentHealth > 0) || (this.boss && this.bossState === 'active');
-            if (!hasTarget) {
-                this._showFloatingText('附近无目标', this.player.x + this.player.size / 2, this.player.y - 20, '#ffcc80');
-                return;
-            }
-        }
         if (!this.player._freeCast) this.player.rage -= 30;
         const dmg = this._computeAttackDamage(this.player.attack) * 1.5 * this._getSkillMultiplier(skill.level) * (this.player.warriorSkillDmgMult || 1);
         if (this.player.spec === 'berserker') { this._warriorWhirl(skill, dmg); skill.cooldown = skill.maxCooldown; return; }
@@ -9116,11 +9118,12 @@ class Game {
                 this.player.shield = Math.min(cap, (this.player.shield || 0) + overflow);
             }
         }
-        this.player.gainRage(20);
-        if (this.player.bloodRageStacks !== undefined && this.player.acquiredTalents && this.player.acquiredTalents.some(t => t.id === 'bloodRage')) {
-            this.player.bloodRageStacks = Math.min(10, (this.player.bloodRageStacks || 0) + 1);
+        const killer = this._actingAs || this.player;
+        if (killer && killer.gainRage) killer.gainRage(20);
+        if (killer.bloodRageStacks !== undefined && killer.acquiredTalents && killer.acquiredTalents.some(t => t.id === 'bloodRage')) {
+            killer.bloodRageStacks = Math.min(10, (killer.bloodRageStacks || 0) + 1);
         }
-        if (this.player.gainUltCharge) this.player.gainUltCharge(6);
+        if (killer && killer.gainUltCharge) killer.gainUltCharge(6);
         // 单人守护天使绝境反扑:绝境期间击杀敌人免死复苏(凤凰座星盘强化:Lv2只需1杀,Lv3满血复苏!)
         if (this.player.guardianActive) {
             this.player.guardianKills = (this.player.guardianKills || 0) + 1;
@@ -9604,9 +9607,22 @@ class Game {
     
     showPotentialMenu() {
         if (this.player.potentialPoints > 0) {
+            const choices = this._rollTalentChoices(3);
+            if (!choices || choices.length === 0) {
+                // 天赋池已全满:自动将剩余潜能点折算为分数与满血奖励,防止菜单白屏死锁
+                const pts = this.player.potentialPoints;
+                this.player.potentialPoints = 0;
+                this.score += pts * 500 * (this.scoreMult || 1);
+                this.player.currentHealth = this.player.maxHealth;
+                this._showFloatingText(`⭐ 天赋已全满! 潜能转化为 +${pts * 500} 分与满血`, this.width / 2, this.height * 0.4, '#ffd700');
+                Sound.play('levelUp');
+                this.isPaused = false;
+                this.showingPotentialMenu = false;
+                return;
+            }
             this.isPaused = true;
             this.showingPotentialMenu = true;
-            this.currentTalentChoices = this._rollTalentChoices(3);
+            this.currentTalentChoices = choices;
             this._talentDealT = performance.now();
         }
     }
@@ -10052,9 +10068,22 @@ class Game {
     endGame() {
         this.isRunning = false;
         if (this._rafId) { cancelAnimationFrame(this._rafId); this._rafId = null; }
-        // Host 广播游戏结束
+        // Host 广播游戏结束(携带完整对局战绩,保障客机也能正确达成成就与解锁外观)
         if (this.mpMode === 'host' && this.mpWs && this.mpWs.readyState === WebSocket.OPEN) {
-            this.mpWs.send(JSON.stringify({ type: 'game_over', stats: { time: Math.floor(this.gameTime), score: this.score } }));
+            this.mpWs.send(JSON.stringify({
+                type: 'game_over',
+                stats: {
+                    time: Math.floor(this.gameTime),
+                    score: this.score,
+                    bossRepels: this.runBossRepels || 0,
+                    elites: this.eliteKills || 0,
+                    treasures: this.treasureKills || 0,
+                    affixElites: this.affixEliteKills || 0,
+                    gearAwakened: this.gearAwakenedCount || 0,
+                    voidRifts: this.voidRiftClearedCount || 0,
+                    diff: this.diffMode
+                }
+            }));
         }
         this._showGameOver(Math.floor(this.gameTime), this.score);
     }
@@ -14315,9 +14344,12 @@ class BlockBoss {
             } else {
                 damage -= this.barrier;
                 this.barrier = 0;
-                // 护盾破碎:触发 2.5 秒力竭硬直与破盾虚弱
+                // 护盾破碎:触发 2.5 秒力竭硬直与破盾虚弱,立即打断正在蓄力/释放的致命招式
                 this.vulnerableTimer = 2.5;
                 this.stunTimer = 2.5;
+                this.atk = null;
+                this.atkPhase = 0;
+                this.atkTimer = 0;
                 Sound.play('bomb');
             }
         }
