@@ -1762,7 +1762,9 @@ class Game {
         if (!this.isRunning) {
             this.isRunning = true;
             this.isPaused = false;
-            this.diffMode = this.diffPref;
+            if (this.diffMode !== 'abyss') {
+                this.diffMode = this.diffPref;
+            }
             this._initRunProgress();
             this._lastFrameTime = performance.now();
             this._frameAccum = 0;
@@ -7877,17 +7879,15 @@ class Game {
             if (p._relicThunderCount === 0) {
                 const tx = target.x + target.size / 2, ty = target.y + target.size / 2;
                 const boltDmg = p.attack * 1.2;
-                this.pendingActions.push({ delay: 0.05, fn: () => {
-                    p._relicThunderActive = true;
-                    try {
-                        this._hitAround(tx, ty, 80, boltDmg);
-                    } finally {
-                        p._relicThunderActive = false;
-                    }
-                    this.effects.push({ type: 'shockwave', x: tx, y: ty, radius: 6, maxRadius: 80, color: '#ffe14d', ttl: 0.3, maxTtl: 0.3 });
-                    this.effects.push({ type: 'lightning', pts: [[tx, ty - 120], [tx, ty]], color: '#ffe14d', ttl: 0.18, maxTtl: 0.18 });
-                    this.spawnParticles(tx, ty, '#fff59d', 10, 1.5, 4, 2, 4, 0.03);
-                }});
+                p._relicThunderActive = true;
+                try {
+                    this._hitAround(tx, ty, 80, boltDmg);
+                } finally {
+                    p._relicThunderActive = false;
+                }
+                this.effects.push({ type: 'shockwave', x: tx, y: ty, radius: 6, maxRadius: 80, color: '#ffe14d', ttl: 0.3, maxTtl: 0.3 });
+                this.effects.push({ type: 'lightning', pts: [[tx, ty - 120], [tx, ty]], color: '#ffe14d', ttl: 0.18, maxTtl: 0.18 });
+                this.spawnParticles(tx, ty, '#fff59d', 10, 1.5, 4, 2, 4, 0.03);
             }
         }
         // 智慧基石「时空裂隙 / 奥术异化」(iK):命中附加基于法力上限的魔法裂解真实伤害
