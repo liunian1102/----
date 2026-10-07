@@ -5809,7 +5809,7 @@ class Game {
             for (const k of keys) { if ((r -= w[k]) < 0) { atk = k; break; } }
             b.atk = b.lastAtk = atk;
             b.atkPhase = 0;
-            b.atkDur = b.atkTimer = { charge: 0.8, ring: 0.65, slam: 0.95, laser: 0.95, summon: 0.85, cross: 1.1 }[atk] * speedUp;
+            b.atkDur = b.atkTimer = { charge: 0.95, ring: 0.8, slam: 1.1, laser: 1.15, summon: 1.0, cross: 1.3 }[atk] * speedUp;
             b.atkAngle = atk === 'ring' || atk === 'summon' || atk === 'cross' ? Math.random() * Math.PI * 2 : Math.atan2(tcy - bcy, tcx - bcx);
             b.atkSweep = Math.random() < 0.5 ? 1 : -1;
             return;
@@ -9454,6 +9454,11 @@ class Game {
             this.effects.push({ type: 'floatText', x: cx, y: cy - 26, text: `${n} 连杀! +${Math.round(n * 5 * (this.scoreMult || 1))}`,
                                 color: n >= 100 ? '#ff4081' : n >= 50 ? '#ffab40' : '#ffd740', ttl: 1.1, maxTtl: 1.1, size: n >= 50 ? 20 : 16 });
             this.effects.push({ type: 'shockwave', x: cx, y: p.y + p.size / 2, radius: 8, maxRadius: 70, color: '#ffd740', ttl: 0.35, maxTtl: 0.35 });
+            // 里程碑视听强化反馈: 顿帧 + 屏幕轻微脉冲震颤
+            if (p === this.player) {
+                this.hitStop = Math.max(this.hitStop, n >= 50 ? 0.08 : 0.04);
+                this.screenShake = Math.max(this.screenShake, n >= 50 ? 0.22 : 0.12);
+            }
         }
         return 1 + Math.min(0.5, Math.floor(n / 10) * 0.1);
     }
