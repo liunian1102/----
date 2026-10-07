@@ -7947,7 +7947,7 @@ class Game {
         return t !== this.boss && t.currentHealth <= 0;
     }
 
-    // 以 (cx,cy) 为圆心对范围内敌人(含魔王)造成伤害,返回命中数
+    // 以 (cx,cy) 为圆心对范围内敌人(含魔王)与环境危险物造成伤害,返回命中数
     _hitAround(cx, cy, range, dmg, onHit) {
         let hits = 0;
         const list = this.enemies.filter(e => Math.hypot(e.x + e.size / 2 - cx, e.y + e.size / 2 - cy) <= range + e.size / 2);
@@ -7962,6 +7962,14 @@ class Game {
             if (onHit) onHit(b);
             this._dealDamage(b, dmg);
             hits++;
+        }
+        // 范围攻击对环境危险物(高爆易燃桶/电浆水晶)判定支持,消除近战职业无法打桶引爆缺陷
+        if (this.hazards && this.hazards.length) {
+            const hazList = this.hazards.filter(h => Math.hypot(h.x - cx, h.y - cy) <= range + (h.size || 28) / 2);
+            for (const h of hazList) {
+                this._damageHazard(h, dmg);
+                hits++;
+            }
         }
         return hits;
     }
@@ -8382,6 +8390,14 @@ class Game {
             const by = this.boss.y + this.boss.size / 2;
             if (Math.sqrt((bx - pcx) ** 2 + (by - pcy) ** 2) <= range + this.boss.size / 2) {
                 this._dealDamage(this.boss, dmg);
+            }
+        }
+        // 环境危险物(易燃桶/水晶)在斩击范围内扣减耐久并引爆
+        if (this.hazards && this.hazards.length) {
+            for (const h of this.hazards) {
+                if (Math.hypot(h.x - pcx, h.y - pcy) <= range + (h.size || 28) / 2) {
+                    this._damageHazard(h, dmg);
+                }
             }
         }
         this.effects.push({ type: 'ring', x: pcx, y: pcy, radius: range, color: '#ff6030', ttl: 0.5, maxTtl: 0.5, rotation: 0, rotSpeed: 4 });
@@ -8919,13 +8935,15 @@ class Game {
         }
     }
 
-    // 圣骑士普攻「圣锤」:砸向身边的敌人,每命中一个回复 3 信念;审判者伤害 +50%,觉醒后每第 4 锤召唤圣光柱
+    // 圣骑士普攻「圣锤」:砸向身边的敌人与危险物,每命中一个回复 3 信念;审判者伤害 +50%,觉醒后每第 4 锤召唤圣光柱
     _paladinHammer() {
         const p = this.player;
         const pcx = p.x + p.size / 2, pcy = p.y + p.size / 2;
         const range = this._aoe(75);
         const near = this._findClosestTarget();
-        if (!near || Math.hypot(near.x + near.size / 2 - pcx, near.y + near.size / 2 - pcy) > range + near.size / 2) return;
+        const nearHazard = (this.hazards || []).find(h => Math.hypot(h.x - pcx, h.y - pcy) <= range + (h.size || 28) / 2);
+        const nearEnemy = (near && Math.hypot(near.x + near.size / 2 - pcx, near.y + near.size / 2 - pcy) <= range + near.size / 2);
+        if (!nearEnemy && !nearHazard) return;
         let dmg = this._computeAttackDamage(p.attack) * 0.9 * (p.autoAttackDmgMult || 1) * (p.spec === 'crusader' ? 1.5 : 1);
         // 守护者「以盾为锤」:越坦打得越疼
         if (p.spec === 'protector') dmg += p.maxHealth * 0.03 + p.shield * 0.3;
@@ -8981,6 +8999,15 @@ class Game {
             if (Math.sqrt(dx * dx + dy * dy) <= range + this.boss.size / 2) {
                 this._dealDamage(this.boss, baseDmg);
                 hit = true;
+            }
+        }
+        // 范围内的环境危险物(易燃桶/水晶)吃近战普通挥砍伤害
+        if (this.hazards && this.hazards.length) {
+            for (const h of this.hazards) {
+                if (Math.hypot(h.x - pcx, h.y - pcy) <= range + (h.size || 28) / 2) {
+                    this._damageHazard(h, baseDmg);
+                    hit = true;
+                }
             }
         }
         // 视觉:挥砍光环(浅红色弧)
