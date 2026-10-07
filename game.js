@@ -560,7 +560,10 @@ const ACHIEVEMENTS = [
     { id: 'easyClear',  icon: '🌱', name: '小试牛刀', desc: '轻松难度下生存 180 秒',      check: r => r.diff === 'easy' && r.time >= 180 },
     { id: 'hard180',    icon: '😈', name: '噩梦行者', desc: '噩梦难度下生存 180 秒',      check: r => r.diff === 'hard' && r.time >= 180 },
     { id: 'hardBoss',   icon: '☠', name: '噩梦屠魔', desc: '噩梦难度下击退方块大魔王',    check: r => r.diff === 'hard' && r.bossRepels >= 1 },
-    { id: 'total20k',   icon: '💎', name: '积少成多', desc: '累计得分 20000',            check: (r, p) => p.totalScore + r.score >= 20000 }
+    { id: 'total20k',   icon: '💎', name: '积少成多', desc: '累计得分 20000',            check: (r, p) => p.totalScore + r.score >= 20000 },
+    // 构筑与连杀专精新成就
+    { id: 'resonanceMaster', icon: '✨', name: '符文共鸣', desc: '单局激活一次技能槽符文共鸣', check: (r, p) => (r.resonanceCount || 0) >= 1 },
+    { id: 'comboMaster',     icon: '🔥', name: '百连绝杀', desc: '单局达成 100 连杀',         check: r => (r.maxCombo || 0) >= 100 }
 ];
 
 // 玩家方块外观;need 为解锁条件:累计分数(totalScore)或某个成就(ach)
@@ -570,7 +573,8 @@ const SKINS = [
     { id: 'frost',   name: '寒霜', c1: '#b3e5fc', c2: '#0277bd', glow: '#40c4ff', stroke: 'rgba(120,210,255,0.7)', need: { ach: 'boss1' } },
     { id: 'amethyst',name: '紫晶', c1: '#e1bee7', c2: '#6a1b9a', glow: '#ce93d8', stroke: 'rgba(206,147,216,0.7)', need: { totalScore: 10000 } },
     { id: 'gold',    name: '黄金', c1: '#fff59d', c2: '#c79100', glow: '#ffd600', stroke: 'rgba(255,214,0,0.75)',  need: { ach: 'survive300' } },
-    { id: 'prism',   name: '幻彩', prism: true,                                       glow: '#ffffff', stroke: 'rgba(255,255,255,0.7)', need: { ach: 'allClasses' } }
+    { id: 'prism',   name: '幻彩', prism: true,                                       glow: '#ffffff', stroke: 'rgba(255,255,255,0.7)', need: { ach: 'allClasses' } },
+    { id: 'nebula',  name: '星霓', c1: '#84ffff', c2: '#7c4dff', glow: '#b388ff', stroke: 'rgba(179,136,255,0.8)', need: { ach: 'resonanceMaster' } }
 ];
 
 const Progress = {
@@ -4021,10 +4025,12 @@ class Game {
     }
 
     _runStats() {
+        const resCount = GEM_SLOTS.filter(s => !!this._gemResonance(this.player, s)).length;
         return { score: this.score, time: Math.floor(this.gameTime), level: this.level,
                  bossRepels: this.runBossRepels || 0, cls: this.player.class, dodges: this.player.dodgeCount || 0,
                  treasures: this.treasureKills || 0, elites: this.eliteKills || 0, diff: this.diffMode,
-                 affixElites: this.affixEliteKills || 0, gearAwakened: this.gearAwakenedCount || 0, voidRifts: this.voidRiftClearedCount || 0 };
+                 affixElites: this.affixEliteKills || 0, gearAwakened: this.gearAwakenedCount || 0, voidRifts: this.voidRiftClearedCount || 0,
+                 resonanceCount: resCount, maxCombo: this.player.maxCombo || 0 };
     }
 
     // 每 tick 调用(host/guest 都走):统计击退魔王,每 0.5s 检查一次成就,推进解锁提示
