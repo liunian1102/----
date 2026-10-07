@@ -431,16 +431,16 @@ const TREE_BASE_STATS = ['attack', 'maxHealth', 'defense', 'speed'];
 // 技能石(辅助宝石):颜色 = 属性系(红力量/绿敏捷/蓝智慧);val 为 1~3 级数值;slots 可镶嵌位置 a 普攻 / q / e
 const GEMS = {
     dmg:     { name: '附加伤害', icon: '⚔', color: '#ff5252', slots: 'aqe', val: [0.25, 0.35, 0.45], desc: v => `该技能伤害 +${fmtPct(v)}` },
-    leech:   { name: '生命偷取', icon: '❣', color: '#ff5252', slots: 'aqe', val: [0.03, 0.045, 0.06], desc: v => `该技能造成伤害的 ${fmtPct(v)} 转为生命` },
-    cull:    { name: '处决',     icon: '☠', color: '#ff5252', slots: 'aqe', val: [0.1, 0.13, 0.16], desc: v => `命中后生命低于 ${fmtPct(v)} 的敌人直接处决(精英减半,魔王无效)` },
+    leech:   { name: '生命偷取', icon: '❣', color: '#ff5252', slots: 'aqe', val: [0.03, 0.045, 0.06], desc: v => `该技能造成伤害的 ${fmtPct(v)} 转为生命(单次技能判定最多恢复上限 6%/8%/10% 最大生命)` },
+    cull:    { name: '处决',     icon: '☠', color: '#ff5252', slots: 'aqe', val: [0.08, 0.10, 0.12], desc: v => `命中后生命低于 ${fmtPct(v)} 的敌人直接处决(精英1/3,魔王无效)` },
     aoe:     { name: '范围扩大', icon: '◎', color: '#ff5252', slots: 'aqe', val: [0.2, 0.3, 0.4], desc: v => `范围 +${fmtPct(v)}(范围技能、近战普攻、溅射)` },
     ignite:  { name: '燃烧',     icon: '🔥', color: '#ff5252', slots: 'aqe', val: [0.3, 0.4, 0.5], desc: v => `命中点燃敌人 3 秒,每秒造成攻击力 ${fmtPct(v)} 的伤害` },
     multi:   { name: '多重投射', icon: '🔱', color: '#69f0ae', slots: 'a',   val: [0.75, 0.8, 0.85], desc: v => `远程普攻额外 +2 发投射物,每发伤害 ×${v}` },
     crit:    { name: '暴击强化', icon: '✷', color: '#69f0ae', slots: 'aqe', val: [0.15, 0.2, 0.25], desc: v => `该技能暴击率 +${fmtPct(v)}(暴击造成 2 倍伤害)` },
     poison:  { name: '剧毒',     icon: '☣', color: '#69f0ae', slots: 'aqe', val: [0.5, 0.75, 1], desc: v => `命中有 ${fmtPct(v)} 几率叠 1 层剧毒(最多 5 层)` },
     faster:  { name: '快速冷却', icon: '⏩', color: '#69f0ae', slots: 'aqe', val: [0.15, 0.2, 0.25], desc: v => `技能冷却 -${fmtPct(v)};镶在普攻上为攻速 +${fmtPct(v)}` },
-    echo:    { name: '回响',     icon: '🔁', color: '#40c4ff', slots: 'qe',  val: [0.5, 0.65, 0.8], desc: v => `释放后 0.35 秒自动再放一次,伤害 ×${v}(不耗资源)` },
-    freeze:  { name: '冰封',     icon: '❄', color: '#40c4ff', slots: 'aqe', val: [0.15, 0.2, 0.25], desc: v => `命中有 ${fmtPct(v)} 几率冻结敌人 1 秒` },
+    echo:    { name: '回响',     icon: '🔁', color: '#40c4ff', slots: 'qe',  val: [0.35, 0.45, 0.55], desc: v => `释放后 0.35 秒自动再放一次,伤害 ×${v}(不耗资源)` },
+    freeze:  { name: '冰封',     icon: '❄', color: '#40c4ff', slots: 'aqe', val: [0.15, 0.2, 0.25], desc: v => `命中有 ${fmtPct(v)} 几率冻结敌人(有冻结韧性递减保护)` },
     chain:   { name: '连锁闪电', icon: '⚡', color: '#40c4ff', slots: 'aqe', val: [0.2, 0.25, 0.3], desc: v => `命中有 ${fmtPct(v)} 几率放出闪电,弹射附近 2 个敌人(50% 伤害)` },
     explode: { name: '尸爆',     icon: '✺', color: '#40c4ff', slots: 'aqe', val: [0.2, 0.25, 0.3], desc: v => `该技能击杀的敌人爆炸,对周围造成其最大生命 ${fmtPct(v)} 的伤害` }
 };
@@ -1407,7 +1407,48 @@ class Game {
             { id: 'paladinHolyVow', name: '神圣誓约', icon: '✟', color: '#0d47a1', rarity: 'epic',
               desc: '防御 +25,攻击 -10(圣骑士专属)', stackable: false,
               applicable: g => g.player.class === 'paladin' && g.player.attack > 10,
-              apply: g => { g.player.defense += 25; g.player.attack = Math.max(5, g.player.attack - 10); } }
+              apply: g => { g.player.defense += 25; g.player.attack = Math.max(5, g.player.attack - 10); } },
+
+            // === 体型专精天赋卡(互斥)===
+            { id: 'titanPhysique', name: '泰坦之躯', icon: '🗿', color: '#8d6e63', rarity: 'rare',
+              desc: '体型 +35%,生命 +40%,防御 +8,范围 +25%;移速 -10%', stackable: false,
+              applicable: g => !g.player.bodyScaleChoice,
+              apply: g => {
+                  const p = g.player;
+                  p.bodyScaleChoice = 'titan';
+                  p.size = Math.round(p.size * 1.35);
+                  p.maxHealth = Math.round(p.maxHealth * 1.4);
+                  p.currentHealth = Math.min(p.maxHealth, p.currentHealth + Math.round(p.maxHealth * 0.4));
+                  p.defense += 8;
+                  p.speed = Math.max(2.5, p.speed * 0.9);
+                  p.tree = p.tree || {};
+                  p.tree.aoe = (p.tree.aoe || 0) + 0.25;
+              } },
+            { id: 'nimbleMini', name: '灵巧微缩', icon: '🕊', color: '#80cbc4', rarity: 'rare',
+              desc: '体型 -30%,移速 +15%,闪避率 +12%;攻击范围 -15%', stackable: false,
+              applicable: g => !g.player.bodyScaleChoice,
+              apply: g => {
+                  const p = g.player;
+                  p.bodyScaleChoice = 'mini';
+                  p.size = Math.round(p.size * 0.70);
+                  p.speed *= 1.15;
+                  p.tree = p.tree || {};
+                  p.tree.evade = (p.tree.evade || 0) + 0.12;
+                  p.tree.aoe = (p.tree.aoe || 0) - 0.15;
+              } },
+
+            // === 投射物防御层天赋===
+            { id: 'projDeflection', name: '偏折力场', icon: '🛡', color: '#4fc3f7', rarity: 'rare',
+              desc: '敌方投射物伤害 -35%,被子弹击中时震退周围敌人', stackable: false,
+              apply: g => {
+                  g.player.projDmgReduction = Math.min(0.7, (g.player.projDmgReduction || 0) + 0.35);
+              } },
+            { id: 'projWindWalk', name: '风行直觉', icon: '🎐', color: '#26a69a', rarity: 'rare',
+              desc: '对敌方投射物拥有 +30% 独立回避率,闪避后爆发加速 1.5 秒', stackable: false,
+              apply: g => {
+                  g.player.projEvade = Math.min(0.6, (g.player.projEvade || 0) + 0.30);
+                  g.player.windWalkOnEvade = true;
+              } }
         ];
     }
     
@@ -4890,7 +4931,13 @@ class Game {
         if (!p || !target || !(dmg > 0)) return;
         const slot = this._ctx ? this._ctx.slot : null;
         const leech = ((p.tree && p.tree.leech) || 0) + this._gv(p, slot, 'leech');
-        if (leech > 0 && p.currentHealth > 0) p.heal(dmg * leech);
+        if (leech > 0 && p.currentHealth > 0) {
+            // 生命偷取上限控制: 单次技能判定最多恢复玩家最大生命值的 6% / 8% / 10% (按宝石等级)
+            const gLeechLv = slot ? (this._gemMap(p)[slot].leech || 0) : 0;
+            const maxCapPct = gLeechLv > 0 ? (0.04 + gLeechLv * 0.02) : 0.08;
+            const maxHeal = p.maxHealth * maxCapPct;
+            p.heal(Math.min(maxHeal, dmg * leech));
+        }
         if (!slot || target.currentHealth <= 0) return;
         const g = this._gemMap(p)[slot];
         const isBoss = target === this.boss;
@@ -4898,15 +4945,22 @@ class Game {
         if (g.ignite) this._applyBurn(target, p, p.attack * GEMS.ignite.val[g.ignite - 1]);
         if (g.poison && Math.random() < GEMS.poison.val[g.poison - 1]) this._applyPoison(target, p, 1);
         if (g.freeze && Math.random() < GEMS.freeze.val[g.freeze - 1]) {
-            target.stunTimer = Math.max(target.stunTimer || 0, isBoss ? 0.3 : 1);
-            this.spawnParticles(tx, ty, '#b3e5fc', 4, 1, 3, 1, 3, 0.05);
+            // 冰封韧性与递减控制: 冻结韧性期内免疫连续冰封, 精英减半
+            if (!target.freezeImmunityTimer || target.freezeImmunityTimer <= 0) {
+                const dur = isBoss ? 0.3 : (target.elite ? 0.5 : 1.0);
+                target.stunTimer = Math.max(target.stunTimer || 0, dur);
+                target.freezeImmunityTimer = isBoss ? 1.0 : (target.elite ? 2.5 : 1.5);
+                this.spawnParticles(tx, ty, '#b3e5fc', 4, 1, 3, 1, 3, 0.05);
+            }
         }
         // 连锁闪电晚几帧再放:调用方可能正按下标遍历 enemies,不能在这里打死别的敌人
         if (g.chain && Math.random() < GEMS.chain.val[g.chain - 1]) {
             const cd = dmg * 0.5;
             this.pendingActions.push({ delay: 0.05, ctx: null, player: p, fn: () => this._gemChain(target, tx, ty, cd) });
         }
-        if (g.cull && !isBoss && target.currentHealth < target.maxHealth * GEMS.cull.val[g.cull - 1] * (target.elite ? 0.5 : 1)) {
+        // 处决: 普通怪 8%/10%/12%, 精英怪阈值缩减为 1/3, 魔王无效
+        const cullThreshold = GEMS.cull.val[g.cull - 1] * (target.elite ? 0.33 : 1.0);
+        if (g.cull && !isBoss && target.currentHealth < target.maxHealth * cullThreshold) {
             target.currentHealth = 0;
             this._showFloatingText('处决', tx, target.y - 10, '#ff8a80');
             const idx = this.enemies.indexOf(target);
@@ -6758,6 +6812,7 @@ class Game {
         for (let i = this.enemies.length - 1; i >= 0; i--) {
             const e = this.enemies[i];
             e.applyKnockback(this.width, this.height);
+            if (e.freezeImmunityTimer > 0) e.freezeImmunityTimer -= DT;
             if (this.enemyFreezeTimer <= 0) {
                 // 联机时每个敌人追离它最近的存活玩家,不再只盯房主
                 const t = this._nearestPlayer(e.x, e.y);
@@ -6934,10 +6989,34 @@ class Game {
     
     updateItems() {
         this._magnetItems();
+        this._mergeNearbyItems();
         for (let i = this.items.length - 1; i >= 0; i--) {
             this.items[i].update();
             if (this.items[i].duration <= 0) {
                 this.items.splice(i, 1);
+            }
+        }
+    }
+
+    // 道具同类聚合: 落地后局部区域内若有相同的普通消耗品(如药水、经验书、雪花、炸弹), 融合成强化高阶道具
+    _mergeNearbyItems() {
+        const stackables = ['potion', 'exp_book', 'snowflake', 'bomb'];
+        for (let i = 0; i < this.items.length; i++) {
+            const a = this.items[i];
+            if (!a || a.landTimer > 0 || !stackables.includes(a.type) || (a.stackCount || 1) >= 4) continue;
+            for (let j = this.items.length - 1; j > i; j--) {
+                const b = this.items[j];
+                if (!b || b.landTimer > 0 || b.type !== a.type) continue;
+                const dist = Math.hypot(a.x - b.x, a.y - b.y);
+                if (dist <= 75) {
+                    a.stackCount = (a.stackCount || 1) + (b.stackCount || 1);
+                    a.duration = Math.max(a.duration, b.duration);
+                    a.maxDuration = Math.max(a.maxDuration, b.maxDuration);
+                    // 融合特效
+                    const mx = (a.x + b.x) / 2 + a.size / 2, my = (a.y + b.y) / 2 + a.size / 2;
+                    this.spawnParticles(mx, my, a.color, 8, 1, 3, 1, 2, 0.03);
+                    this.items.splice(j, 1);
+                }
             }
         }
     }
@@ -7061,6 +7140,14 @@ class Game {
                     this.player.hurtCooldown = 0.6 + (this.player.hurtCooldownBonus || 0);
                     this.player.gainRage(15 + (this.player.rageOnHurtBonus || 0));
                     this.spawnHitParticles(this.player.x + this.player.size / 2, this.player.y + this.player.size / 2, '#ff9800', 8);
+                    // 偏折力场: 受子弹击中时产生冲击波震开周围小怪
+                    if (this.player.projDmgReduction > 0) {
+                        const px = this.player.x + this.player.size / 2, py = this.player.y + this.player.size / 2;
+                        this.effects.push({ type: 'shockwave', x: px, y: py, radius: 10, maxRadius: 70, color: '#4fc3f7', ttl: 0.25, maxTtl: 0.25 });
+                        this._hitAround(px, py, 70, 0, e => {
+                            this._knockbackFrom(e, px, py, 4.5);
+                        });
+                    }
                     this._checkLocalDeath();
                 }
                 this.enemyBullets.splice(i, 1);
@@ -7355,13 +7442,14 @@ class Game {
         }
 
         let label = '';
+        const stacks = item.stackCount || 1;
         switch (item.type) {
             case 'potion': {
                 const p = this.player;
                 const oldHp = p.currentHealth;
                 const isDeathContract = p.greedContract === 'death';
                 const ht = p.tree && p.tree.healTaken;
-                const rawHeal = 50 * (ht ? Math.max(0, 1 + ht) : 1);
+                const rawHeal = 50 * stacks * (ht ? Math.max(0, 1 + ht) : 1);
                 const hpMissing = Math.max(0, p.maxHealth - oldHp);
                 const actualHeal = isDeathContract ? 0 : Math.min(hpMissing, rawHeal);
                 if (!isDeathContract) {
@@ -7380,22 +7468,22 @@ class Game {
                 }
 
                 if (actualHeal > 0 && gainedShield > 0) {
-                    label = `+${Math.round(actualHeal)} HP`;
+                    label = `+${Math.round(actualHeal)} HP` + (stacks > 1 ? ` (×${stacks})` : '');
                     this._showFloatingText(`+${Math.round(gainedShield)} 护盾`, cx, cy - 24, '#80d8ff');
                 } else if (gainedShield > 0) {
-                    label = `+${Math.round(gainedShield)} 护盾`;
+                    label = `+${Math.round(gainedShield)} 护盾` + (stacks > 1 ? ` (×${stacks})` : '');
                 } else {
-                    label = `+${Math.round(actualHeal || rawHeal)} HP`;
+                    label = `+${Math.round(actualHeal || rawHeal)} HP` + (stacks > 1 ? ` (×${stacks})` : '');
                 }
                 break;
             }
             case 'snowflake':
-                this.freezeEnemies(5000);
-                label = '冻结 5s';
+                this.freezeEnemies(5000 + (stacks - 1) * 2000);
+                label = `冻结 ${5 + (stacks - 1) * 2}s`;
                 break;
             case 'bomb':
-                this.explodeBomb(this.player.x, this.player.y, 150);
-                label = '💥 清场';
+                this.explodeBomb(this.player.x, this.player.y, 150 + (stacks - 1) * 50);
+                label = stacks > 1 ? `💥 超级清场 (×${stacks})` : '💥 清场';
                 break;
             case 'heart':
                 this.life = Math.min(this.life + 1, this.maxLife);
@@ -7406,9 +7494,9 @@ class Game {
                 label = '无敌 10s';
                 break;
             case 'exp_book':
-                this.exp += 15;
+                this.exp += 15 * stacks;
                 this.checkLevelUp();
-                label = '+15 EXP';
+                label = `+${15 * stacks} EXP`;
                 break;
             default:
                 if (item.type.startsWith('gear_')) {
@@ -12352,6 +12440,11 @@ class Player {
         this.sockets = { a: [null, null, null], q: [null, null, null], e: [null, null, null] };
         this._buildVer = 0;             // 天赋/宝石/镶嵌变化计数,_gemMap 缓存据此失效
         this.lastHitInfo = null;        // 最近一次受击信息 {src, dmg}
+
+        // 投射物专精防御 & 体型偏好
+        this.projDmgReduction = 0;      // 敌方投射物减伤比例(如 0.35)
+        this.projEvade = 0;             // 敌方投射物独立闪避率(如 0.30)
+        this.bodyScaleChoice = null;    // 'titan'(泰坦之躯) | 'mini'(灵巧微缩)
     }
 
     // 冲刺实际冷却(天赋「疾风连击」减免;暗金遗物【时空怀表】额外缩减 18%;每日突变【狂暴极速】额外减半)
@@ -12423,11 +12516,14 @@ class Player {
         const frenzyMult = 1 + (this.frenzyTier || 0) * 0.025;
         if (this._frostSlowTimer > 0) this._frostSlowTimer -= DT;
         const frostSlow = (this._frostSlowTimer > 0) ? 0.7 : 1.0;
+        // 风行直觉闪避加速
+        if (this._windWalkTimer > 0) this._windWalkTimer -= DT;
+        const windWalkSpd = (this._windWalkTimer > 0) ? 1.25 : 1.0;
         // 战士终极奥义「诸神黄昏」:狂暴移速加成 +40%
         const ultSpd = (this.ultActiveTimer > 0 && this.class === 'warrior') ? 1.4 : 1.0;
         // 🌌 每日突变【狂暴极速】:移速提升 35%
         const mutSpd = (this.game && this.game.mutations && this.game.mutations.includes('hyper_frenzy')) ? 1.35 : 1.0;
-        const targetSpeed = this.speed * gearSpd * frenzyMult * frostSlow * ultSpd * mutSpd * (this.blessTimer > 0 ? Game.BLESS.speed : 1);
+        const targetSpeed = this.speed * gearSpd * frenzyMult * frostSlow * windWalkSpd * ultSpd * mutSpd * (this.blessTimer > 0 ? Game.BLESS.speed : 1);
 
         // 目标期望输入方向 (归一化矢量)
         let inX = 0, inY = 0;
@@ -12524,6 +12620,22 @@ class Player {
     takeDamage(damage, src = '其他伤害', pct = 0) {
         if (this.invincibleTimer > 0 || this.dashTimer > 0) return 0;
         const t = this.tree || {};
+
+        // 投射物与弹幕识别(敌方子弹或魔王激光)
+        const isProjectileHit = src === '敌方子弹' || src === '魔王激光';
+        if (isProjectileHit && this.projEvade > 0 && Math.random() < this.projEvade) {
+            this._evadeFx = true;
+            this.dodgeCount = (this.dodgeCount || 0) + 1;
+            if (this.game) {
+                this.game._showFloatingText('偏折!', this.x + this.size / 2, this.y - 10, '#00e5ff');
+                // 风行直觉: 闪避成功触发 1.5 秒加速
+                if (this.windWalkOnEvade) {
+                    this._windWalkTimer = 1.5;
+                }
+            }
+            return 0;
+        }
+
         // 天赋「疾风之舞」与暗金遗物【死神斗篷】(低血量闪避加成):几率完全闪避
         const reaperEvade = (this.relics && this.relics.includes('reaper_cloak') && this.currentHealth < this.maxHealth * 0.35) ? 0.25 : 0;
         const totalEvade = (t.evade || 0) + reaperEvade;
@@ -12540,6 +12652,10 @@ class Player {
         const def = this.defense * Math.max(0, 1 + (t.defPct || 0));
         // 防御最多抵掉 80%:堆防不会把后期敌人的伤害压到 1 点 (无基础攻击时不强行保底 1 点)
         let actualDamage = damage > 0 ? Math.max(1, damage * 0.2, damage - def - gearDef - flatReduction) : 0;
+        // 投射物百分比专有减伤
+        if (isProjectileHit && this.projDmgReduction > 0) {
+            actualDamage *= Math.max(0.1, 1 - this.projDmgReduction);
+        }
         const pctPart = pct > 0 ? this.maxHealth * pct : 0;
         actualDamage += pctPart;
         let mult = 1;
@@ -13857,14 +13973,14 @@ class Item {
         this.rarity = 'common';
 
         // 稀有度配置:寿命越短表示越稀有(应尽快拾取)
-        // 配色:普通绿、稀有蓝、史诗紫金
+        // 配色重构:药水翡翠绿、经验书琥珀金、雪花冰魄青白、炸弹暗铅黑(引线金)、红心心跳粉红、无敌流光金
         const cfg = {
-            potion:           { color: '#4CAF50', icon: '💊', rarity: 'common', duration: 15 },
-            exp_book:         { color: '#ff9800', icon: '📚', rarity: 'common', duration: 15 },
-            snowflake:        { color: '#2196F3', icon: '❄️', rarity: 'rare',   duration: 10 },
-            bomb:             { color: '#f44336', icon: '💣', rarity: 'rare',   duration: 10 },
-            heart:            { color: '#e91e63', icon: '❤️', rarity: 'epic',   duration: 6  },
-            potion_invicible: { color: '#9c27b0', icon: '⚡', rarity: 'epic',   duration: 5  }
+            potion:           { color: '#00e676', icon: '💊', rarity: 'common', duration: 15 },
+            exp_book:         { color: '#ffb300', icon: '📚', rarity: 'common', duration: 15 },
+            snowflake:        { color: '#00e5ff', icon: '❄️', rarity: 'rare',   duration: 10 },
+            bomb:             { color: '#37474f', icon: '💣', rarity: 'rare',   duration: 10 },
+            heart:            { color: '#ff4081', icon: '❤️', rarity: 'epic',   duration: 6  },
+            potion_invicible: { color: '#ffd700', icon: '⚡', rarity: 'epic',   duration: 5  }
         };
         // 限时装备:按 GEARS 配色,地上停留 12 秒
         this.gear = type.startsWith('gear_') ? type.slice(5) : null;
@@ -14076,22 +14192,62 @@ class Item {
         ctx.fill();
         ctx.shadowBlur = 0;
 
-        // 主体方块(稍微旋转感)
-        const grad = ctx.createRadialGradient(
-            this.x + this.size * 0.35, drawY + this.size * 0.35, 0,
-            cx, drawCy, this.size * 0.7
-        );
-        grad.addColorStop(0, `${this.color}ff`);
-        grad.addColorStop(1, `${this.color}88`);
-        ctx.fillStyle = grad;
-        roundRect(ctx, this.x, drawY, this.size, this.size, 8);
-        ctx.fill();
+        const isEquip = !!this.gear;
+        const rad = this.size * 0.52;
 
-        // 边框(警告时变红)
-        ctx.strokeStyle = warningFlash ? '#ff1744' : `${this.color}cc`;
-        ctx.lineWidth = warningFlash ? 2.5 : 1.5;
-        roundRect(ctx, this.x, drawY, this.size, this.size, 8);
-        ctx.stroke();
+        if (isEquip) {
+            // 限时装备:维持圆角方块基础形
+            const grad = ctx.createRadialGradient(
+                this.x + this.size * 0.35, drawY + this.size * 0.35, 0,
+                cx, drawCy, this.size * 0.7
+            );
+            grad.addColorStop(0, `${this.color}ff`);
+            grad.addColorStop(1, `${this.color}88`);
+            ctx.fillStyle = grad;
+            roundRect(ctx, this.x, drawY, this.size, this.size, 8);
+            ctx.fill();
+
+            ctx.strokeStyle = warningFlash ? '#ff1744' : `${this.color}cc`;
+            ctx.lineWidth = warningFlash ? 2.5 : 1.5;
+            roundRect(ctx, this.x, drawY, this.size, this.size, 8);
+            ctx.stroke();
+        } else {
+            // 普通消耗品(药水/经验书/炸弹/雪花/红心/无敌):全面去方块化,重构为悬浮圆盘徽章
+            // 地面椭圆柔和投影
+            ctx.save();
+            ctx.fillStyle = 'rgba(0, 0, 0, 0.25)';
+            ctx.beginPath();
+            ctx.ellipse(cx, (this.landTimer > 0 ? this.targetY : this.y) + this.size + 2, rad * 0.8, rad * 0.3, 0, 0, Math.PI * 2);
+            ctx.fill();
+            ctx.restore();
+
+            // 圆盘本体渐变
+            const diskGrad = ctx.createRadialGradient(
+                cx - rad * 0.3, drawCy - rad * 0.3, rad * 0.1,
+                cx, drawCy, rad
+            );
+            diskGrad.addColorStop(0, '#ffffff');
+            diskGrad.addColorStop(0.35, `${this.color}ee`);
+            diskGrad.addColorStop(1, `${this.color}88`);
+            ctx.fillStyle = diskGrad;
+            ctx.beginPath();
+            ctx.arc(cx, drawCy, rad, 0, Math.PI * 2);
+            ctx.fill();
+
+            // 双层发光圆形边框(警告时变红)
+            ctx.strokeStyle = warningFlash ? '#ff1744' : 'rgba(255, 255, 255, 0.85)';
+            ctx.lineWidth = warningFlash ? 2.5 : 1.5;
+            ctx.beginPath();
+            ctx.arc(cx, drawCy, rad, 0, Math.PI * 2);
+            ctx.stroke();
+
+            // 内部装饰细环
+            ctx.strokeStyle = `${this.color}cc`;
+            ctx.lineWidth = 1;
+            ctx.beginPath();
+            ctx.arc(cx, drawCy, rad * 0.72, 0, Math.PI * 2);
+            ctx.stroke();
+        }
 
         // 稀有度小标识(史诗在右上画小星星)
         if (this.rarity === 'epic') {
@@ -14101,7 +14257,7 @@ class Item {
             ctx.font = 'bold 10px Arial';
             ctx.textAlign = 'center';
             ctx.textBaseline = 'middle';
-            ctx.fillText('★', this.x + this.size - 2, drawY + 4);
+            ctx.fillText('★', cx + rad * 0.7, drawCy - rad * 0.7);
             ctx.shadowBlur = 0;
         }
         ctx.restore();
@@ -14134,10 +14290,10 @@ class Item {
             ctx.restore();
         }
 
-        // 图标
+        // 图标(放大 1.15 倍居中)
         ctx.save();
         ctx.globalAlpha = flicker;
-        ctx.font = '15px Arial';
+        ctx.font = '16px Arial';
         ctx.textAlign = 'center';
         ctx.textBaseline = 'middle';
         ctx.fillText(this.icon, cx, drawCy);
