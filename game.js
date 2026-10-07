@@ -442,7 +442,14 @@ const GEMS = {
     echo:    { name: '回响',     icon: '🔁', color: '#40c4ff', slots: 'qe',  val: [0.35, 0.45, 0.55], desc: v => `释放后 0.35 秒自动再放一次,伤害 ×${v}(不耗资源)` },
     freeze:  { name: '冰封',     icon: '❄', color: '#40c4ff', slots: 'aqe', val: [0.15, 0.2, 0.25], desc: v => `命中有 ${fmtPct(v)} 几率冻结敌人(有冻结韧性递减保护)` },
     chain:   { name: '连锁闪电', icon: '⚡', color: '#40c4ff', slots: 'aqe', val: [0.2, 0.25, 0.3], desc: v => `命中有 ${fmtPct(v)} 几率放出闪电,弹射附近 2 个敌人(50% 伤害)` },
-    explode: { name: '尸爆',     icon: '✺', color: '#40c4ff', slots: 'aqe', val: [0.2, 0.25, 0.3], desc: v => `该技能击杀的敌人爆炸,对周围造成其最大生命 ${fmtPct(v)} 的伤害` }
+    explode: { name: '尸爆',     icon: '✺', color: '#40c4ff', slots: 'aqe', val: [0.2, 0.25, 0.3], desc: v => `该技能击杀的敌人爆炸,对周围造成其最大生命 ${fmtPct(v)} 的伤害` },
+    // 新增 5 颗机制辅助宝石 (红绿蓝各 6 颗平衡)
+    stagger:   { name: '震荡猛击', icon: '🔨', color: '#ff5252', slots: 'aqe', val: [0.15, 0.20, 0.25], desc: v => `命中附带冲击波硬直,并使目标陷入 3 秒易伤(受伤害 +${fmtPct(v)})` },
+    bloodPact: { name: '以血为誓', icon: '🩸', color: '#ff5252', slots: 'qe',  val: [0.35, 0.45, 0.55], desc: v => `技能伤害 +${fmtPct(v)},施放消耗当前 4% 生命(不可致死)` },
+    fork:      { name: '分裂折射', icon: '🔀', color: '#69f0ae', slots: 'a',   val: [0.50, 0.60, 0.70], desc: v => `投射物命中首个敌人后分裂 2 颗次级子弹(造成 ${fmtPct(v)} 伤害)` },
+    momentum:  { name: '动能回馈', icon: '💨', color: '#69f0ae', slots: 'aqe', val: [0.40, 0.60, 0.80], desc: v => `击杀立即缩短冲刺 ${v}s 冷却,并获 2 秒 15% 移速爆发` },
+    vortex:    { name: '引力坍缩', icon: '🌀', color: '#40c4ff', slots: 'qe',  val: [0.30, 0.40, 0.50], desc: v => `技能中心生成 1.2s 黑洞聚拢周围敌人并减速 ${fmtPct(v)}` },
+    flux:      { name: '源力涌动', icon: '⚛', color: '#40c4ff', slots: 'qe',  val: [1, 2, 3],          desc: v => `命中返还职业专属资源(战士怒气/法师法力/刺客充能/圣骑信仰/弓手免耗)` }
 };
 const GEM_TYPES = Object.keys(GEMS);
 MP_ITEM_TYPES.push(...GEM_TYPES.map(t => 'gem_' + t));
@@ -466,7 +473,11 @@ function gemMisfit(id, slot, cls) {
     if (cls === 'mage' && slot === 'q') return g.slots.includes('a') ? '' : '对开关技能无效';
     if (!g.slots.includes(slot)) return slot === 'a' ? '只能镶在技能上' : '只能镶在普攻上';
     if (id === 'multi' && (cls === 'warrior' || cls === 'paladin')) return '近战普攻无效';
+    if (id === 'fork' && (cls === 'warrior' || cls === 'paladin')) return '近战普攻无效';
     if (id === 'echo' && ((cls === 'mage' && slot === 'q') || (cls === 'paladin' && slot === 'e'))) return '对该技能无效';
+    if (id === 'bloodPact' && (cls === 'mage' && slot === 'q')) return '对开关技能无效';
+    if (id === 'vortex' && (cls === 'mage' && slot === 'q')) return '对开关技能无效';
+    if (id === 'flux' && (cls === 'mage' && slot === 'q')) return '对开关技能无效';
     return '';
 }
 
@@ -4906,11 +4917,63 @@ class Game {
         return lv ? GEMS[id].val[lv - 1] : 0;
     }
 
-    // 伤害倍率:天赋(全伤害 / 技能 / 普攻 / 低血)× 宝石「附加伤害」
+    // 技能槽符文共鸣识别: 按槽位已镶嵌宝石颜色组合动态判定
+    _gemResonance(p, slot) {
+        if (!p || !slot) return null;
+        const n = this._socketCount(p, slot);
+        const map = this._gemMap(p);
+        const counts = map.counts || {};
+        const gems = [];
+        for (let i = 0; i < n; i++) {
+            const id = p.sockets[slot][i];
+            if (id && counts[id] && !gemMisfit(id, slot, p.class)) {
+                gems.push(GEMS[id]);
+            }
+        }
+        if (gems.length < 2) return null;
+        let red = 0, green = 0, blue = 0;
+        for (const g of gems) {
+            if (g.color === '#ff5252') red++;
+            else if (g.color === '#69f0ae') green++;
+            else if (g.color === '#40c4ff') blue++;
+        }
+        // 3孔终极共鸣
+        if (gems.length >= 3) {
+            if (red >= 1 && green >= 1 && blue >= 1) {
+                return { id: 'trinity', name: '三位一体', desc: '技能伤害 ×1.25, 全穿透, 命中附带三相星爆', tier: 3, color: '#e040fb' };
+            }
+            if (red >= 3) {
+                return { id: 'starCrush', name: '碎星天罚', desc: '无视 40% 防御, 对高血量(>75%)目标造成 35% 斩首重击', tier: 3, color: '#ff1744' };
+            }
+            if (green >= 3) {
+                return { id: 'phantomStep', name: '幻影瞬息', desc: '施放后下 2 次普攻必暴击, 冲刺距离 +25%', tier: 3, color: '#00e676' };
+            }
+            if (blue >= 3) {
+                return { id: 'timeCollapse', name: '时空湮灭', desc: '异常状态跳字附带 15% 范围溅射, 技能范围 +25%', tier: 3, color: '#00b0ff' };
+            }
+        }
+        // 2孔双色基础共鸣
+        if (red >= 2) {
+            return { id: 'breaker', name: '破阵之力', desc: '无视目标 25% 防御, 击退力度 +40%', tier: 2, color: '#ff5252' };
+        }
+        if (green >= 2) {
+            return { id: 'galeCombo', name: '疾风连击', desc: '施法后摇降低 40%, 施放有 20% 几率不进入冷却', tier: 2, color: '#69f0ae' };
+        }
+        if (blue >= 2) {
+            return { id: 'elementOverload', name: '元素超载', desc: '该技能引发的异常状态持续时长与跳数 +50%', tier: 2, color: '#40c4ff' };
+        }
+        return null;
+    }
+
+    // 伤害倍率:天赋(全伤害 / 技能 / 普攻 / 低血)× 宝石「附加伤害」× 以血为誓 × 共鸣加成
     _buildDmgMult(p, slot) {
         const t = p.tree || {};
         let m = 1 + (t.dmg || 0) + (slot === 'a' ? (t.autoDmg || 0) : slot ? (t.skillDmg || 0) : 0);
         if (t.lowLifeDmg && p.currentHealth < p.maxHealth * 0.5) m += t.lowLifeDmg;
+        const res = this._gemResonance(p, slot);
+        if (res && res.id === 'trinity') m *= 1.25;
+        const bloodPactVal = this._gv(p, slot, 'bloodPact');
+        if (bloodPactVal > 0) m *= (1 + bloodPactVal);
         return Math.max(0.1, m) * (1 + this._gv(p, slot, 'dmg'));
     }
 
@@ -4968,6 +5031,45 @@ class Game {
                 this.enemies.splice(idx, 1);
                 this.spawnHitParticles(tx, target.y + target.size / 2, target.color, 12);
                 this._onEnemyKilled(target);
+            }
+            return;
+        }
+
+        // 新增宝石命中效果
+        // 1. 震荡猛击 (stagger): 目标附加 3 秒易伤状态
+        if (g.stagger) {
+            target.staggerVulnerableTimer = 3;
+            target.staggerVulnerableBonus = GEMS.stagger.val[g.stagger - 1];
+            target.stunTimer = Math.max(target.stunTimer || 0, isBoss ? 0.15 : 0.4);
+            this.effects.push({ type: 'shockwave', x: tx, y: ty, radius: 5, maxRadius: 35, color: '#ff5252', ttl: 0.2, maxTtl: 0.2 });
+        }
+
+        // 2. 引力坍缩 (vortex): 技能中心生成 1.2 秒微型黑洞聚拢减速周围敌人
+        if (g.vortex) {
+            const vRadius = 130;
+            const vSlow = GEMS.vortex.val[g.vortex - 1];
+            this.effects.push({ type: 'holyAura', x: tx, y: ty, radius: vRadius, color: '#40c4ff', ttl: 1.2, maxTtl: 1.2, pulse: 4 });
+            for (const other of this.enemies) {
+                if (other.currentHealth <= 0) continue;
+                const dist = Math.hypot(other.x + other.size / 2 - tx, other.y + other.size / 2 - ty);
+                if (dist <= vRadius && dist > 10) {
+                    const pull = 3.5 * (1 - dist / vRadius);
+                    other.x += (tx - (other.x + other.size / 2)) / dist * pull;
+                    other.y += (ty - (other.y + other.size / 2)) / dist * pull;
+                    other.stunTimer = Math.max(other.stunTimer || 0, 0.2);
+                }
+            }
+        }
+
+        // 3. 源力涌动 (flux): 技能命中返还职业专属资源
+        if (g.flux) {
+            const lv = g.flux;
+            if (p.class === 'warrior') p.gainRage(2 + lv * 2);
+            else if (p.class === 'mage') p.mana = Math.min(p.maxMana, p.mana + 1 + lv);
+            else if (p.class === 'assassin') p.assassinCharge = Math.min(p.maxAssassinCharge, p.assassinCharge + 3 + lv * 2);
+            else if (p.class === 'paladin') p.faith = Math.min(p.maxFaith, p.faith + 2 + lv * 2);
+            else if (p.class === 'archer' && Math.random() < 0.25 * lv) {
+                p.arrows = Math.min(p.maxArrows, p.arrows + 1);
             }
         }
     }
@@ -5037,11 +5139,36 @@ class Game {
         if (!p.class) return;
         const skill = slot === 'q' ? p.skillQ : p.skillE;
         if (skill.cooldown > 0) return;
+
+        // 宝石「以血为誓」: 释放技能消耗当前 4% 生命(不可致死)
+        const bloodPactVal = this._gv(p, slot, 'bloodPact');
+        if (bloodPactVal > 0 && p.currentHealth > 1) {
+            const cost = Math.max(1, Math.floor(p.currentHealth * 0.04));
+            p.currentHealth = Math.max(1, p.currentHealth - cost);
+            this.effects.push({ type: 'shockwave', x: p.x + p.size / 2, y: p.y + p.size / 2, radius: 5, maxRadius: 30, color: '#ff1744', ttl: 0.2, maxTtl: 0.2 });
+        }
+
+        // 符文共鸣判断
+        const res = this._gemResonance(p, slot);
+
         this._withCtx(Game.CTX[slot], () => this._dispatchSkill(slot, skill));
         // 若部分职业技能未显式写 cooldown 则在此统一置冷却，防狂按并保障回响判定
         if (skill.cooldown <= 0 && !(p.class === 'mage' && slot === 'q')) {
             skill.cooldown = skill.maxCooldown || 3;
         }
+
+        // 符文共鸣【疾风连击】: 20% 几率免去冷却
+        if (res && res.id === 'galeCombo' && Math.random() < 0.20 && skill.cooldown > 0) {
+            skill.cooldown = 0;
+            this._showFloatingText('疾风连击!', p.x + p.size / 2, p.y - 30, '#69f0ae');
+        }
+
+        // 符文共鸣【幻影瞬息】: 施放后下 2 次普攻必暴击, 冲刺距离 +25%
+        if (res && res.id === 'phantomStep') {
+            p._phantomStepCrits = 2;
+            this._showFloatingText('幻影瞬息!', p.x + p.size / 2, p.y - 30, '#00e676');
+        }
+
         const echo = skill.cooldown > 0 && this._gv(p, slot, 'echo');
         if (echo) this.pendingActions.push({ delay: 0.35, ctx: null, fn: () => this._echoCast(slot, echo) });
     }
@@ -7188,6 +7315,23 @@ class Game {
                     } else {
                         this.spawnHitParticles(this.enemies[j].x + this.enemies[j].size / 2, this.enemies[j].y + this.enemies[j].size / 2, '#ffaa00', 4);
                     }
+                    // 技能石「分裂折射」:首个敌人命中后分叉发射 2 颗次级子弹(不再继续分裂)
+                    const forkVal = !proj._forked && this._gv(proj.owner, 'a', 'fork');
+                    if (forkVal > 0) {
+                        const baseAng = Math.atan2(proj.dy, proj.dx);
+                        const curSpd = Math.hypot(proj.dx, proj.dy) || 7;
+                        const subDmg = (proj.damage || 15) * forkVal;
+                        for (const sign of [-1, 1]) {
+                            const fAng = baseAng + sign * 0.35; // 偏移约 20 度
+                            const fProj = new Projectile(proj.x, proj.y, Math.cos(fAng) * curSpd, Math.sin(fAng) * curSpd, subDmg);
+                            fProj.owner = proj.owner;
+                            fProj._forked = true;
+                            fProj.ctx = null;
+                            fProj.setKind(proj.kind || 0);
+                            this.projectiles.push(fProj);
+                        }
+                    }
+
                     // 有限穿透 → 计数,用完才销毁;无穿透 → 立即销毁
                     if (proj.pierceRemaining && proj.pierceRemaining > 0) {
                         proj.pierceRemaining--;
@@ -7911,8 +8055,36 @@ class Game {
         const ctx = this._ctx, slot = ctx ? ctx.slot : null;
         const t = p.tree || {};
         dmg *= this._buildDmgMult(p, slot) * (ctx ? ctx.mult : 1);
+
+        // 符文共鸣加成:
+        const res = this._gemResonance(p, slot);
+        if (res) {
+            // 【碎星天罚】(3红): 对高血量(>75%)目标造成 35% 斩首重击
+            if (res.id === 'starCrush' && target.currentHealth > target.maxHealth * 0.75) {
+                dmg *= 1.35;
+                this._showFloatingText('斩首!', target.x + target.size / 2, target.y - 12, '#ff1744');
+            }
+            // 【三位一体】: 命中三色星爆反馈
+            if (res.id === 'trinity' && Math.random() < 0.4) {
+                const tx = target.x + target.size / 2, ty = target.y + target.size / 2;
+                this.spawnParticles(tx, ty, '#ff5252', 2, 1, 3, 1, 3, 0.03);
+                this.spawnParticles(tx, ty, '#69f0ae', 2, 1, 3, 1, 3, 0.03);
+                this.spawnParticles(tx, ty, '#40c4ff', 2, 1, 3, 1, 3, 0.03);
+            }
+        }
+
+        // 敌人陷入易伤状态 (stagger): 受全伤害增加
+        if (target.staggerVulnerableTimer > 0) {
+            dmg *= (1 + (target.staggerVulnerableBonus || 0.15));
+        }
+
         let crit = (t.crit || 0) + this._gv(p, slot, 'crit');
         if (p.class === 'assassin') crit += 0.2 + (p.spec === 'shadow' ? 0.15 : 0);
+        // 【幻影瞬息】共鸣: 下 2 次普攻必暴击
+        if (slot === 'a' && p._phantomStepCrits > 0) {
+            crit = 1.0;
+            p._phantomStepCrits--;
+        }
         // 贪婪诅咒【狂风契】:暴击率额外 +20%,暴击伤害额外 +60%
         if (p.greedContract === 'gale') crit += 0.20;
         // 🌟 星图天赋【天箭座】:暴击率额外 +5%~15%
@@ -9216,6 +9388,14 @@ class Game {
                 this.effects.push({ type: 'shockwave', x: cx, y: cy, radius: 6, maxRadius: r, color: '#b388ff', ttl: 0.3, maxTtl: 0.3 });
                 this.spawnParticles(cx, cy, '#d1c4e9', 10, 1.5, 4, 2, 4, 0.05);
             } });
+        }
+        // 技能石「动能回馈」:当前技能位击杀立即缩短冲刺冷却,并获 2 秒移速加成
+        const momentumVal = e && this._ctx && this._gv(this.player, this._ctx.slot, 'momentum');
+        if (momentumVal > 0) {
+            const p = this.player;
+            p.dashCooldown = Math.max(0, p.dashCooldown - momentumVal);
+            p._windWalkTimer = Math.max(p._windWalkTimer || 0, 2.0);
+            this.effects.push({ type: 'shockwave', x: p.x + p.size / 2, y: p.y + p.size / 2, radius: 5, maxRadius: 40, color: '#69f0ae', ttl: 0.2, maxTtl: 0.2 });
         }
         if (this.player.lifeStealPerKill) {
             this.player.heal(this.player.lifeStealPerKill);
@@ -11796,6 +11976,8 @@ class Game {
                 : p.class === 'mage' && slot === 'q' ? '魔力涌注 · 开启时作用于普攻'
                 : SKILL_NAMES[p.class][slot];
             const n = this._socketCount(p, slot);
+            const res = this._gemResonance(p, slot);
+            const resBadge = res ? `<span class="gem-res-badge" style="background:${res.color}22;color:${res.color};border:1px solid ${res.color}88" title="${res.desc}">✨ ${res.name}</span>` : '';
             const socks = [];
             for (let i = 0; i < 3; i++) {
                 if (i > 0) socks.push('<span class="gem-link"></span>');
@@ -11809,7 +11991,7 @@ class Game {
                     socks.push(`<button class="sock${fit ? ' target' : ''}" data-slot="${slot}" data-i="${i}">+</button>`);
                 }
             }
-            return `<div class="gem-row"><div class="gem-row-title">${title}<small>${sub}</small></div><div class="gem-socks">${socks.join('')}</div></div>`;
+            return `<div class="gem-row"><div class="gem-row-title">${title}${resBadge}<small>${sub}</small></div><div class="gem-socks">${socks.join('')}</div></div>`;
         });
         document.getElementById('gemSlots').innerHTML = rows.join('');
 
@@ -11997,6 +12179,21 @@ class Game {
         for (const s of slots) {
             const cdRatio = s.skill.maxCooldown > 0 ? Math.max(0, Math.min(1, s.skill.cooldown / s.skill.maxCooldown)) : 0;
             const ready = cdRatio <= 0;
+
+            // 检查槽位符文共鸣
+            const resonance = this._gemResonance(this.player, s.key);
+            if (resonance) {
+                const pulseT = (performance.now() % 1500) / 1500;
+                const glowA = 0.5 + 0.5 * Math.sin(pulseT * Math.PI * 2);
+                ctx.save();
+                ctx.strokeStyle = resonance.color;
+                ctx.lineWidth = 3;
+                ctx.shadowBlur = 12 * glowA;
+                ctx.shadowColor = resonance.color;
+                roundRect(ctx, s.x - 2, baseY - 2, slotW + 4, slotH + 4, slotR + 2);
+                ctx.stroke();
+                ctx.restore();
+            }
 
             ctx.shadowBlur = ready ? 16 : 4;
             ctx.shadowColor = ready ? s.color : '#333333';
