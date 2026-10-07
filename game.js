@@ -1031,6 +1031,11 @@ const Sound = {
                 this._tone(1200 + Math.random() * 300, 0.06, 'sawtooth', 0.15, 0.4);
                 this._noise(0.05, 0.12, 'highpass', 3500);
                 break;
+            case 'resonate':
+                // 符文共鸣触发音效:灵动清澈的晶体音阶琶音
+                [523, 659, 784, 1046, 1318].forEach((f, i) => this._tone(f, 0.14, 'triangle', 0.15, 1.02, i * 0.05));
+                this._noise(0.12, 0.08, 'highpass', 4000, 0.15);
+                break;
         }
     }
 };
@@ -5364,10 +5369,17 @@ class Game {
     // 镶嵌/取下(面板操作,本机玩家)。同一颗宝石只能在一个孔里
     _socketGem(slot, i, id) {
         const p = this.player;
+        const prevRes = this._gemResonance(p, slot);
         if (id) for (const s of GEM_SLOTS) p.sockets[s] = p.sockets[s].map(g => g === id ? null : g);
         p.sockets[slot][i] = id || null;
         p._buildVer++;
         this._refreshSkillCds(p);
+        const curRes = this._gemResonance(p, slot);
+        // 新激活或升级了共鸣时播放晶体音效与飘字
+        if (curRes && (!prevRes || prevRes.id !== curRes.id)) {
+            Sound.play('resonate');
+            this._showFloatingText(`✨ 激活共鸣【${curRes.name}】!`, p.x + p.size / 2, p.y - 36, curRes.color);
+        }
     }
 
     // 以指定玩家身份执行 fn:技能/资源代码统一读写 this.player,host 替 guest 施法时临时替换。
