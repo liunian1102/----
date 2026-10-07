@@ -141,6 +141,10 @@ button:active {
     align-items: center;
     z-index: 100;
     backdrop-filter: blur(4px);
+    overflow-y: auto;
+    -webkit-overflow-scrolling: touch;
+    box-sizing: border-box;
+    padding: 16px 0;
 }
 
 .mp-card {
@@ -149,6 +153,10 @@ button:active {
     border-radius: 20px;
     padding: 40px 36px;
     width: min(420px, 92vw);
+    max-height: calc(100dvh - 32px);
+    overflow-y: auto;
+    box-sizing: border-box;
+    margin: auto;
     box-shadow: 0 0 60px rgba(0, 200, 255, 0.1), 0 20px 60px rgba(0, 0, 0, 0.6);
     text-align: center;
 }
@@ -350,20 +358,28 @@ button:active {
 /* ── 响应式：窄屏/横屏手机 ── */
 @media (max-height: 500px) {
     .mp-card {
-        padding: 24px 28px;
+        padding: 16px 20px;
+        max-height: calc(100dvh - 16px);
     }
     .mp-title {
-        font-size: 1.8em;
-        margin-bottom: 4px;
+        font-size: 1.6em;
+        margin-bottom: 2px;
     }
     .mp-subtitle {
-        margin-bottom: 20px;
+        margin-bottom: 12px;
     }
     .mp-buttons {
-        gap: 8px;
+        gap: 6px;
     }
     .mp-btn {
-        padding: 10px;
+        padding: 8px;
+    }
+    .mp-lobby {
+        margin-top: 10px;
+    }
+    .mp-player-list {
+        max-height: 120px;
+        overflow-y: auto;
     }
 }
 

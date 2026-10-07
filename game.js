@@ -1475,7 +1475,10 @@ class Game {
                 if ((buildKey || e.key === 'Escape') && !e.repeat) this.closeBuild();
                 return;
             }
-            if (this.showingPotentialMenu && !this.showingClassSelection && !e.repeat) { this._talentMenuKey(e.key); return; }
+            if (this.showingPotentialMenu && !this.showingClassSelection && !e.repeat) {
+                this._talentMenuKey(e.key, e.code);
+                return;
+            }
             if (buildKey && !e.repeat && e.target.tagName !== 'INPUT') { this.openBuild(); return; }
             if (e.key === 'p' || e.key === 'P' || e.key === 'Escape') {
                 if (this.isRunning) this.togglePause();
@@ -1499,11 +1502,6 @@ class Game {
         
         document.getElementById('pauseBtn').addEventListener('click', () => {
             this.togglePause();
-        });
-        
-        document.getElementById('restartBtn').addEventListener('click', () => {
-            if (!this.mpMode) Immersive.enter(); // 单人「再来一局」直接开局
-            this.restartGame();
         });
         
         // 统一坐标换算（含全屏缩放偏移）
@@ -1681,13 +1679,14 @@ class Game {
         }, { passive: false });
 
         const touchEnd = (e) => {
+            e.preventDefault();
             for (const t of e.changedTouches) {
                 if (this.joy.active && this.joy.id === t.identifier) endJoy();
                 if (this.aim.active && this.aim.id === t.identifier) endAim(e.type === 'touchcancel');
             }
         };
-        this.canvas.addEventListener('touchend', touchEnd);
-        this.canvas.addEventListener('touchcancel', touchEnd);
+        this.canvas.addEventListener('touchend', touchEnd, { passive: false });
+        this.canvas.addEventListener('touchcancel', touchEnd, { passive: false });
 
         // 窗口尺寸变化时重新计算缩放
         window.addEventListener('resize', () => {
@@ -1750,9 +1749,12 @@ class Game {
     }
     
     setPlayerTarget(x, y) {
-        // 设置玩家的目标位置
-        this.player.targetX = x;
-        this.player.targetY = y;
+        // 安全钳位:点击在宽屏两侧黑边或外部时,将目标点约束在地图内部,防止撞墙死循环抽搐
+        const half = (this.player ? this.player.size : 20) / 2;
+        const clampedX = Math.max(half, Math.min(this.width - half, x));
+        const clampedY = Math.max(half, Math.min(this.height - half, y));
+        this.player.targetX = clampedX;
+        this.player.targetY = clampedY;
         this.player.moving = true;
     }
     
@@ -1923,6 +1925,10 @@ class Game {
         document.getElementById('gameOver').style.display = 'none';
         this.updateUI();
         this.render();
+        // 单人模式点击重新开始直接无缝开局,彻底解决卡在黑屏死锁的问题
+        if (!this.mpMode) {
+            this.startGame();
+        }
     }
 
     // ══════════════════════════════════════════════════════════════════
@@ -5109,7 +5115,9 @@ class Game {
         id = id || GEM_TYPES[Math.floor(Math.random() * GEM_TYPES.length)];
         x = Math.max(10, Math.min(this.width - 40, x));
         y = Math.max(40, Math.min(this.height - 40, y));
-        this.items.push(new Item(x, y, 'gem_' + id));
+        const item = new Item(x, y, 'gem_' + id);
+        item.gem = id;
+        this.items.push(item);
     }
 
     // 给 this.player 一颗宝石(同种第 2/3 颗 = 升级,满级再捡折算分数);返回飘字
@@ -5685,16 +5693,39 @@ class Game {
     }
 
     // 激光扫射:每帧按当前光束角度判定,光束为从魔王中心射出的长射线;
-    // 走 _bossHitPlayer 的受击无敌帧,一次扫射最多吃一到两下,冲刺穿过算完美闪避
+    // 引入上一帧角速度插值扇面检测,消除高难度/高速扫射下的穿模漏判
     _bossLaserTick(b, bcx, bcy) {
         const ang = BlockBoss.laserAngle(b);
+        const prevAng = b._lastLaserAng !== undefined ? b._lastLaserAng : ang;
+        b._lastLaserAng = ang;
         const c = Math.cos(ang), sn = Math.sin(ang);
+        const hw = BlockBoss.LASER_HALF;
+
         const hit = p => {
             const px = p.x + p.size / 2 - bcx, py = p.y + p.size / 2 - bcy;
+            const dist = Math.hypot(px, py);
+            if (dist > BlockBoss.LASER_LEN || dist < 1) return;
             const along = px * c + py * sn;
-            if (along < 0) return;
-            if (Math.abs(px * sn - py * c) > BlockBoss.LASER_HALF + p.size / 2) return;
-            this._bossHitPlayer(p, b.attack * 0.35, '#e040fb', '魔王激光');
+            // 1. 点射线投影距离判定
+            if (along >= 0 && Math.abs(px * sn - py * c) <= hw + p.size / 2) {
+                this._bossHitPlayer(p, b.attack * 0.35, '#e040fb', '魔王激光');
+                return;
+            }
+            // 2. 扫射角位移扇面连续相交判定:防止单帧角速度过大跳过玩家碰撞半径
+            if (prevAng !== ang) {
+                let pAng = Math.atan2(py, px);
+                // 角度归一化到 [-PI, PI] 并计算与扫射区间的包含关系
+                const minA = Math.min(prevAng, ang) - (p.size / 2) / dist;
+                const maxA = Math.max(prevAng, ang) + (p.size / 2) / dist;
+                let inSweep = false;
+                for (let k = -1; k <= 1; k++) {
+                    const testA = pAng + k * Math.PI * 2;
+                    if (testA >= minA && testA <= maxA) { inSweep = true; break; }
+                }
+                if (inSweep) {
+                    this._bossHitPlayer(p, b.attack * 0.35, '#e040fb', '魔王激光');
+                }
+            }
         };
         hit(this.player);
         if (this.mpMode === 'host') for (const gp of this.mpGuestPlayers.values()) hit(gp);
@@ -7382,8 +7413,11 @@ class Game {
                         this.spawnBurstRing(cx, cy, 60, '#ffe082', 25);
                         this.spawnParticles(cx, cy, '#ffd700', 30, 2, 7, 2, 5, 0.03);
                     }
-                } else if (item.gem) {
-                    label = this._grantGem(item.gem);
+                } else {
+                    const gemId = item.gem || (item.type && item.type.startsWith('gem_') ? item.type.slice(4) : null);
+                    if (gemId && GEMS[gemId]) {
+                        label = this._grantGem(gemId);
+                    }
                 }
         }
         if (label) this._showFloatingText(label, cx, cy - 12, item.color);
@@ -9050,7 +9084,8 @@ class Game {
                 this.player.heal(2);
             }
             if (overflow > 0) {
-                const cap = this.player.maxHealth * 0.35;
+                const baseCap = this.player.maxHealth * (this.player.shieldCapRatio || 0.15);
+                const cap = Math.max(baseCap, this.player.maxHealth * 0.25);
                 this.player.shield = Math.min(cap, (this.player.shield || 0) + overflow);
             }
         }
@@ -9646,13 +9681,20 @@ class Game {
         this.currentTalentChoices = [];
     }
 
-    // 键盘选天赋:1/2/3 选卡,R 换一批,0 / X 跳过
-    _talentMenuKey(key) {
-        if (key >= '1' && key <= '3') {
-            const i = key.charCodeAt(0) - 48;
-            if (i <= this.currentTalentChoices.length) this.handlePotentialChoice(i);
-        } else if (key === 'r' || key === 'R') this.handlePotentialChoice(-1);
-        else if (key === '0' || key === 'x' || key === 'X') this.handlePotentialChoice(0);
+    // 键盘选天赋:1/2/3 选卡(兼容大键盘与小键盘),R 换一批,0 / X 跳过;支持 key 与 code 双重归一化
+    _talentMenuKey(key, code = '') {
+        let choice = null;
+        if ((key >= '1' && key <= '3')) choice = key.charCodeAt(0) - 48;
+        else if (code.startsWith('Digit') && code >= 'Digit1' && code <= 'Digit3') choice = parseInt(code.slice(5), 10);
+        else if (code.startsWith('Numpad') && code >= 'Numpad1' && code <= 'Numpad3') choice = parseInt(code.slice(6), 10);
+
+        if (choice !== null) {
+            if (choice <= this.currentTalentChoices.length) this.handlePotentialChoice(choice);
+        } else if (key === 'r' || key === 'R' || code === 'KeyR') {
+            this.handlePotentialChoice(-1);
+        } else if (key === '0' || key === 'x' || key === 'X' || code === 'Digit0' || code === 'Numpad0' || code === 'KeyX') {
+            this.handlePotentialChoice(0);
+        }
     }
     
     renderPotentialMenu() {
@@ -9894,7 +9936,8 @@ class Game {
     }
 
     _wrapTextCenter(ctx, text, cx, y, maxWidth, lineHeight) {
-        const chars = text.split('');
+        if (!text) return y;
+        const chars = String(text).split('');
         let line = '';
         let yy = y;
         for (let i = 0; i < chars.length; i++) {
@@ -9994,7 +10037,14 @@ class Game {
         if (!el) return;
         el.innerHTML = '';
         const b = this._dmgBreakdown(this.player);
-        if (!(b.total > 0)) return;
+        if (!(b.total > 0)) {
+            const empty = document.createElement('div');
+            empty.className = 'db-empty';
+            empty.style.cssText = 'text-align:center; color:rgba(200,232,255,0.45); font-size:12px; padding:8px 0;';
+            empty.textContent = '本局未造成有效伤害';
+            el.appendChild(empty);
+            return;
+        }
         const head = document.createElement('div');
         head.className = 'db-head';
         head.textContent = `伤害构成 · 总 ${Game.fmtNum(b.total)} · 秒伤 ${Game.fmtNum(b.dps)}`;
@@ -11316,7 +11366,12 @@ class Game {
     //  打开时暂停(联机房主暂停全场,与升级菜单一致;guest 只停自己并受保护)
     // ══════════════════════════════════════════════════════════════════
     openBuild(tab) {
-        if (!this.isRunning || this.showingBuild || this.showingClassSelection || this.showingPotentialMenu) return;
+        if (!this.isRunning || this.showingBuild) return;
+        if (this.showingClassSelection || this.showingPotentialMenu) {
+            this._showFloatingText('请先完成当前选择', this.width / 2, this.height * 0.45, '#ffd54f');
+            Sound.play('cdReady');
+            return;
+        }
         if (!this._buildInited) this._initBuildPanel();
         this.showingBuild = true;
         this._buildPaused = !this.isPaused;
@@ -14012,11 +14067,11 @@ class BlockBoss {
         this.x = x;
         this.y = y;
         this.size = 80;
-        this.difficulty = difficulty;
+        this.difficulty = difficulty || 1;
         this.speed = 2.2; // 略低于玩家基础 5,但难度提高后会追近
-        this.maxHealth = 2000 * difficulty;
+        this.maxHealth = 2000 * this.difficulty;
         this.currentHealth = this.maxHealth;
-        this.attack = Math.max(50, playerMaxHealth * 0.5);
+        this.attack = Math.max(50, (playerMaxHealth || 100) * 0.5);
         this.defense = 0; // 不靠防御,血厚
         this.color = '#4a0080';
         this.stunTimer = 0;
@@ -14897,8 +14952,8 @@ window.addEventListener('load', () => {
     const serverUrl = location.hash ? location.hash.slice(1) : 'ws://' + location.hostname + ':8080';
     game.mpServerUrl = serverUrl;
 
-    // 创建房间
-    document.getElementById('mpCreate').addEventListener('click', () => withControlChoice(async () => {
+    // 创建房间(直接建立连接生成房间码,不再提前强弹操控弹窗与切全屏)
+    document.getElementById('mpCreate').addEventListener('click', async () => {
         setStatus('连接服务器中...');
         try {
             await game.connectToServer(serverUrl);
@@ -14906,13 +14961,13 @@ window.addEventListener('load', () => {
         } catch (e) {
             setStatus('连接失败：' + e.message, true);
         }
-    }));
+    });
 
     // 加入房间
     document.getElementById('mpJoin').addEventListener('click', () => {
         const code = (mpCodeInput.value || '').toUpperCase().trim();
         if (code.length !== 4) { setStatus('请输入4位房间码', true); return; }
-        withControlChoice(() => joinRoom(code));
+        joinRoom(code);
     });
     const joinRoom = async (code) => {
         setStatus('连接服务器中...');
@@ -14924,15 +14979,17 @@ window.addEventListener('load', () => {
         }
     };
 
-    // 房主：开始游戏
-    document.getElementById('mpStart').addEventListener('click', () => {
+    // 房主：开始游戏(真正进入游戏对局前确认操控方式并进入沉浸全屏)
+    document.getElementById('mpStart').addEventListener('click', () => withControlChoice(() => {
         if (game.mpWs && game.mpWs.readyState === WebSocket.OPEN) {
             game.mpWs.send(JSON.stringify({ type: 'start' }));
         }
-    });
+    }));
 
-    // 单人游戏
+    // 单人游戏(明确重置联机模式状态,防止此前创建过房间导致死亡重启时被误判为联机)
     document.getElementById('mpSingle').addEventListener('click', () => withControlChoice(() => {
+        game.mpMode = null;
+        if (game.mpWs) { game.mpWs.close(); game.mpWs = null; }
         overlay.style.display = 'none';
         game.startGame();
     }));
