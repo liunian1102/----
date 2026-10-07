@@ -3843,11 +3843,14 @@ class Game {
 
             this._tickAutoAttack();
             this._tickPlayerResources();
-            // 联机:guest 的普攻/冷却/资源/圣光光环也由 host 推进(各用各的天赋)
+            // 联机:guest 的普攻/冷却/资源/圣光光环与倒地救援也由 host 推进(各用各的天赋)
             if (this.mpMode === 'host') {
                 for (const gp of this.mpGuestPlayers.values()) {
-                    if (gp.currentHealth <= 0) continue;
-                    this._runAsPlayer(gp, () => { this._tickAutoAttack(); this._tickPlayerResources(); });
+                    if (gp.currentHealth <= 0 && !gp.downed) continue;
+                    this._runAsPlayer(gp, () => {
+                        if (gp.currentHealth > 0) this._tickAutoAttack();
+                        this._tickPlayerResources();
+                    });
                 }
             }
 
@@ -4316,33 +4319,34 @@ class Game {
             }
         }
 
-        // 联机模式灵魂信标救助推进
-        if (this.mpMode && this.player.downed) {
-            this.player.downedTimer -= DT;
+        // 联机模式灵魂信标救助推进(通用支持本机房主与 guest 玩家)
+        const targetP = this._actingAs || this.player;
+        if (this.mpMode && targetP.downed) {
+            targetP.downedTimer -= DT;
             let helperNear = false;
             // 检查是否有存活队友在信标 75px 范围内
             for (const other of this._livingPlayers()) {
-                if (other !== this.player) {
-                    const dist = Math.hypot(other.x - this.player.x, other.y - this.player.y);
+                if (other !== targetP) {
+                    const dist = Math.hypot(other.x - targetP.x, other.y - targetP.y);
                     if (dist <= 75) { helperNear = true; break; }
                 }
             }
             if (helperNear) {
-                this.player.rescueCharge = Math.min(1, (this.player.rescueCharge || 0) + DT / 1.5);
+                targetP.rescueCharge = Math.min(1, (targetP.rescueCharge || 0) + DT / 1.5);
                 if (Math.random() < 0.3) {
-                    this.spawnParticles(this.player.x + this.player.size / 2, this.player.y + this.player.size / 2, '#80d8ff', 2, 1, 2, 1.5, 3, 0.04);
+                    this.spawnParticles(targetP.x + targetP.size / 2, targetP.y + targetP.size / 2, '#80d8ff', 2, 1, 2, 1.5, 3, 0.04);
                 }
             } else {
-                this.player.rescueCharge = Math.max(0, (this.player.rescueCharge || 0) - DT * 0.4);
+                targetP.rescueCharge = Math.max(0, (targetP.rescueCharge || 0) - DT * 0.4);
             }
 
             // 救援成功:零消耗原地复苏
-            if (this.player.rescueCharge >= 1) {
-                this.player.downed = false;
-                this.player.currentHealth = this.player.maxHealth * 0.5;
-                this.player.shield = Math.max(this.player.shield || 0, this.player.maxHealth * 0.4);
-                this.player.hurtCooldown = 2.0;
-                const pcx = this.player.x + this.player.size / 2, pcy = this.player.y + this.player.size / 2;
+            if (targetP.rescueCharge >= 1) {
+                targetP.downed = false;
+                targetP.currentHealth = targetP.maxHealth * 0.5;
+                targetP.shield = Math.max(targetP.shield || 0, targetP.maxHealth * 0.4);
+                targetP.hurtCooldown = 2.0;
+                const pcx = targetP.x + targetP.size / 2, pcy = targetP.y + targetP.size / 2;
                 Sound.play('levelUp');
                 this._showFloatingText('✝️ 战术复苏成功! 救世冲击!', pcx, pcy - 25, '#80d8ff');
                 this.effects.push({ type: 'shockwave', x: pcx, y: pcy, radius: 15, maxRadius: 260, color: '#80d8ff', ttl: 0.6, maxTtl: 0.6 });
@@ -4354,21 +4358,21 @@ class Game {
                         e.stunTimer = Math.max(e.stunTimer || 0, 1.2);
                     }
                 }
-            } else if (this.player.downedTimer <= 0) {
+            } else if (targetP.downedTimer <= 0) {
                 // 超时未被救助:扣除团队生命并在安全中心复苏
-                this.player.downed = false;
+                targetP.downed = false;
                 this.life--;
                 if (this.life > 0) {
-                    this.player.x = this.width / 2 - this.player.size / 2;
-                    this.player.y = this.height / 2 - this.player.size / 2;
-                    this.player.currentHealth = this.player.maxHealth;
-                    this.player.hurtCooldown = 1.5;
-                    this.player.combo = 0;
-                    this.player.comboTimer = 0;
-                    this.player.frenzyTier = 0;
-                    this.player.rage = 0;
-                    if (this.player.metagrowth && this.player.metagrowth.scutum > 0) {
-                        const shieldRatio = [0.15, 0.25, 0.40][this.player.metagrowth.scutum - 1];
+                    targetP.x = this.width / 2 - targetP.size / 2;
+                    targetP.y = this.height / 2 - targetP.size / 2;
+                    targetP.currentHealth = targetP.maxHealth;
+                    targetP.hurtCooldown = 1.5;
+                    targetP.combo = 0;
+                    targetP.comboTimer = 0;
+                    targetP.frenzyTier = 0;
+                    targetP.rage = 0;
+                    if (targetP.metagrowth && targetP.metagrowth.scutum > 0) {
+                        const shieldRatio = [0.15, 0.25, 0.40][targetP.metagrowth.scutum - 1];
                         this.player.shield = Math.round(this.player.maxHealth * shieldRatio);
                     }
                 } else {
@@ -4826,8 +4830,12 @@ class Game {
                 if (id && counts[id] && !gemMisfit(id, slot, p.class)) map[slot][id] = counts[id];
             }
         }
-        // 法师魔力涌注开启时,Q 位宝石并入普攻(同种取高等级)
-        if (mageOn) for (const id in map.q) map.a[id] = Math.max(map.a[id] || 0, map.q[id]);
+        // 法师魔力涌注开启时,Q 位宝石并入普攻(同种取高等级,支持暴击/处决/附加伤害等全部普攻增益)
+        if (mageOn) {
+            for (const id in map.q) {
+                map.a[id] = Math.max(map.a[id] || 0, map.q[id]);
+            }
+        }
         p._gemKey = key;
         p._gemCache = map;
         return map;
@@ -4965,6 +4973,10 @@ class Game {
         const skill = slot === 'q' ? p.skillQ : p.skillE;
         if (skill.cooldown > 0) return;
         this._withCtx(Game.CTX[slot], () => this._dispatchSkill(slot, skill));
+        // 若部分职业技能未显式写 cooldown 则在此统一置冷却，防狂按并保障回响判定
+        if (skill.cooldown <= 0 && !(p.class === 'mage' && slot === 'q')) {
+            skill.cooldown = skill.maxCooldown || 3;
+        }
         const echo = skill.cooldown > 0 && this._gv(p, slot, 'echo');
         if (echo) this.pendingActions.push({ delay: 0.35, ctx: null, fn: () => this._echoCast(slot, echo) });
     }
@@ -6504,8 +6516,13 @@ class Game {
 
     _livingPlayers() {
         const out = [];
-        if (this.player.currentHealth > 0) out.push(this.player);
-        if (this.mpMode === 'host') for (const gp of this.mpGuestPlayers.values()) if (gp.currentHealth > 0) out.push(gp);
+        const hostPlayer = this._savedPlayer || this.player;
+        if (hostPlayer && hostPlayer.currentHealth > 0) out.push(hostPlayer);
+        if (this.mpMode === 'host') {
+            for (const gp of this.mpGuestPlayers.values()) {
+                if (gp !== hostPlayer && gp.currentHealth > 0) out.push(gp);
+            }
+        }
         return out;
     }
 
@@ -8815,15 +8832,25 @@ class Game {
             this._warriorMeleeAttack();
             return;
         }
-        // 其它职业:正常发射投射物(候选包含魔王)
+        // 其它职业:正常发射投射物(候选包含魔王;无目标时沿移动/朝向发射,保证射击手感)
         const closest = this._findClosestTarget();
-        if (!closest) return;
-
         const cx = this.player.x + this.player.size / 2;
         const cy = this.player.y + this.player.size / 2;
-        const dx = closest.x + closest.size / 2 - cx;
-        const dy = closest.y + closest.size / 2 - cy;
-        const dist = Math.sqrt(dx * dx + dy * dy);
+        let dx, dy, dist;
+        if (closest) {
+            dx = closest.x + closest.size / 2 - cx;
+            dy = closest.y + closest.size / 2 - cy;
+            dist = Math.sqrt(dx * dx + dy * dy);
+        } else {
+            // 无敌人时沿角色移动方向或默认朝右发射
+            const mvX = this.player.vx || 0, mvY = this.player.vy || 0;
+            const mvDist = Math.hypot(mvX, mvY);
+            if (mvDist > 0.05) {
+                dx = mvX / mvDist; dy = mvY / mvDist; dist = 1;
+            } else {
+                dx = 1; dy = 0; dist = 1;
+            }
+        }
         if (dist <= 0) return;
 
         // 远程武器动态后坐力微反冲 (Recoil Impulse)
