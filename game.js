@@ -1155,7 +1155,6 @@ class Game {
         this.bossDamageDealt = 0;
         this.boss = null;
         this.screenShake = 0;
-        this._lastBossWarnSec = 0;
         this.bossWave = 0;            // 本局第几只魔王(决定魔王等级与解锁的新招)
         this.dmgNums = [];            // 伤害数字 { id, x, y, v, k(0 普通/1 暴击/2 持续), t, target }
         this._mpDn = [];              // host:自上次广播以来新建/变化的伤害数字
@@ -1960,7 +1959,6 @@ class Game {
         this.bossDamageDealt = 0;
         this.boss = null;
         this.screenShake = 0;
-        this._lastBossWarnSec = 0;
         this.bossWave = 0;            // 本局第几只魔王(决定魔王等级与解锁的新招)
         this.dmgNums = [];            // 伤害数字 { id, x, y, v, k(0 普通/1 暴击/2 持续), t, target }
         this._mpDn = [];              // host:自上次广播以来新建/变化的伤害数字
@@ -5642,19 +5640,13 @@ class Game {
                 if (this.bossTimer <= 0) {
                     this.bossState = 'warning';
                     this.bossWarningTimer = this.bossWarningDuration;
-                    this._showFloatingText('魔王降临!', this.width / 2, this.height * 0.35, '#ff1744');
                 }
                 break;
             }
             case 'warning': {
                 this.bossWarningTimer -= DT;
                 this.screenShake = 0.2; // 持续震动
-                // 倒计时每整秒提示
-                const sec = Math.ceil(this.bossWarningTimer);
-                if (sec !== this._lastBossWarnSec && sec > 0) {
-                    this._lastBossWarnSec = sec;
-                    this._showFloatingText(`${sec}`, this.width / 2, this.height / 2, '#ff5252');
-                }
+                // 「魔王降临」与倒计时大字由 _renderBossAlertScreen 按 bossWarningTimer 绘制(guest 也有),这里不再叠飘字
                 if (this.bossWarningTimer <= 0) {
                     this._spawnBoss();
                 }
@@ -8166,12 +8158,15 @@ class Game {
             if (p._relicThunderCount === 0) {
                 const tx = target.x + target.size / 2, ty = target.y + target.size / 2;
                 const boltDmg = p.attack * 1.2;
-                p._relicThunderActive = true;
-                try {
-                    this._hitAround(tx, ty, 80, boltDmg);
-                } finally {
-                    p._relicThunderActive = false;
-                }
+                // 天雷晚一帧再劈:调用方(近战挥砍等)可能正按下标遍历 enemies,这里同步打死别的敌人会让下标越界
+                this.pendingActions.push({ delay: 0.02, ctx: this._ctx, player: p, fn: () => {
+                    p._relicThunderActive = true;
+                    try {
+                        this._hitAround(tx, ty, 80, boltDmg);
+                    } finally {
+                        p._relicThunderActive = false;
+                    }
+                } });
                 this.effects.push({ type: 'shockwave', x: tx, y: ty, radius: 6, maxRadius: 80, color: '#ffe14d', ttl: 0.3, maxTtl: 0.3 });
                 this.effects.push({ type: 'lightning', pts: [[tx, ty - 120], [tx, ty]], color: '#ffe14d', ttl: 0.18, maxTtl: 0.18 });
                 this.spawnParticles(tx, ty, '#fff59d', 10, 1.5, 4, 2, 4, 0.03);
@@ -8272,11 +8267,12 @@ class Game {
             return;
         }
         if (target.currentHealth <= 0) {
-            const idx = this.enemies.indexOf(target);
-            if (idx >= 0) {
+            if (this.enemies.includes(target)) {
                 this.spawnHitParticles(target.x + target.size / 2, target.y + target.size / 2, target.color, 10);
                 this._onEnemyKilled(target);
-                this.enemies.splice(idx, 1);
+                // 结算后重新取下标:击杀结算可能已改动 enemies,沿用旧下标会误删别的敌人
+                const idx = this.enemies.indexOf(target);
+                if (idx >= 0) this.enemies.splice(idx, 1);
             }
         } else {
             this.spawnHitParticles(target.x + target.size / 2, target.y + target.size / 2, '#ffaa00', 4);
@@ -8672,7 +8668,7 @@ class Game {
         }
         // 环境危险物(易燃桶/水晶)在斩击范围内扣减耐久并引爆
         if (this.hazards && this.hazards.length) {
-            for (const h of this.hazards) {
+            for (const h of this.hazards.slice()) {
                 if (Math.hypot(h.x - pcx, h.y - pcy) <= range + (h.size || 28) / 2) {
                     this._damageHazard(h, dmg);
                 }
@@ -9281,7 +9277,7 @@ class Game {
         }
         // 范围内的环境危险物(易燃桶/水晶)吃近战普通挥砍伤害
         if (this.hazards && this.hazards.length) {
-            for (const h of this.hazards) {
+            for (const h of this.hazards.slice()) {
                 if (Math.hypot(h.x - pcx, h.y - pcy) <= range + (h.size || 28) / 2) {
                     this._damageHazard(h, baseDmg);
                     hit = true;
@@ -12187,15 +12183,15 @@ class Game {
             { skill: this.player.skillQ, key: 'q', label: 'Q', icon: (sp && sp.q) || qNames[cls] || 'Q', color: qColors[cls] || '#fff', x: baseX },
             { skill: this.player.skillE, key: 'e', label: 'E', icon: (sp && sp.e) || eNames[cls] || 'E', color: eColors[cls] || '#fff', x: baseX + slotW + margin }
         ];
-        // 职业 / 专精名牌(技能槽上方)
+        // 职业 / 专精名牌:放在「构筑 / 冲」按钮行上方(技能槽正上方是冲刺键,放那里会和按钮、法师「-N/发」叠字)
         {
             const tag = sp ? `${sp.icon} ${sp.name}${this.player.awakened ? ' · 觉醒' : ''}` : CLASS_NAMES[cls];
             ctx.save();
             ctx.font = 'bold 11px Arial';
-            ctx.textAlign = 'center';
+            ctx.textAlign = 'right';
             ctx.textBaseline = 'bottom';
             ctx.fillStyle = this.player.awakened ? '#ffe082' : (CLASS_COLORS[cls] || '#ffffff');
-            ctx.fillText(tag, baseX + slotW + margin / 2, baseY - (cls === 'mage' && this.player.qToggleActive ? 20 : 6));
+            ctx.fillText(tag, this._hud.w - 24, this._hud.h - 82 - 12 - 24 * 2 - 12 - 4);
             ctx.restore();
         }
 
@@ -12338,7 +12334,7 @@ class Game {
             ctx.font = 'bold 10px Arial';
             ctx.textAlign = 'center';
             ctx.textBaseline = 'bottom';
-            ctx.fillText(`-${cost}/发`, qSlotX + slotW / 2, baseY - 6);
+            ctx.fillText(`-${cost}/发`, qSlotX + slotW / 2, baseY - 4); // 上方 6px 是「构筑」按钮底边
             ctx.restore();
         }
 
