@@ -1914,7 +1914,8 @@ class Game {
         }
     }
     
-    restartGame() {
+    // autoStart=false:只重置不开局(返回大厅用,否则新一局会在大厅遮罩后面偷偷开跑)
+    restartGame(autoStart = true) {
         Sound.setMuffle(false);
         this.isRunning = false; // 让当前 rAF 循环自然结束
         this.closeBuild();
@@ -1998,7 +1999,7 @@ class Game {
         this.updateUI();
         this.render();
         // 单人模式点击重新开始直接无缝开局,彻底解决卡在黑屏死锁的问题
-        if (!this.mpMode) {
+        if (!this.mpMode && autoStart) {
             this.startGame();
         }
     }
@@ -4730,11 +4731,11 @@ class Game {
         }
         if (kbX !== undefined) this._knockbackFrom(t, kbX, kbY, 2.5);
         if (t.currentHealth <= 0) {
-            const idx = this.enemies.indexOf(t);
-            if (idx >= 0) {
+            if (this.enemies.includes(t)) {
                 this.spawnHitParticles(tx, ty, t.color, 10);
                 this._onEnemyKilled(t);
-                this.enemies.splice(idx, 1);
+                const idx = this.enemies.indexOf(t); // 结算后再取下标,避免结算途中数组变动时误删
+                if (idx >= 0) this.enemies.splice(idx, 1);
             }
         } else {
             this.spawnHitParticles(tx, ty, color, 3);
@@ -4797,7 +4798,7 @@ class Game {
                 if (last !== undefined && this.gameTime - last < 0.35) continue;
                 g.hits.set(t, this.gameTime);
                 this._gearHit(t, dmg, '#ffab91', ox, oy);
-                if (isEvo && t !== this.boss) this._applyBurn(t, this.player.attack * 0.25, 2.0);
+                if (isEvo && t !== this.boss) this._applyBurn(t, this.player, this.player.attack * 0.25); // 参数顺序:(目标, 施法者, 每秒伤害)
                 this.spawnParticles(ox, oy, '#ff7043', 4, 1, 3, 1, 3, 0.08);
             }
         }
@@ -7045,7 +7046,8 @@ class Game {
                 this.spawnHitParticles(e.x + e.size / 2, e.y + e.size / 2, e.color, 10);
                 const owner = (e.poison > 0 && e.poisonOwner) || (burned && e.burnOwner) || this.player;
                 this._runAsPlayer(owner, () => this._onEnemyKilled(e));
-                this.enemies.splice(i, 1);
+                const idx = this.enemies.indexOf(e); // 击杀结算后按对象取下标,结算途中数组有变动也不会误删
+                if (idx >= 0) this.enemies.splice(idx, 1);
             }
         }
         if (this.boss && this.bossState === 'active') { this._tickPoison(this.boss); this._tickBurn(this.boss); }
@@ -7156,6 +7158,8 @@ class Game {
             for (let j = this.items.length - 1; j > i; j--) {
                 const b = this.items[j];
                 if (!b || b.landTimer > 0 || b.type !== a.type) continue;
+                // 合并后最多 4 层(拾取效果按层数放大,超过会出现半屏炸弹/长时间冰冻)
+                if ((a.stackCount || 1) + (b.stackCount || 1) > 4) continue;
                 const dist = Math.hypot(a.x - b.x, a.y - b.y);
                 if (dist <= 75) {
                     a.stackCount = (a.stackCount || 1) + (b.stackCount || 1);
@@ -7293,9 +7297,10 @@ class Game {
                     if (this.player.projDmgReduction > 0) {
                         const px = this.player.x + this.player.size / 2, py = this.player.y + this.player.size / 2;
                         this.effects.push({ type: 'shockwave', x: px, y: py, radius: 10, maxRadius: 70, color: '#4fc3f7', ttl: 0.25, maxTtl: 0.25 });
-                        this._hitAround(px, py, 70, 0, e => {
-                            this._knockbackFrom(e, px, py, 4.5);
-                        });
+                        // 只击退:不走 _hitAround,否则 0 伤害也会加怒气、计雷神指环次数、叠增伤,还会打爆身边的水晶/油桶
+                        for (const e of this.enemies) {
+                            if (Math.hypot(e.x + e.size / 2 - px, e.y + e.size / 2 - py) <= 70 + e.size / 2) this._knockbackFrom(e, px, py, 4.5);
+                        }
                     }
                     this._checkLocalDeath();
                 }
@@ -15545,7 +15550,7 @@ window.addEventListener('load', () => {
 
     // 返回大厅
     const backToLobby = () => {
-        game.restartGame();
+        game.restartGame(false);
         document.getElementById('gameOver').style.display = 'none';
         overlay.style.display = 'flex';
         mpLobby.style.display = 'none';
