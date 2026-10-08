@@ -1050,6 +1050,16 @@ class Game {
     static ORB_SPIN = 4.2;    // 烈焰法球转速(弧度/秒)
     static ORB_RADIUS = 58;   // 烈焰法球环绕半径
     static COMBO_WINDOW = 3;  // 连杀间隔上限(秒)
+    static LOCATE_PULSE = 0.7; // 「我在这」定位脉冲时长(秒)
+    // 开局缓冲:刷怪率从 SPAWN_RAMP0 线性升到满(EARLY_RAMP 秒),同屏敌人上限从 EARLY_CAP0 起每秒 +EARLY_CAP_RATE,
+    // 普通随机道具同屏最多 ITEM_CAP0 个、每 60 秒 +1(到 ITEM_CAP_MAX);避免开局满屏敌人和道具找不到自己
+    static SPAWN_RAMP0 = 0.5;
+    static EARLY_RAMP = 90;
+    static EARLY_CAP0 = 8;
+    static EARLY_CAP_RATE = 0.25;
+    static ITEM_CAP0 = 3;
+    static ITEM_CAP_MAX = 5;
+    static RANDOM_ITEMS = ['potion', 'exp_book', 'snowflake', 'bomb', 'heart', 'potion_invicible'];
     static TALENT_REROLLS = 2; // 每局天赋「换一批」基础次数
     // 自动画质档位:持续掉帧时逐级降低画布分辨率上限与粒子数量(本次打开页面内不再回升,避免来回切换)
     static PERF_FRAME_MS = 22;  // 平滑后的帧间隔超过它(约 45 帧以下)视为掉帧
@@ -1940,6 +1950,7 @@ class Game {
         this.showingPotentialMenu = false;
         this.showingClassSelection = false;
         this.particles = [];
+        this._locate = null; // 新一局重新触发「我在这」定位脉冲
         this.pendingActions = [];
         this._uiTimer = 0;
         this.buttons = [];
@@ -6144,7 +6155,7 @@ class Game {
         this.toxicPuddles = [];       // 剧毒精英死亡留下的腐蚀毒雾洼地
         this.tacticalPings = [];      // 联机快捷战术标记列表
         this.hazards = [];            // 战场动态环境交互物体 (易燃桶/电浆水晶/冰泉)
-        this.hazardSpawnTimer = 6;
+        this.hazardSpawnTimer = 15;   // 第一个危险物约开局 15 秒后出现
         // 🌀 无尽深渊模式层数与传送门
         this.abyssFloor = 1;
         this.abyssKillsThisFloor = 0;
@@ -6298,7 +6309,8 @@ class Game {
     // ── 战场动态环境交互体系 (易燃桶/电浆水晶/冰泉) ──
     _spawnHazard() {
         if (!this.hazards) this.hazards = [];
-        if (this.hazards.length >= 4) return;
+        // 开局 60 秒内场上最多 2 个,之后最多 4 个
+        if (this.hazards.length >= (this.gameTime < 60 ? 2 : 4)) return;
         const types = ['barrel', 'crystal', 'spring'];
         const type = types[Math.floor(Math.random() * types.length)];
         const m = 100;
@@ -6320,7 +6332,7 @@ class Game {
 
     _updateHazards() {
         if (!this.hazards) this.hazards = [];
-        this.hazardSpawnTimer = (this.hazardSpawnTimer || 6) - DT;
+        this.hazardSpawnTimer = (this.hazardSpawnTimer || 15) - DT;
         if (this.hazardSpawnTimer <= 0) {
             this.hazardSpawnTimer = 8 + Math.random() * 5;
             this._spawnHazard();
@@ -7308,22 +7320,26 @@ class Game {
                     Math.abs((proj.y + pSize * 0.5) - (enemy.y + eSize * 0.5)) > threshold) continue;
                 if (this.checkCollision(proj, enemy)) {
                     // 有限穿透:已命中过的同一敌人跳过
-                    if (proj.hitEnemies && proj.hitEnemies.has(this.enemies[j])) continue;
-                    const dmg = this._applyHitMods(proj.owner, this.enemies[j], proj.damage != null ? proj.damage : 15);
+                    if (proj.hitEnemies && proj.hitEnemies.has(enemy)) continue;
+                    const dmg = this._applyHitMods(proj.owner, enemy, proj.damage != null ? proj.damage : 15);
                     const boltSrc = proj.gearBolt ? 'gear' : (this._ctx && this._ctx.slot) || 'a';
-                    this._withSrc(boltSrc, () => this._creditTo(proj.owner, () => this.enemies[j].takeDamage(dmg)));
-                    this._afterHit(proj.owner, this.enemies[j], dmg);
-                    if (proj.freeze) this.enemies[j].stunTimer = Math.max(this.enemies[j].stunTimer, proj.freeze);
-                    if (proj.splash) splashAt = this.enemies[j];
-                    this._knockbackDir(this.enemies[j], proj.dx, proj.dy, 2.5);
-                    if (proj.hitEnemies) proj.hitEnemies.add(this.enemies[j]);
+                    this._withSrc(boltSrc, () => this._creditTo(proj.owner, () => enemy.takeDamage(dmg)));
+                    this._afterHit(proj.owner, enemy, dmg);
+                    if (proj.freeze) enemy.stunTimer = Math.max(enemy.stunTimer, proj.freeze);
+                    if (proj.splash) splashAt = enemy;
+                    this._knockbackDir(enemy, proj.dx, proj.dy, 2.5);
+                    if (proj.hitEnemies) proj.hitEnemies.add(enemy);
                     // 投射物击杀立即结算
-                    if (this.enemies[j].currentHealth <= 0) {
-                        this.spawnHitParticles(this.enemies[j].x + this.enemies[j].size / 2, this.enemies[j].y + this.enemies[j].size / 2, this.enemies[j].color, 10);
-                        this._runAsPlayer(proj.owner, () => this._onEnemyKilled(this.enemies[j]));
-                        this.enemies.splice(j, 1);
+                    // 用 enemy 本身而不是 enemies[j]:处决宝石会在 _afterHit 里同步把它移出数组,下标已经不再指向它
+                    if (enemy.currentHealth <= 0) {
+                        if (this.enemies.includes(enemy)) {
+                            this.spawnHitParticles(enemy.x + enemy.size / 2, enemy.y + enemy.size / 2, enemy.color, 10);
+                            this._runAsPlayer(proj.owner, () => this._onEnemyKilled(enemy));
+                            const idx = this.enemies.indexOf(enemy);
+                            if (idx >= 0) this.enemies.splice(idx, 1);
+                        }
                     } else {
-                        this.spawnHitParticles(this.enemies[j].x + this.enemies[j].size / 2, this.enemies[j].y + this.enemies[j].size / 2, '#ffaa00', 4);
+                        this.spawnHitParticles(enemy.x + enemy.size / 2, enemy.y + enemy.size / 2, '#ffaa00', 4);
                     }
                     // 技能石「分裂折射」:首个敌人命中后分叉发射 2 颗次级子弹(不再继续分裂)
                     const forkVal = !proj._forked && this._gv(proj.owner, 'a', 'fork');
@@ -7409,9 +7425,11 @@ class Game {
         if (this.bossState === 'active' || this.bossState === 'retreating') return;
         // 怪潮事件:刷怪概率 ×3、数量上限 +25
         const horde = this.event && this.event.type === 'horde';
-        if (this.enemies.length >= maxEnemiesFor(this.difficulty) + (horde ? 25 : 0)) return;
-        // 刷怪概率随难度上升但封顶,避免后期数量碾压
-        const spawnChance = Math.min(0.05, 0.018 + 0.008 * (this.difficulty - 1) + 0.004 * ((this.lateMult || 1) - 1)) * (horde ? 3 : 1);
+        const earlyCap = Math.floor(Game.EARLY_CAP0 + this.gameTime * Game.EARLY_CAP_RATE);
+        if (this.enemies.length >= Math.min(maxEnemiesFor(this.difficulty), earlyCap) + (horde ? 25 : 0)) return;
+        // 刷怪概率随难度上升但封顶,避免后期数量碾压;开局按 ramp 缓慢加到满
+        const ramp = Math.min(1, Game.SPAWN_RAMP0 + (1 - Game.SPAWN_RAMP0) * this.gameTime / Game.EARLY_RAMP);
+        const spawnChance = Math.min(0.05, 0.018 + 0.008 * (this.difficulty - 1) + 0.004 * ((this.lateMult || 1) - 1)) * ramp * (horde ? 3 : 1);
         if (Math.random() < spawnChance) {
             // 加权随机;冲锋者 30 秒、自爆者 50 秒后才加入,开局保持简单
             const pool = [['chaser', 44], ['patroller', 24], ['gunner', 15], ['giant', 5]];
@@ -7502,7 +7520,10 @@ class Game {
         }
         // 降低道具刷新频率以提高难度(原 0.015);仙女座天赋提升掉落率(Lv1: +15%, Lv2: +30%)
         const andromedaDropMult = (this.player.metagrowth && this.player.metagrowth.andromeda > 0) ? (this.player.metagrowth.andromeda >= 2 ? 1.30 : 1.15) : 1.0;
-        if (Math.random() < 0.008 * andromedaDropMult) {
+        // 地上的普通随机道具有上限(开局 3 个,每 60 秒 +1,最多 5 个),满了就不再刷
+        const itemCap = Math.min(Game.ITEM_CAP_MAX, Game.ITEM_CAP0 + Math.floor(this.gameTime / 60));
+        const loose = this.items.reduce((n, it) => n + (Game.RANDOM_ITEMS.includes(it.type) ? 1 : 0), 0);
+        if (loose < itemCap && Math.random() < 0.006 * andromedaDropMult) {
             // 加权随机:potion 35 / exp_book 25 / snowflake 15 / bomb 12 / heart 8 / potion_invicible 5
             const itemPool = [
                 { type: 'potion',           weight: 35 },
@@ -10751,13 +10772,12 @@ class Game {
         this._renderHazards(ctx);
         this._renderAbyssPortal(ctx);
 
-        this.player.render(this.ctx);
+        // 本机玩家脚下光圈 + 各种光环铺在地面层;方块本体放到敌人/道具之后画,不会被遮住找不到自己
+        this._updateLocatePulse();
+        this._renderSelfHalo();
         this._renderBlessAura(this.player);
         this._renderGearAura(this.player);
         this._renderClassAura(this.player, this.player.class, this.player.awakened, this.player.stillTime);
-
-        // 渲染其他联机玩家
-        if (this.mpMode && this.mpPlayers.length > 0) this._renderMpPlayers();
 
         this._renderEnemies(ctx, this.enemyFreezeTimer > 0);
 
@@ -10770,6 +10790,10 @@ class Game {
         for (let item of this.items) {
             item.render(this.ctx);
         }
+
+        // 玩家画在敌人和道具之上(投射物与特效之下)
+        if (this.mpMode && this.mpPlayers.length > 0) this._renderMpPlayers();
+        this.player.render(this.ctx);
 
         Projectile.renderAll(ctx, this.projectiles);
 
@@ -10961,10 +10985,63 @@ class Game {
     }
 
     // 本地玩家头顶的上下浮动箭头,联机时一眼认出自己(画在敌人和特效之上)
+    // 「我在这」定位脉冲的触发:开局、复活/传送(位置一跳 >150px)、从暂停或升级菜单回到战斗。纯本地表现,按真实时间
+    _updateLocatePulse() {
+        const p = this.player;
+        const now = performance.now();
+        const cx = p.x + p.size / 2, cy = p.y + p.size / 2;
+        const lp = this._locate;
+        if (!lp) { this._locate = { t: now, x: cx, y: cy, paused: this.isPaused }; return; }
+        if ((lp.paused && !this.isPaused) || Math.hypot(cx - lp.x, cy - lp.y) > 150) lp.t = now;
+        lp.paused = this.isPaused;
+        lp.x = cx; lp.y = cy;
+    }
+
+    // 本机玩家脚下的柔光圈(地面层,画在敌人之下):敌人、道具一多也能一眼认出自己
+    _renderSelfHalo() {
+        const p = this.player;
+        if (!p || p.currentHealth <= 0) return;
+        const ctx = this.ctx;
+        const cx = p.x + p.size / 2, cy = p.y + p.size / 2;
+        const r = p.size * 0.5 + 22;
+        ctx.save();
+        const g = ctx.createRadialGradient(cx, cy, p.size * 0.35, cx, cy, r);
+        g.addColorStop(0, 'rgba(255,225,77,0.28)');
+        g.addColorStop(1, 'rgba(255,225,77,0)');
+        ctx.fillStyle = g;
+        ctx.beginPath();
+        ctx.arc(cx, cy, r, 0, Math.PI * 2);
+        ctx.fill();
+        ctx.lineWidth = 1.5;
+        ctx.strokeStyle = 'rgba(255,225,77,0.45)';
+        ctx.beginPath();
+        ctx.arc(cx, cy, p.size * 0.5 + 9, 0, Math.PI * 2);
+        ctx.stroke();
+        ctx.restore();
+    }
+
     _renderSelfMarker() {
         const p = this.player;
         if (!p || p.currentHealth <= 0) return;
         const ctx = this.ctx;
+        // 定位脉冲:两圈从大到小收拢到玩家身上
+        const age = this._locate ? (performance.now() - this._locate.t) / 1000 : 9;
+        if (age < Game.LOCATE_PULSE + 0.15) {
+            const pcx = p.x + p.size / 2, pcy = p.y + p.size / 2;
+            ctx.save();
+            ctx.strokeStyle = '#ffe14d';
+            for (const delay of [0, 0.15]) {
+                const t = (age - delay) / Game.LOCATE_PULSE;
+                if (t < 0 || t >= 1) continue;
+                const e = 1 - (1 - t) * (1 - t);
+                ctx.globalAlpha = 0.9 * (1 - t);
+                ctx.lineWidth = 3 - t * 1.5;
+                ctx.beginPath();
+                ctx.arc(pcx, pcy, 150 - (150 - p.size * 0.5 - 10) * e, 0, Math.PI * 2);
+                ctx.stroke();
+            }
+            ctx.restore();
+        }
         const bob = Math.sin(performance.now() / 180) * 3;
         const cx = p.x + p.size / 2;
         const tipY = p.y - (p.shield > 0 ? 22 : 16) + bob;   // 避开血条/护盾条
@@ -15058,10 +15135,12 @@ class PiercingArrow {
                 g._afterHit(this.owner, e, dmg);
                 this.game._knockbackDir(e, this.dx, this.dy, 4);
                 this.game.spawnHitParticles(ex, ey, '#aaff44', 6);
-                if (e.currentHealth <= 0) {
+                // 处决宝石可能已在 _afterHit 里结算并移除了它:按对象重新查下标,避免二次结算或误删别的敌人
+                if (e.currentHealth <= 0 && g.enemies.includes(e)) {
                     this.game.spawnHitParticles(ex, ey, e.color, 10);
                     this.game._runAsPlayer(this.owner, () => this.game._onEnemyKilled(e));
-                    this.game.enemies.splice(j, 1);
+                    const idx = g.enemies.indexOf(e);
+                    if (idx >= 0) g.enemies.splice(idx, 1);
                 }
                 g._ctx = prevCtx;
             }
