@@ -11,14 +11,15 @@ const CLASS_BASE_CD = {
 
 // 选择职业时叠加的基础属性偏移,强化职业特色
 //  - warrior 攻高防低血厚
-//  - archer  攻偏高、防低、自动攻击投射物倍率高
+//  - archer  攻偏高、自动攻击投射物倍率高
 //  - assassin 移速高
 //  - paladin 防高血厚、攻低
 //  - mage    法力回复加强
+// 远程职业(法师/弓手)原先没有任何生存加成,模拟里死亡次数是战士的 3~4 倍,各给 +15 生命,弓手去掉防御惩罚
 const CLASS_BASE_ADJUST = {
     warrior:  { attack:  10, defense: -5, maxHealth: 20 },
-    mage:     { manaRegen: 2, maxMana: 10 },
-    archer:   { attack:   8, defense: -5, autoAttackDmgMult: 1.3 },
+    mage:     { manaRegen: 2, maxMana: 10, maxHealth: 15 },
+    archer:   { attack:   8, maxHealth: 15, autoAttackDmgMult: 1.3 },
     assassin: { speed:  1.5 },
     paladin:  { defense: 10, attack:  -5, maxHealth: 30 }
 };
@@ -1051,6 +1052,7 @@ class Game {
     static ORB_RADIUS = 58;   // 烈焰法球环绕半径
     static COMBO_WINDOW = 3;  // 连杀间隔上限(秒)
     static LOCATE_PULSE = 0.7; // 「我在这」定位脉冲时长(秒)
+    static EVENT_DESC_T = 3.5; // 随机事件开始后,横幅下方玩法说明显示的秒数
     // 开局缓冲:刷怪率从 SPAWN_RAMP0 线性升到满(EARLY_RAMP 秒),同屏敌人上限从 EARLY_CAP0 起每秒 +EARLY_CAP_RATE,
     // 普通随机道具同屏最多 ITEM_CAP0 个、每 60 秒 +1(到 ITEM_CAP_MAX);避免开局满屏敌人和道具找不到自己
     static SPAWN_RAMP0 = 0.5;
@@ -1060,6 +1062,8 @@ class Game {
     static ITEM_CAP0 = 3;
     static ITEM_CAP_MAX = 5;
     static RANDOM_ITEMS = ['potion', 'exp_book', 'snowflake', 'bomb', 'heart', 'potion_invicible'];
+    // 同时在场的炮手上限:难度 1 时 3 个,难度每 +1 多 1 个,最多 6 个
+    static gunnerCap(difficulty) { return Math.min(6, 2 + Math.floor(difficulty)); }
     static TALENT_REROLLS = 2; // 每局天赋「换一批」基础次数
     // 自动画质档位:持续掉帧时逐级降低画布分辨率上限与粒子数量(本次打开页面内不再回升,避免来回切换)
     static PERF_FRAME_MS = 22;  // 平滑后的帧间隔超过它(约 45 帧以下)视为掉帧
@@ -4072,15 +4076,27 @@ class Game {
     }
 
     // 解锁提示:顶部居中依次下滑出现,3 秒后淡出
+    // 顶部居中 HUD(事件横幅 / 魔王将至小牌 / 魔王血条)当前占到的底边,HUD 坐标;成就提示排在它下面
+    _topHudBottom() {
+        if (this.bossState === 'active' && this.boss) return 74;
+        let y = 10;
+        const eventShown = this.event && this.bossState !== 'warning';
+        if (eventShown) y = this._eventDescShown() ? 66 : 46;
+        if (this.bossState === 'idle' && this.bossTimer > 0 && this.bossTimer <= 15) y += 28;
+        return y;
+    }
+
+    // 成就提示:画在 HUD 坐标里(和事件横幅、魔王血条同一套坐标),否则触屏上会和顶部横幅叠在一起
     _renderAchToasts() {
         if (!this.achToasts || !this.achToasts.length) return;
         const ctx = this.ctx;
-        const w = Math.min(260, this.width - 40), h = 40;
+        const hudW = (this._hud && this._hud.w) ? this._hud.w : this.width;
+        const w = Math.min(260, hudW - 40), h = 40, top = this._topHudBottom() + 4;
         ctx.save();
         this.achToasts.slice(0, 3).forEach((t, i) => {
             const inA = Math.min(1, t.t / 0.25), outA = Math.min(1, (3 - t.t) / 0.4);
             const a = Math.max(0, Math.min(inA, outA));
-            const x = (this.width - w) / 2, y = 70 + i * (h + 6) - (1 - inA) * 12;
+            const x = (hudW - w) / 2, y = top + i * (h + 6) - (1 - inA) * 12;
             ctx.globalAlpha = a;
             ctx.fillStyle = 'rgba(20, 16, 4, 0.88)';
             ctx.shadowBlur = 14; ctx.shadowColor = '#ffd54f';
@@ -6457,9 +6473,7 @@ class Game {
         const def = GAME_EVENTS[type];
         this.event = { type, timer: def.dur, dur: def.dur, left: 0, spawnCd: 0.6 };
         this._lastEventType = type;
-        // 放在新敌人提示(height*0.3)上方,避免精英带出的首次提示与之重叠
-        this._showFloatingText(`${def.icon} ${def.name}`, this.width / 2, this.height * 0.17, def.color);
-        this.effects.push({ type: 'floatText', text: def.desc, x: this.width / 2, y: this.height * 0.17 + 28, color: '#ffffff', ttl: 2.2, maxTtl: 2.2 });
+        // 名称已在顶部横幅里,玩法说明由 _renderEventHUD 在横幅下方显示几秒(HUD 坐标,不会和横幅叠字)
         if (type === 'treasure') this._spawnTreasure();
         else if (type === 'elite') this._spawnElites();
         else if (type === 'altar') this._placeAltar(this.event);
@@ -6951,7 +6965,26 @@ class Game {
         ctx.textAlign = 'center';
         ctx.textBaseline = 'middle';
         ctx.fillText(label, hudW / 2, y + h / 2 - 2);
+        // 事件开始的前几秒,在横幅下方给一行玩法说明
+        if (this._eventDescShown()) {
+            const age = (ev.dur || 0) - ev.timer;
+            ctx.globalAlpha = Math.max(0, Math.min(1, age / 0.2, (Game.EVENT_DESC_T - age) / 0.5));
+            ctx.font = '11px Arial';
+            const tw = ctx.measureText(def.desc).width + 18, ty = y + h + 4;
+            ctx.fillStyle = 'rgba(10,16,28,0.7)';
+            roundRect(ctx, (hudW - tw) / 2, ty, tw, 16, 8);
+            ctx.fill();
+            ctx.fillStyle = '#ffffff';
+            ctx.fillText(def.desc, hudW / 2, ty + 8.5);
+        }
         ctx.restore();
+    }
+
+    // 事件玩法说明是否正在横幅下方显示(决定下面的「魔王将至」小牌和成就提示往下让多少)
+    _eventDescShown() {
+        const ev = this.event;
+        if (!ev || this.bossState === 'warning' || this.bossState === 'active' || !GAME_EVENTS[ev.type]) return false;
+        return (ev.dur || 0) - ev.timer < Game.EVENT_DESC_T;
     }
 
     updatePlayer() {
@@ -7450,6 +7483,10 @@ class Game {
             let type = pool[0][0];
             for (const [t, w] of pool) { if ((roll -= w) < 0) { type = t; break; } }
             if (type === 'reaper' && this.enemies.filter(e => e.type === 'reaper').length >= 4) {
+                type = 'chaser';
+            }
+            // 炮手站桩不走、不易清掉,不限量会越积越多(实测占到场上 30%~57%),满屏子弹;超出上限改刷追击者
+            if (type === 'gunner' && this.enemies.filter(e => e.type === 'gunner').length >= Game.gunnerCap(this.difficulty)) {
                 type = 'chaser';
             }
             this._introduceEnemy(type);
@@ -9588,8 +9625,8 @@ class Game {
                 choice: 2, name: '法师', icon: '✦', color: '#4ecdc4',
                 tag: '远程  法力  爆发',
                 tagColor: '#80deea',
-                flavor: '被动·奥术充能：每第 4 发普攻是会爆炸的奥术弹',
-                stats: ['法力 +10  回复 +2/s', '远程自动攻击，Q开关附魔'],
+                flavor: '被动·奥术充能：第 4 发普攻会爆炸；法力护盾：受伤的 20% 由法力抵扣',
+                stats: ['法力 +10  回复 +2/s  生命 +15', '远程自动攻击，Q开关附魔'],
                 q: { name: '魔力涌注', cd: '切换', desc: '开启后每发普攻附加法术伤害，消耗法力' },
                 e: { name: '斥力波',   cd: '8s',  desc: '消耗3法力，将周围敌人向四周强力推开并造成伤害' }
             },
@@ -9606,8 +9643,8 @@ class Game {
                 choice: 4, name: '弓手', icon: '◎', color: '#aaff44',
                 tag: '远程  高投射  箭矢',
                 tagColor: '#c6ef6b',
-                flavor: '被动·专注：站定不动时普攻速度 +43%；箭矢用尽需装填',
-                stats: ['攻击 +8  防御 -5', '普攻伤害×1.3，可多重射击'],
+                flavor: '被动·专注：站定时普攻 +43%；灵巧：12% 闪避、冲刺冷却 -30%',
+                stats: ['攻击 +8  生命 +15', '普攻伤害×1.3，可多重射击'],
                 q: { name: '穿透箭', cd: '3s', desc: '消耗1箭，发射穿透敌阵的强力箭矢' },
                 e: { name: '箭雨',   cd: '8s', desc: '消耗3箭，在大范围内降下密集箭雨' }
             },
@@ -10836,8 +10873,8 @@ class Game {
             this._renderGearHUD();
             this._renderMuteButton();
             this._renderComboHUD();
+            this._renderAchToasts();
         });
-        this._renderAchToasts();
 
         if (this.showingClassSelection) {
             this._withMenu(() => this.renderClassSelection());
@@ -11329,7 +11366,7 @@ class Game {
         if (this.bossState === 'idle' && this.bossTimer > 0 && this.bossTimer <= 15) {
             const urgent = this.bossTimer <= 6;
             const a = urgent ? 0.55 + 0.45 * Math.abs(Math.sin(this.bgTime * 6)) : 0.85;
-            const w = 128, h = 22, x = (hudW - w) / 2, y = this.event ? 46 : 10;
+            const w = 128, h = 22, x = (hudW - w) / 2, y = this.event ? (this._eventDescShown() ? 66 : 46) : 10;
             ctx.save();
             ctx.fillStyle = 'rgba(30, 6, 12, 0.72)';
             roundRect(ctx, x, y, w, h, 11);
@@ -12590,6 +12627,10 @@ class Game {
 }
 
 class Player {
+    static MANA_SHIELD = 0.2; // 法师被动「法力护盾」:受到伤害中由法力抵扣的比例
+    static ARCHER_EVADE = 0.12; // 弓手被动「灵巧」:天生闪避率
+    static ARCHER_DASH_CDR = 0.3; // 弓手被动「灵巧」:冲刺冷却缩减
+
     constructor(x, y, game = null) {
         this.game = game || Game.instance || null;
         this.x = x;
@@ -12749,7 +12790,9 @@ class Player {
     dashCdTotal() {
         const relicCdr = (this.relics && this.relics.includes('chrono_watch')) ? 0.18 : 0;
         const mutCdr = (this.game && this.game.mutations && this.game.mutations.includes('hyper_frenzy')) ? 0.5 : 0;
-        return this.dashMaxCooldown * Math.max(0.2, (1 - ((this.tree && this.tree.dashCdr) || 0) - relicCdr) * (1 - mutCdr));
+        // 弓手被动「灵巧」:冲刺冷却 -30%(没有位移技能,靠冲刺拉开距离)
+        const classCdr = this.class === 'archer' ? Player.ARCHER_DASH_CDR : 0;
+        return this.dashMaxCooldown * Math.max(0.2, (1 - ((this.tree && this.tree.dashCdr) || 0) - relicCdr - classCdr) * (1 - mutCdr));
     }
     
     update(keys, width, height) {
@@ -12936,7 +12979,9 @@ class Player {
 
         // 天赋「疾风之舞」与暗金遗物【死神斗篷】(低血量闪避加成):几率完全闪避
         const reaperEvade = (this.relics && this.relics.includes('reaper_cloak') && this.currentHealth < this.maxHealth * 0.35) ? 0.25 : 0;
-        const totalEvade = (t.evade || 0) + reaperEvade;
+        // 弓手被动「灵巧」:天生闪避(专注要站定输出,给一点容错)
+        const classEvade = this.class === 'archer' ? Player.ARCHER_EVADE : 0;
+        const totalEvade = (t.evade || 0) + reaperEvade + classEvade;
         if (totalEvade > 0 && Math.random() < totalEvade) {
             this._evadeFx = true;
             this.dodgeCount = (this.dodgeCount || 0) + 1;
@@ -12980,6 +13025,12 @@ class Player {
             this.shield -= absorbed;
             actualDamage -= absorbed;
             if (this.shield <= 0.01) { this.shield = 0; this._shieldBroke = true; }
+        }
+        // 法师被动「法力护盾」:剩余伤害的 20% 改由法力 1:1 抵扣(和魔力涌注抢法力,开着 Q 输出高但护盾薄)
+        if (this.class === 'mage' && this.mana > 0 && actualDamage > 0) {
+            const manaAbsorb = Math.min(this.mana, actualDamage * Player.MANA_SHIELD);
+            this.mana -= manaAbsorb;
+            actualDamage -= manaAbsorb;
         }
         actualDamage += pierce;
         // 铁卫觉醒「不屈」:致命一击保留 1 点生命并无敌 3 秒
