@@ -2795,7 +2795,8 @@ class Game {
         if (p.class === 'paladin') {
             if (p.faith < p.maxFaith) p.faith = Math.min(p.maxFaith, p.faith + p.faithRegen * DT);
             const cap = p.maxHealth * (p.shieldCapRatio || 0.1);
-            if (p.shield < cap) p.shield = Math.min(cap, p.shield + p.maxHealth * 0.02 * DT);
+            if (p.hurtCooldown > 0) p.lastHitAt = this.gameTime; // guest 本机不结算伤害,用受击无敌帧近似「刚挨打」
+            if (p.shield < cap && p.outOfCombat(Player.PALADIN_SHIELD_DELAY)) p.shield = Math.min(cap, p.shield + p.maxHealth * 0.02 * DT);
         }
         if (p.skillQ.cooldown > 0) p.skillQ.cooldown -= DT;
         if (p.skillE.cooldown > 0) p.skillE.cooldown -= DT;
@@ -4494,7 +4495,7 @@ class Game {
         }
         // 天赋「嗜血回春」与暗金遗物【狂徒铠甲】(脱战缓回):每秒回复生命(死誓契禁用回血)
         const regen = this.player.tree && this.player.tree.regen;
-        const warmogRegen = (this.player.relics && this.player.relics.includes('warmog_vest') && (this.player.hurtCooldown || 0) <= -3 && this.player.currentHealth < this.player.maxHealth) ? 1.5 : 0;
+        const warmogRegen = (this.player.relics && this.player.relics.includes('warmog_vest') && this.player.outOfCombat(3) && this.player.currentHealth < this.player.maxHealth) ? 1.5 : 0;
         if ((regen || warmogRegen) && this.player.currentHealth > 0 && this.player.greedContract !== 'death') {
             const healAmt = (this.player.maxHealth * (regen || 0) + warmogRegen) * DT;
             this.player.heal(healAmt);
@@ -4512,10 +4513,10 @@ class Game {
             const decayRate = 2 * (this.player.warriorRageDecayMult || 1); // /秒
             this.player.rage = Math.max(0, this.player.rage - decayRate * DT);
         }
-        // 圣骑士护盾持续回复(上限 = maxHealth * shieldCapRatio)
+        // 圣骑士护盾回复(上限 = maxHealth * shieldCapRatio);挨打后 PALADIN_SHIELD_DELAY 秒内不回,持续缠斗时护盾会被打空
         if (this.player.class === 'paladin') {
             const cap = this.player.maxHealth * (this.player.shieldCapRatio || 0.10);
-            if (this.player.shield < cap) {
+            if (this.player.shield < cap && this.player.outOfCombat(Player.PALADIN_SHIELD_DELAY)) {
                 const regen = this.player.maxHealth * 0.02; // /秒(2% maxHP)
                 this.player.shield = Math.min(cap, this.player.shield + regen * DT);
             }
@@ -7466,7 +7467,7 @@ class Game {
         const earlyCap = Math.floor(Game.EARLY_CAP0 + this.gameTime * Game.EARLY_CAP_RATE);
         if (this.enemies.length >= Math.min(maxEnemiesFor(this.difficulty), earlyCap) + (horde ? 25 : 0)) return;
         // 刷怪概率随难度上升但封顶,避免后期数量碾压;开局按 ramp 缓慢加到满
-        const ramp = Math.min(1, Game.SPAWN_RAMP0 + (1 - Game.SPAWN_RAMP0) * this.gameTime / Game.EARLY_RAMP);
+        const ramp = this._spawnRamp();
         const spawnChance = Math.min(0.05, 0.018 + 0.008 * (this.difficulty - 1) + 0.004 * ((this.lateMult || 1) - 1)) * ramp * (horde ? 3 : 1);
         if (Math.random() < spawnChance) {
             // 加权随机;冲锋者 30 秒、自爆者 50 秒后才加入,开局保持简单
@@ -7525,6 +7526,11 @@ class Game {
             }
             this.enemies.push(enemy);
         }
+    }
+
+    // 开局刷怪倍率:SPAWN_RAMP0 → 1(EARLY_RAMP 秒内线性上升)
+    _spawnRamp() {
+        return Math.min(1, Game.SPAWN_RAMP0 + (1 - Game.SPAWN_RAMP0) * this.gameTime / Game.EARLY_RAMP);
     }
 
     // 刷出敌人并套上后期狂化倍率(guest 不走这里,血量由快照同步)
@@ -9428,7 +9434,8 @@ class Game {
         const greedBlood = (this.player.greedContract === 'blood') ? 2 : 1;
         const comboMult = this._registerCombo(e);
         this.score += Math.round(10 * (this.scoreMult || 1) * horde * greedBlood * comboMult * diffDef(this.diffMode).score);
-        this.exp += 5 * horde * greedBlood;
+        // 开局刷怪被 _spawnRamp 压低,击杀经验按倒数补回,前期升级(3 级选职业)节奏不被拖慢
+        this.exp += 5 * horde * greedBlood / this._spawnRamp();
         if (e && e.type === 'treasure') this._treasureReward(e);
         else if (e && !e.elite && Math.random() < 0.006) this._dropGem(e.x, e.y);
         // 毒刃觉醒:中毒的敌人死亡时毒雾爆发
@@ -12630,6 +12637,7 @@ class Player {
     static MANA_SHIELD = 0.2; // 法师被动「法力护盾」:受到伤害中由法力抵扣的比例
     static ARCHER_EVADE = 0.12; // 弓手被动「灵巧」:天生闪避率
     static ARCHER_DASH_CDR = 0.3; // 弓手被动「灵巧」:冲刺冷却缩减
+    static PALADIN_SHIELD_DELAY = 1.5; // 圣骑士挨打后多少秒才开始回护盾
 
     constructor(x, y, game = null) {
         this.game = game || Game.instance || null;
@@ -12787,6 +12795,11 @@ class Player {
     }
 
     // 冲刺实际冷却(天赋「疾风连击」减免;暗金遗物【时空怀表】额外缩减 18%;每日突变【狂暴极速】额外减半)
+    // 距上次挨打是否已超过 sec 秒(从没挨过打也算)
+    outOfCombat(sec) {
+        return this.lastHitAt === undefined || !this.game || this.game.gameTime - this.lastHitAt >= sec;
+    }
+
     dashCdTotal() {
         const relicCdr = (this.relics && this.relics.includes('chrono_watch')) ? 0.18 : 0;
         const mutCdr = (this.game && this.game.mutations && this.game.mutations.includes('hyper_frenzy')) ? 0.5 : 0;
@@ -12960,6 +12973,8 @@ class Player {
     // pct:额外按最大生命百分比的真实伤害(无视防御/减伤值,护盾只能挡一半)
     takeDamage(damage, src = '其他伤害', pct = 0) {
         if (this.invincibleTimer > 0 || this.dashTimer > 0) return 0;
+        // 最后一次挨打(含被闪避/护盾挡下)的游戏时间:脱战回盾、狂徒铠甲脱战回血都按它判断
+        if (this.game) this.lastHitAt = this.game.gameTime;
         const t = this.tree || {};
 
         // 投射物与弹幕识别(敌方子弹或魔王激光)
