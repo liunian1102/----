@@ -269,8 +269,8 @@ const DMG_SRC_INFO = {
     body: { name: '碰撞', color: '#ef9a9a' }, other: { name: '其他', color: '#90a4ae' }
 };
 // 敌人中文名(死亡结算「致命一击」来源显示)
-const ENEMY_NAMES = { chaser: '追击者', patroller: '巡逻者', giant: '巨人', gunner: '炮手', dasher: '冲锋者', bomber: '自爆方块', treasure: '宝藏方块', healer: '医疗兵', splitter: '分裂者', shard: '碎片', reaper: '噬魂者' };
-const MP_ENEMY_TYPES = ['chaser', 'patroller', 'giant', 'gunner', 'dasher', 'bomber', 'treasure', 'healer', 'splitter', 'shard', 'reaper'];
+const ENEMY_NAMES = { chaser: '追击者', patroller: '巡逻者', giant: '巨人', gunner: '炮手', dasher: '冲锋者', bomber: '自爆方块', treasure: '宝藏方块', healer: '医疗兵', splitter: '分裂者', shard: '碎片', reaper: '噬魂者', burrower: '潜伏者' };
+const MP_ENEMY_TYPES = ['chaser', 'patroller', 'giant', 'gunner', 'dasher', 'bomber', 'treasure', 'healer', 'splitter', 'shard', 'reaper', 'burrower'];
 
 // 词缀精英体系 2.0 (Affix System 2.0)
 //   gale: 疾风(极速+风刃尾迹) / tenacity: 坚毅(霸体+坚毅护盾) / frost: 极寒(减速冰环) / vortex: 引力(黑洞牵引) / venom: 剧毒(毒雾洼地)
@@ -2379,6 +2379,7 @@ class Game {
                     (e.stunTimer > 0 ? 1 : 0) | (e._mpHit ? 2 : 0) | (e.elite ? 4 : 0) | (e.poison > 0 ? 8 : 0) | (e.burnT > 0 ? 16 : 0) | ((affixIdx & 7) << 5)];
                 e._mpHit = false;
                 if (e.type === 'gunner') row.push(q2(e.aimAngle || 0), q2(e.shootTimer || 0), q2(e.shootInterval || 1));
+                else if (e.type === 'burrower') row.push(e.state, q2(e.stateTimer), q2(e.stateDur), q1(e.lockX), q1(e.lockY));
                 else if (e.type === 'dasher' || e.type === 'bomber' || e.type === 'healer') row.push(e.state, q2(e.stateTimer), q2(e.stateDur), q2(e.dashAngle),
                     q1(e.type === 'dasher' ? e.dashDist : e.type === 'bomber' ? e.blastRadius : e.healRadius));
                 return row;
@@ -2552,7 +2553,10 @@ class Game {
                 if (r[6] & 2) e.flash();
                 if (r.length > 7) {
                     if (e.type === 'gunner') { e.aimAngle = r[7]; e.shootTimer = r[8]; e.shootInterval = r[9]; }
-                    else {
+                    else if (e.type === 'burrower') {
+                        if (!isNew && e.state === 1 && r[7] === 2) Sound.play('meteor'); // 破土
+                        e.state = r[7]; e.stateTimer = r[8]; e.stateDur = r[9]; e.lockX = r[10]; e.lockY = r[11];
+                    } else {
                         // 冲刺 / 点燃引信的音效按状态边沿在本机播放
                         if (!isNew && r[7] !== e.state) {
                             if (e.type === 'dasher' && r[7] === 2) Sound.play('dash');
@@ -7369,6 +7373,10 @@ class Game {
                 this._bomberExplode(e, true);
                 continue;
             }
+            if (e.erupt) {
+                e.erupt = false;
+                this._burrowerErupt(e);
+            }
             // 炮手开火:取出 pendingShot 并生成敌方子弹
             if (e.pendingShot) {
                 const s = e.pendingShot;
@@ -7436,6 +7444,20 @@ class Game {
             this.enemies.push(s);
         }
         this.spawnParticles(cx, cy, '#84ffff', 10, 1.5, 4, 2, 4, 0.05);
+    }
+
+    // 潜伏者破土:落点范围震伤玩家(走 _bossHitPlayer:冲刺可完美闪避)
+    _burrowerErupt(e) {
+        const cx = e.x + e.size / 2, cy = e.y + e.size / 2, r = e.eruptRadius;
+        this.effects.push({ type: 'shockwave', x: cx, y: cy, radius: 8, maxRadius: r, color: '#ffab40', ttl: 0.35, maxTtl: 0.35 });
+        this.spawnParticles(cx, cy, '#8d6e63', 18, 2, 6, 2, 5, 0.04);
+        this.spawnParticles(cx, cy, '#ffcc80', 8, 2, 5, 1, 3, 0.06);
+        this.screenShake = Math.max(this.screenShake, 0.18);
+        Sound.play('meteor');
+        for (const p of this._livingPlayers()) {
+            const d = Math.hypot(p.x + p.size / 2 - cx, p.y + p.size / 2 - cy);
+            if (d <= r + p.size * 0.3) this._bossHitPlayer(p, e.eruptDamage, '#ffab40', '潜伏者破土');
+        }
     }
 
     _bomberExplode(e, armed) {
@@ -7786,6 +7808,8 @@ class Game {
             if (this.gameTime >= 90) pool.push(['splitter', 7]);
             // 噬魂者 120 秒后加入:按最大生命百分比造成真实伤害(无视防御、半穿护盾),专治堆血堆防;场上最多 4 个
             if (this.gameTime >= 120 && this.enemies.filter(e => e.type === 'reaper').length < 4) pool.push(['reaper', 6]);
+            // 潜伏者 100 秒后加入:钻地逼近、破土震击;场上最多 4 个
+            if (this.gameTime >= 100 && this.enemies.filter(e => e.type === 'burrower').length < 4) pool.push(['burrower', 6]);
             let roll = Math.random() * pool.reduce((a, w) => a + w[1], 0);
             let type = pool[0][0];
             for (const [t, w] of pool) { if ((roll -= w) < 0) { type = t; break; } }
@@ -13596,14 +13620,15 @@ class Player {
 class Enemy {
     static SPAWN_IN = 0.5;
     // 立绘外发光颜色(与原来方块的光晕一致)
-    static GLOW = { chaser: '#ff1744', patroller: '#2979ff', giant: '#d500f9', gunner: '#ff6f00', dasher: '#ffd600', bomber: '#ff4081', treasure: '#ffd740', healer: '#00e676', splitter: '#00e5ff', shard: '#18ffff', reaper: '#d500f9' };
+    static GLOW = { chaser: '#ff1744', patroller: '#2979ff', giant: '#d500f9', gunner: '#ff6f00', dasher: '#ffd600', bomber: '#ff4081', treasure: '#ffd740', healer: '#00e676', splitter: '#00e5ff', shard: '#18ffff', reaper: '#d500f9', burrower: '#ff9100' };
     static onDamage = null; // 伤害统计回调(Game._creditDmg),敌人和魔王共用
     static INTROS = {
         dasher: { text: '新敌人「冲」:蓄力后直线冲刺,看准路线侧身躲开', color: '#ffe57f' },
         bomber: { text: '新敌人「爆」:贴身会自爆,先打爆它还能炸伤周围敌人', color: '#ff80ab' },
         healer: { text: '新敌人「医」:躲在远处给周围敌人回血,优先打掉它', color: '#69f0ae' },
         splitter: { text: '新敌人「裂」:被打碎会裂成三块小碎片,别被包围', color: '#84ffff' },
-        reaper: { text: '新敌人「蚀」:每次碰撞削去 12% 最大生命,无视防御,别让它贴身', color: '#ea80fc' }
+        reaper: { text: '新敌人「蚀」:每次碰撞削去 12% 最大生命,无视防御,别让它贴身', color: '#ea80fc' },
+        burrower: { text: '新敌人「潜」:钻地时很难打,地面出现裂纹圈就快离开;破土后会愣一会儿,趁机集火(控制技能能把它震出地面)', color: '#ffcc80' }
     };
 
     constructor(x, y, type, difficulty) {
@@ -13725,6 +13750,20 @@ class Enemy {
                 this.blastRadius = 80;
                 this.blastDamage = 25 * this.difficulty;
                 break;
+            case 'burrower': // 潜伏者:钻地快速逼近(受伤 -70%、无碰撞伤害),锁定玩家脚下后破土震击,出土后愣 2.2 秒
+                this.size = 30;
+                this.speed = 1.7 * this.difficulty;   // 地下移速;出土后只有三成
+                this.maxHealth = 70 * this.difficulty;
+                this.currentHealth = this.maxHealth;
+                this.attack = 12 * this.difficulty;
+                this.defense = 4 * this.difficulty;
+                this.color = '#a1887f';
+                this.eruptRadius = 54;
+                this.eruptDamage = 22 * this.difficulty;
+                this.burrowCD = 0.8;
+                this.lockX = 0;
+                this.lockY = 0;
+                break;
             case 'treasure': // 宝藏方块:不伤人,远离玩家四处逃窜,事件结束前没打死就溜走
                 this.size = 28;
                 this.speed = 2.3 + 0.35 * this.difficulty;
@@ -13803,6 +13842,8 @@ class Enemy {
                 this.pendingHeal = false;
                 this.healCD = 1.2;
             }
+            // 潜伏者被控:直接震出地面(不破土伤人),进入出土硬直
+            if (this.type === 'burrower' && this.state !== 2) this._setState(2, 2.2);
             return;
         }
         switch (this.type) {
@@ -13826,6 +13867,9 @@ class Enemy {
                 break;
             case 'bomber':
                 this.updateBomber(playerX, playerY, playerSize);
+                break;
+            case 'burrower':
+                this.updateBurrower(playerX, playerY, playerSize);
                 break;
             case 'treasure':
                 this.updateTreasure(playerX, playerY, width, height, playerSize);
@@ -14025,9 +14069,48 @@ class Enemy {
         }
     }
 
+    // 潜伏者:0 地下逼近 → 1 锁定脚下、地下冲过去(地面裂纹圈预警)→ 破土(erupt 由 Game 结算)→ 2 出土硬直 → 0
+    updateBurrower(playerX, playerY, playerSize) {
+        const { dx, dy, dist } = this._toTarget(playerX, playerY, playerSize);
+        if (this.state === 0) {
+            if (dist > 0) {
+                this.x += (dx / dist) * this.speed;
+                this.y += (dy / dist) * this.speed;
+            }
+            this.burrowCD -= DT;
+            if (dist < 150 && this.burrowCD <= 0) {
+                this.lockX = playerX + playerSize / 2;
+                this.lockY = playerY + playerSize / 2;
+                this._setState(1, 0.85);
+            }
+        } else if (this.state === 1) {
+            // 剩余时间内匀速钻到锁定点正下方
+            const cx = this.x + this.size / 2, cy = this.y + this.size / 2;
+            const k = Math.min(1, DT / Math.max(DT, this.stateTimer));
+            this.x += (this.lockX - cx) * k;
+            this.y += (this.lockY - cy) * k;
+            this.stateTimer -= DT;
+            if (this.stateTimer <= 0) {
+                this.erupt = true;
+                this._setState(2, 2.2);
+            }
+        } else {
+            if (dist > 0) {
+                this.x += (dx / dist) * this.speed * 0.3;
+                this.y += (dy / dist) * this.speed * 0.3;
+            }
+            this.stateTimer -= DT;
+            if (this.stateTimer <= 0) {
+                this._setState(0, 0);
+                this.burrowCD = 1.4;
+            }
+        }
+    }
+
     // 接触伤害:冲刺中的冲锋者更疼
     contactDamage() {
         if (this.type === 'treasure') return 0;
+        if (this.type === 'burrower' && this.state !== 2) return 0; // 地下时碰不到
         return this.attack * (this.type === 'dasher' && this.state === 2 ? 1.5 : 1);
     }
 
@@ -14044,6 +14127,7 @@ class Enemy {
         const am = 1 + (m - 1) * 0.5;
         this.attack *= am;
         if (this.blastDamage) this.blastDamage *= am;
+        if (this.eruptDamage) this.eruptDamage *= am;
     }
 
     updateGunner(playerX, playerY) {
@@ -14169,6 +14253,8 @@ class Enemy {
     }
     
     takeDamage(damage) {
+        // 潜伏者钻在地下时只吃三成伤害,破土后的硬直才是集火窗口
+        if (this.type === 'burrower' && this.state !== 2) damage *= 0.3;
         let actualDamage = Math.max(1, damage - this.defense);
         // 坚毅词缀:优先扣除坚毅护盾
         if (this.affix === 'tenacity' && this.tenacityShield > 0) {
@@ -14252,6 +14338,11 @@ class Enemy {
     }
 
     _renderBody(ctx, snap) {
+        // 潜伏者钻在地下时只露出一个土包
+        if (this.type === 'burrower' && this.state !== 2) {
+            SpriteCache.drawPx(ctx, Enemy.moundSprite(this.size), this.x, this.y, snap);
+            return;
+        }
         // 本体(渐变 + 光晕 + 描边 + 文字)按类型缓存,避免每帧 shadowBlur
         SpriteCache.drawPx(ctx, Enemy.bodySprite(this.type, this.size), this.x, this.y, snap);
         if (this.type === 'gunner') this._renderGunnerTop(ctx, snap);
@@ -14280,6 +14371,24 @@ class Enemy {
                 ctx.lineWidth = 1.5;
                 ctx.beginPath();
                 ctx.arc(cx, cy, e.size * 0.72, 0, Math.PI * 2);
+                ctx.stroke();
+            }
+            if (e.type === 'burrower' && e.state === 1) {
+                // 潜伏者锁定的破土点:泥色圈 + 随前摇张开的放射裂纹,填满即破土
+                const k = Math.max(0, Math.min(1, 1 - e.stateTimer / (e.stateDur || 1)));
+                const r = e.eruptRadius || 54;
+                ctx.fillStyle = `rgba(141,110,99,${0.18 + 0.14 * k})`;
+                ctx.beginPath(); ctx.arc(e.lockX, e.lockY, r, 0, Math.PI * 2); ctx.fill();
+                ctx.fillStyle = 'rgba(255,171,64,0.28)';
+                ctx.beginPath(); ctx.arc(e.lockX, e.lockY, r * k, 0, Math.PI * 2); ctx.fill();
+                ctx.strokeStyle = `rgba(255,204,128,${0.5 + 0.5 * k})`;
+                ctx.lineWidth = 2;
+                ctx.beginPath(); ctx.arc(e.lockX, e.lockY, r, 0, Math.PI * 2);
+                for (let i = 0; i < 6; i++) {
+                    const a = i * Math.PI / 3 + (e.id % 7), c = Math.cos(a), sn = Math.sin(a);
+                    ctx.moveTo(e.lockX + c * r * 0.2, e.lockY + sn * r * 0.2);
+                    ctx.lineTo(e.lockX + c * r * (0.25 + 0.65 * k), e.lockY + sn * r * (0.25 + 0.65 * k));
+                }
                 ctx.stroke();
             }
             if (e.type === 'gunner') {
@@ -14536,6 +14645,41 @@ class Enemy {
     }
 
     // ── 精灵缓存(静态部分只画一次,之后 drawImage) ──
+    // 潜伏者的土包:半椭圆泥堆 + 裂纹 + 冒出的钻头尖
+    static moundSprite(size) {
+        return SpriteCache.get('enemy|mound|' + size, size, size, 3, g => {
+            const w = size, h = size;
+            const grad = g.createLinearGradient(0, h * 0.35, 0, h);
+            grad.addColorStop(0, '#a1887f');
+            grad.addColorStop(1, '#4e342e');
+            g.fillStyle = grad;
+            g.strokeStyle = '#120d22';
+            g.lineWidth = 1.6;
+            g.beginPath();
+            g.moveTo(-1, h);
+            g.quadraticCurveTo(w * 0.08, h * 0.45, w * 0.5, h * 0.4);
+            g.quadraticCurveTo(w * 0.92, h * 0.45, w + 1, h);
+            g.closePath();
+            g.fill();
+            g.stroke();
+            g.strokeStyle = 'rgba(255,204,128,0.55)';
+            g.lineWidth = 1.2;
+            g.beginPath();
+            g.moveTo(w * 0.3, h * 0.62); g.lineTo(w * 0.42, h * 0.74); g.lineTo(w * 0.36, h * 0.88);
+            g.moveTo(w * 0.66, h * 0.58); g.lineTo(w * 0.58, h * 0.72); g.lineTo(w * 0.7, h * 0.84);
+            g.stroke();
+            g.fillStyle = '#cfd8dc';
+            g.strokeStyle = '#120d22';
+            g.beginPath();
+            g.moveTo(w * 0.5, h * 0.12); g.lineTo(w * 0.6, h * 0.44); g.lineTo(w * 0.4, h * 0.44); g.closePath();
+            g.fill(); g.stroke();
+            g.fillStyle = '#6d4c41';
+            for (const [px, py, r] of [[0.18, 0.9, 2], [0.82, 0.86, 2.4], [0.5, 0.94, 1.6]]) {
+                g.beginPath(); g.arc(w * px, h * py, r, 0, Math.PI * 2); g.fill();
+            }
+        });
+    }
+
     static bodySprite(type, size) {
         const art = Enemy.artImage(type);
         if (art) return Art.sprite('enemy|' + type, art, size, type === 'giant' ? 12 : 8, Enemy.GLOW[type] || '#ff1744');
@@ -14558,10 +14702,10 @@ class Enemy {
                 g.stroke();
                 return;
             }
-            const glowColors = { chaser: '#ff1744', patroller: '#2979ff', giant: '#d500f9', dasher: '#ffd600', bomber: '#ff4081', treasure: '#ffd740', healer: '#00e676', splitter: '#00e5ff', shard: '#18ffff', reaper: '#d500f9' };
-            const lightColors = { chaser: '#ff6b6b', patroller: '#64b5f6', giant: '#e040fb', dasher: '#fff59d', bomber: '#ff80ab', treasure: '#fffde7', healer: '#b9f6ca', splitter: '#84ffff', shard: '#b2ebf2', reaper: '#ce93d8' };
-            const darkColors = { chaser: '#b71c1c', patroller: '#0d47a1', giant: '#6a0080', dasher: '#f57f17', bomber: '#880e4f', treasure: '#c79100', healer: '#00695c', splitter: '#006064', shard: '#00838f', reaper: '#1a0033' };
-            const labels = { chaser: '追', patroller: '巡', giant: '巨', dasher: '冲', bomber: '爆', treasure: '宝', healer: '医', splitter: '裂', shard: '', reaper: '蚀' };
+            const glowColors = { chaser: '#ff1744', patroller: '#2979ff', giant: '#d500f9', dasher: '#ffd600', bomber: '#ff4081', treasure: '#ffd740', healer: '#00e676', splitter: '#00e5ff', shard: '#18ffff', reaper: '#d500f9', burrower: '#ff9100' };
+            const lightColors = { chaser: '#ff6b6b', patroller: '#64b5f6', giant: '#e040fb', dasher: '#fff59d', bomber: '#ff80ab', treasure: '#fffde7', healer: '#b9f6ca', splitter: '#84ffff', shard: '#b2ebf2', reaper: '#ce93d8', burrower: '#d7ccc8' };
+            const darkColors = { chaser: '#b71c1c', patroller: '#0d47a1', giant: '#6a0080', dasher: '#f57f17', bomber: '#880e4f', treasure: '#c79100', healer: '#00695c', splitter: '#006064', shard: '#00838f', reaper: '#1a0033', burrower: '#3e2723' };
+            const labels = { chaser: '追', patroller: '巡', giant: '巨', dasher: '冲', bomber: '爆', treasure: '宝', healer: '医', splitter: '裂', shard: '', reaper: '蚀', burrower: '潜' };
             const glow = glowColors[type] || '#ff1744';
             const r = type === 'giant' ? 10 : 6;
 
