@@ -209,6 +209,21 @@ const ArtSVG = (() => {
             eye(37, 58, 8, 9, 1, 1, '#004d40', 0.5) + eye(63, 58, 8, 9, -1, 1, '#004d40', 0.5) +
             line('M27 45 L43 50', 4.5) + line('M73 45 L57 50', 4.5)),
 
+        // 潜伏者:戴矿灯安全帽的鼹鼠矿工,护目镜 + 一对铲爪,身上沾着泥
+        burrower: () => svg(bodyDefs('#bcaaa4', '#4e342e') +
+            `<linearGradient id="hat" x1="0" y1="0" x2="0" y2="1"><stop offset="0" stop-color="#fff59d"/><stop offset="1" stop-color="#f9a825"/></linearGradient>` +
+            `<radialGradient id="lens" cx="0.4" cy="0.35" r="0.65"><stop offset="0" stop-color="#ffe0b2"/><stop offset="0.5" stop-color="#ffab40"/><stop offset="1" stop-color="#e65100"/></radialGradient>`,
+            shape('M4 96 L-6 108 L10 104 L14 112 L22 98 Z', '#efebe9', 3) + shape('M96 96 L106 108 L90 104 L86 112 L78 98 Z', '#efebe9', 3) +
+            cube(20) +
+            `<path d="M8 74 Q24 66 36 78 Q50 70 62 80 Q78 68 92 76 L92 86 Q92 94 84 94 H16 Q8 94 8 86 Z" fill="#5d4037" opacity="0.55"/>` +
+            shape('M10 30 Q10 -6 50 -6 Q90 -6 90 30 Z', 'url(#hat)', 4) + shape('M2 30 H98 V38 H2 Z', '#f9a825', 3.5) +
+            `<circle cx="50" cy="12" r="10" fill="#fffde7" stroke="${OUT}" stroke-width="3.5"/><circle cx="50" cy="12" r="5" fill="#fff59d"/>` +
+            line('M14 52 H86', 6, '#3e2723') +
+            `<circle cx="33" cy="52" r="13" fill="url(#lens)" stroke="${OUT}" stroke-width="4"/><circle cx="67" cy="52" r="13" fill="url(#lens)" stroke="${OUT}" stroke-width="4"/>` +
+            `<circle cx="29" cy="48" r="4" fill="#fff" opacity="0.85"/><circle cx="63" cy="48" r="4" fill="#fff" opacity="0.85"/>` +
+            shape('M42 70 Q50 64 58 70 Q50 78 42 70 Z', '#ff8a80', 2.5) +
+            shape('M45 74 L47 82 L50 75 L53 82 L55 74', '#fff', 1.8)),
+
         // 噬魂者:兜帽里只露出发光双眼的暗紫幽灵
         reaper: () => svg(bodyDefs('#9575cd', '#12002b') +
             `<radialGradient id="hood" cx="0.5" cy="0.35" r="0.7"><stop offset="0" stop-color="#5e35b1"/><stop offset="1" stop-color="#1a0638"/></radialGradient>`,
