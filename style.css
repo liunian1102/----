@@ -170,6 +170,16 @@ button:active {
     margin-bottom: 6px;
 }
 
+/* 页面文字里的 emoji 换成的图标(art.js EmojiArt.patchDom),与文字等高 */
+img.emo {
+    display: inline-block;
+    width: 1.15em;
+    height: 1.15em;
+    vertical-align: -0.2em;
+    margin: 0 0.04em;
+    pointer-events: none;
+}
+
 /* 大厅标题上方的一排角色立绘(art.js 生成),轻轻上下浮动 */
 .mp-heroes {
     display: flex;

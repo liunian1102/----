@@ -1097,6 +1097,8 @@ class Game {
         this.dpr = 1;
         this.quality = 0;
         this._patchShadowBlur();
+        // 画布文字里的 emoji 统一画成 art.js 的图标(各系统 emoji 字体不同,这样各端一致)
+        if (typeof EmojiArt !== 'undefined') EmojiArt.patchCanvas(this.ctx);
         this.resizeCanvas();
         Game.instance = this;
         this.player = new Player(this.width / 2, this.height / 2, this);
@@ -3782,7 +3784,15 @@ class Game {
         ctx.save();
         ctx.fillStyle = 'rgba(0,0,0,0.6)';
         ctx.fillRect(-W, -H, W * 3, H * 3);
-        const pw = Math.min(300, W - 32), ph = 400;
+        // 概况行数会随本局内容变多(精英/遗物/致命一击),面板按行数排版:行多时改三列,放不下再压缩按钮
+        const rows = this._runSummaryRows();
+        const cols = rows.length > 6 && W >= 380 ? 3 : 2;
+        const pw = Math.min(cols === 3 ? 360 : 300, W - 32);
+        const rowH = 32, rowsH = Math.ceil(rows.length / cols) * rowH;
+        let bh = 36, gap = 8;
+        const fixedH = 76 + rowsH + 44 + 14;
+        if (fixedH + 4 * (bh + gap) > H - 16) { bh = 30; gap = 6; }
+        const ph = fixedH + 4 * (bh + gap);
         const px = (W - pw) / 2, py = Math.max(8, (H - ph) / 2);
         this._pausePanel = { x: px, y: py, w: pw, h: ph };
         ctx.fillStyle = 'rgba(6, 16, 28, 0.94)';
@@ -3804,11 +3814,10 @@ class Game {
         ctx.fillStyle = 'rgba(200,232,255,0.6)';
         ctx.fillText(`${diffDef(this.diffMode).name}  ·  生存 ${Math.floor(t / 60)}:${String(t % 60).padStart(2, '0')}  ·  ★ ${this.score}`, W / 2, py + 60);
 
-        // 概况:两列三行
-        const rows = this._runSummaryRows();
-        const colW = (pw - 32) / 2;
+        // 概况:两列或三列
+        const colW = (pw - 32) / cols;
         rows.forEach(([k, v], i) => {
-            const cx = px + 16 + (i % 2) * colW, cy = py + 76 + Math.floor(i / 2) * 33;
+            const cx = px + 16 + (i % cols) * colW, cy = py + 76 + Math.floor(i / cols) * rowH;
             ctx.textAlign = 'left';
             ctx.font = '10px Arial';
             ctx.fillStyle = 'rgba(200,232,255,0.55)';
@@ -3819,17 +3828,17 @@ class Game {
             while (txt.length > 2 && ctx.measureText(txt).width > colW - 12) txt = txt.slice(0, -2) + '…';
             ctx.fillText(txt, cx + 6, cy + 24);
         });
-        this._renderDmgBar(ctx, px + 16, py + 186, pw - 32);
+        this._renderDmgBar(ctx, px + 16, py + 76 + rowsH + 8, pw - 32);
         ctx.restore();
 
-        const bw = pw - 48, bh = 36, bx = px + 24;
-        let by = py + 230;
+        const bw = pw - 48, bx = px + 24;
+        let by = py + fixedH;
         this.drawButton(bx, by, bw, bh, '#00b0ff', '继续游戏', 'resume');
-        by += bh + 8;
+        by += bh + gap;
         this.drawButton(bx, by, bw, bh, '#546e7a', Sound.muted ? '🔇 声音:关' : '🔊 声音:开', 'mute');
-        by += bh + 8;
+        by += bh + gap;
         this.drawButton(bx, by, bw, bh, '#546e7a', this.showDmgNums ? '伤害数字:开' : '伤害数字:关', 'dmgNums');
-        by += bh + 8;
+        by += bh + gap;
         const quitText = this.mpMode === 'guest' ? '离开房间' : '结束本局';
         this.drawButton(bx, by, bw, bh, this._pauseQuitArmed ? '#ff1744' : '#8d3b3b',
                         this._pauseQuitArmed ? `再点一次${quitText}` : quitText, 'quit');
@@ -15457,6 +15466,9 @@ window.addEventListener('load', () => {
     game.render();
     updateBestScoreLabel();
     updateProgressLabel();
+
+    // 页面文字(大厅、弹窗、结算页、构筑界面……)里的 emoji 统一换成图标,之后动态生成的内容也会被替换
+    if (typeof EmojiArt !== 'undefined') EmojiArt.patchDom(document.body);
 
     // 大厅标题上方的一排角色立绘(纯装饰)
     const heroes = document.getElementById('mpHeroes');
