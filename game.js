@@ -606,9 +606,14 @@ function schoolState(p) {
     return p._school;
 }
 // 构筑修正合计:暗金遗物 + 天赋修正 + 流派共鸣
+// 天赋树里只能经 statMod 生效的修正:statMod 的 key → 天赋树节点 mods 里的 key
+//   (其余天赋树修正在使用处直接读 p.tree,不在这里,免得算两遍;天赋树的 speed 是固定值,百分比移速叫 moveSpd)
+const TREE_STAT_KEY = { speed: 'moveSpd', maxHpPct: 'maxHpPct', flatRed: 'flatRed', execute: 'execute', freeze: 'freeze', thunder: 'thunder',
+    healOnKill: 'healOnKill', oocRegen: 'oocRegen', expMult: 'expMult', pickup: 'pickup', itemDur: 'itemDur', scoreMult: 'scoreMult', lowLifeEvade: 'lowLifeEvade' };
 function statMod(p, key) {
     if (!p) return 0;
-    return relicMod(p, key) + ((p.tmods && p.tmods[key]) || 0) + (schoolState(p).mods[key] || 0);
+    const tk = TREE_STAT_KEY[key];
+    return relicMod(p, key) + ((p.tmods && p.tmods[key]) || 0) + (schoolState(p).mods[key] || 0) + ((tk && p.tree && p.tree[tk]) || 0);
 }
 const RELIC_TYPES = Object.keys(RELICS);
 
@@ -639,54 +644,152 @@ const GEAR_TYPES = Object.keys(GEARS);
 // ══════════════════════════════════════════════════════════════════
 const TREE_COLORS = { str: '#ff5252', dex: '#69f0ae', int: '#40c4ff', mix: '#ffd740', start: '#ffffff' };
 const TREE_BRANCH_NAMES = { str: '力量', dex: '敏捷', int: '智慧' };
-// a = 角度(度,0 朝右、90 朝下),r = 离中心距离;kind: start / small / notable / socket / keystone
+// a = 角度(度,0 朝右、90 朝下),r = 离中心距离;kind: start / small / notable / socket / keystone / mastery
+// 布局(由脚本生成,按需手改):内圈三系各 7 个节点 → 每系分出左 / 中 / 右三路星团(各 6 个节点 + 尽头基石),
+//   中路另有「专精」(need = 该系至少点亮多少个节点才能点);三系之间是三个混合区;最外圈 12 颗「星」与星尘连成一环
 const TREE_NODES = [
-    { id: 'start', br: 'start', kind: 'start', name: '起点', a: 0, r: 0, mods: {}, desc: '天赋从这里出发,只能点亮与已点亮节点相连的节点' },
-    // ── 力量(左上):攻击、生命、全伤害 ──
-    { id: 's1',  br: 'str', kind: 'small',    name: '力量',     a: -150, r: 88,  mods: { attack: 4 } },
-    { id: 's2',  br: 'str', kind: 'small',    name: '体魄',     a: -163, r: 162, mods: { maxHealth: 25 } },
-    { id: 's3',  br: 'str', kind: 'small',    name: '力量',     a: -137, r: 162, mods: { attack: 4 } },
-    { id: 'sN1', br: 'str', kind: 'notable',  name: '钢筋铁骨', a: -173, r: 243, mods: { defense: 6, maxHealth: 30 }, icon: '⛨' },
-    { id: 'sSk', br: 'str', kind: 'socket',   name: 'Q 连接孔', a: -150, r: 238, mods: { sockQ: 1 }, icon: 'Q' },
-    { id: 'sN2', br: 'str', kind: 'notable',  name: '战争狂热', a: -127, r: 243, mods: { dmg: 0.15 }, icon: '⚔' },
-    { id: 's4',  br: 'str', kind: 'small',    name: '蛮力',     a: -150, r: 318, mods: { attack: 5, maxHealth: 20 } },
-    { id: 'sK',  br: 'str', kind: 'keystone', name: '狂战之魂', a: -150, r: 398, mods: { lowLifeDmg: 0.5, healTaken: -0.4 }, icon: '☠' },
-    // ── 敏捷(下):攻速、暴击、移速 ──
-    { id: 'd1',  br: 'dex', kind: 'small',    name: '敏捷',     a: 90,  r: 88,  mods: { speed: 0.3 } },
-    { id: 'd2',  br: 'dex', kind: 'small',    name: '迅捷',     a: 77,  r: 162, mods: { atkSpd: 0.1 } },
-    { id: 'd3',  br: 'dex', kind: 'small',    name: '精准',     a: 103, r: 162, mods: { crit: 0.05 } },
-    { id: 'dN1', br: 'dex', kind: 'notable',  name: '致命精准', a: 67,  r: 243, mods: { crit: 0.08, critDmg: 0.4 }, icon: '✷' },
-    { id: 'dSk', br: 'dex', kind: 'socket',   name: '普攻连接孔', a: 90, r: 238, mods: { sockA: 1 }, icon: 'A' },
-    { id: 'dN2', br: 'dex', kind: 'notable',  name: '疾风连击', a: 113, r: 243, mods: { atkSpd: 0.15, dashCdr: 0.15 }, icon: '➹' },
-    { id: 'd4',  br: 'dex', kind: 'small',    name: '灵巧',     a: 90,  r: 318, mods: { speed: 0.3, atkSpd: 0.06 } },
-    { id: 'dK',  br: 'dex', kind: 'keystone', name: '疾风之舞', a: 90,  r: 398, mods: { evade: 0.2, defPct: -0.5 }, icon: '◌' },
-    // ── 智慧(右上):技能伤害、冷却 ──
-    { id: 'i1',  br: 'int', kind: 'small',    name: '智慧',     a: -30, r: 88,  mods: { skillDmg: 0.1 } },
-    { id: 'i2',  br: 'int', kind: 'small',    name: '专注',     a: -43, r: 162, mods: { cdr: 0.05 } },
-    { id: 'i3',  br: 'int', kind: 'small',    name: '智慧',     a: -17, r: 162, mods: { skillDmg: 0.1 } },
-    { id: 'iN1', br: 'int', kind: 'notable',  name: '奥术精通', a: -53, r: 243, mods: { skillDmg: 0.25 }, icon: '✦' },
-    { id: 'iSk', br: 'int', kind: 'socket',   name: 'E 连接孔', a: -30, r: 238, mods: { sockE: 1 }, icon: 'E' },
-    { id: 'iN2', br: 'int', kind: 'notable',  name: '时间扭曲', a: -7,  r: 243, mods: { cdr: 0.12 }, icon: '⧗' },
-    { id: 'i4',  br: 'int', kind: 'small',    name: '博学',     a: -30, r: 318, mods: { skillDmg: 0.08, cdr: 0.04 } },
-    { id: 'iK',  br: 'int', kind: 'keystone', name: '时空裂隙', a: -30, r: 398, mods: { cdr: 0.25, autoDmg: -0.3 }, icon: '⌛' },
-    // ── 三系之间的桥:混合属性 + 基石 ──
-    { id: 'b1',  br: 'mix', kind: 'small',    name: '嗜血回春', a: -90, r: 262, mods: { regen: 0.005, leech: 0.01 } },
-    { id: 'bK1', br: 'mix', kind: 'keystone', name: '不灭意志', a: -90, r: 372, mods: { dmgTaken: -0.25, dmg: -0.1 }, icon: '⛊' },
-    { id: 'b2',  br: 'mix', kind: 'small',    name: '毒理',     a: 30,  r: 262, mods: { dot: 0.3 } },
-    { id: 'bK2', br: 'mix', kind: 'keystone', name: '瘟疫使者', a: 30,  r: 372, mods: { poisonHit: 1, dmg: -0.15 }, icon: '☣' },
-    { id: 'b3',  br: 'mix', kind: 'small',    name: '广域',     a: 150, r: 262, mods: { aoe: 0.15 } },
-    { id: 'bK3', br: 'mix', kind: 'keystone', name: '玻璃大炮', a: 150, r: 372, mods: { dmg: 0.4, dmgTaken: 0.4 }, icon: '✸' }
+    { id: 'start', br: 'start', kind: 'start', name: '起点', a: 0, r: 0, mods: {  }, desc: '天赋从这里出发,只能点亮与已点亮节点相连的节点' },
+    { id: 's1', br: 'str', kind: 'small', name: '力量', a: -150, r: 88, mods: { attack: 4 } },
+    { id: 's2', br: 'str', kind: 'small', name: '体魄', a: -163, r: 162, mods: { maxHealth: 25 } },
+    { id: 's3', br: 'str', kind: 'small', name: '力量', a: -137, r: 162, mods: { attack: 4 } },
+    { id: 'sN1', br: 'str', kind: 'notable', name: '钢筋铁骨', a: -173, r: 243, mods: { defense: 6, maxHealth: 30 }, icon: '⛨' },
+    { id: 'sSk', br: 'str', kind: 'socket', name: 'Q 连接孔', a: -150, r: 238, mods: { sockQ: 1 }, icon: 'Q' },
+    { id: 'sN2', br: 'str', kind: 'notable', name: '战争狂热', a: -127, r: 243, mods: { dmg: 0.15 }, icon: '⚔' },
+    { id: 's4', br: 'str', kind: 'small', name: '蛮力', a: -150, r: 318, mods: { attack: 5, maxHealth: 20 } },
+    { id: 'sa1', br: 'str', kind: 'small', name: '铁皮', a: -182, r: 410, mods: { defense: 3 } },
+    { id: 'sa2', br: 'str', kind: 'small', name: '厚甲', a: -182, r: 490, mods: { defPct: 0.1 } },
+    { id: 'sa3', br: 'str', kind: 'notable', name: '钢铁堡垒', a: -182, r: 570, mods: { defense: 8, flatRed: 3 }, icon: '🛡' },
+    { id: 'sa4', br: 'str', kind: 'small', name: '坚韧', a: -189, r: 650, mods: { maxHpPct: 0.04 } },
+    { id: 'sa5', br: 'str', kind: 'small', name: '护甲', a: -175, r: 650, mods: { defense: 3 } },
+    { id: 'sa6', br: 'str', kind: 'notable', name: '不动如山', a: -182, r: 730, mods: { dmgTaken: -0.08, maxHealth: 40 }, icon: '⛊' },
+    { id: 'saK', br: 'str', kind: 'keystone', name: '铁壁要塞', a: -186, r: 840, mods: { flatRed: 8, defPct: 0.5, moveSpd: -0.15 }, icon: '🏆' },
+    { id: 'sb1', br: 'str', kind: 'small', name: '怒意', a: -150, r: 410, mods: { attack: 5 } },
+    { id: 'sb2', br: 'str', kind: 'small', name: '嗜战', a: -150, r: 490, mods: { lowLifeDmg: 0.1 } },
+    { id: 'sb3', br: 'str', kind: 'notable', name: '鲜血狂怒', a: -150, r: 570, mods: { lowLifeDmg: 0.2, atkSpd: 0.06 }, icon: '💢' },
+    { id: 'sb4', br: 'str', kind: 'small', name: '残暴', a: -157, r: 650, mods: { dmg: 0.05 } },
+    { id: 'sb5', br: 'str', kind: 'small', name: '力量', a: -143, r: 650, mods: { attack: 5 } },
+    { id: 'sb6', br: 'str', kind: 'notable', name: '屠戮', a: -150, r: 730, mods: { dmg: 0.12, execute: 0.2 }, icon: '☠' },
+    { id: 'sK', br: 'str', kind: 'keystone', name: '狂战之魂', a: -154, r: 840, mods: { lowLifeDmg: 0.5, healTaken: -0.4 }, icon: '☠' },
+    { id: 'sM', br: 'str', kind: 'mastery', name: '力量专精', a: -163, r: 790, mods: { attack: 15, maxHpPct: 0.1, dmg: 0.1 }, icon: '⚒', need: 14 },
+    { id: 'sc1', br: 'str', kind: 'small', name: '活力', a: -118, r: 410, mods: { regen: 0.002 } },
+    { id: 'sc2', br: 'str', kind: 'small', name: '吸取', a: -118, r: 490, mods: { leech: 0.005 } },
+    { id: 'sc3', br: 'str', kind: 'notable', name: '生命虹吸', a: -118, r: 570, mods: { leech: 0.01, healTaken: 0.15 }, icon: '❣' },
+    { id: 'sc4', br: 'str', kind: 'small', name: '再生', a: -125, r: 650, mods: { regen: 0.003 } },
+    { id: 'sc5', br: 'str', kind: 'small', name: '体魄', a: -111, r: 650, mods: { maxHealth: 25 } },
+    { id: 'sc6', br: 'str', kind: 'notable', name: '不死之身', a: -118, r: 730, mods: { regen: 0.006, oocRegen: 3 }, icon: '🌱' },
+    { id: 'scK', br: 'str', kind: 'keystone', name: '嗜血狂魔', a: -122, r: 840, mods: { leech: 0.03, maxHpPct: -0.2 }, icon: '🧛' },
+    { id: 'd1', br: 'dex', kind: 'small', name: '敏捷', a: 90, r: 88, mods: { speed: 0.3 } },
+    { id: 'd2', br: 'dex', kind: 'small', name: '迅捷', a: 77, r: 162, mods: { atkSpd: 0.1 } },
+    { id: 'd3', br: 'dex', kind: 'small', name: '精准', a: 103, r: 162, mods: { crit: 0.05 } },
+    { id: 'dN1', br: 'dex', kind: 'notable', name: '致命精准', a: 67, r: 243, mods: { crit: 0.08, critDmg: 0.4 }, icon: '✷' },
+    { id: 'dSk', br: 'dex', kind: 'socket', name: '普攻连接孔', a: 90, r: 238, mods: { sockA: 1 }, icon: 'A' },
+    { id: 'dN2', br: 'dex', kind: 'notable', name: '疾风连击', a: 113, r: 243, mods: { atkSpd: 0.15, dashCdr: 0.15 }, icon: '➹' },
+    { id: 'd4', br: 'dex', kind: 'small', name: '灵巧', a: 90, r: 318, mods: { speed: 0.3, atkSpd: 0.06 } },
+    { id: 'da1', br: 'dex', kind: 'small', name: '锐眼', a: 58, r: 410, mods: { crit: 0.03 } },
+    { id: 'da2', br: 'dex', kind: 'small', name: '穿刺', a: 58, r: 490, mods: { critDmg: 0.15 } },
+    { id: 'da3', br: 'dex', kind: 'notable', name: '要害打击', a: 58, r: 570, mods: { crit: 0.06, critDmg: 0.3 }, icon: '🎯' },
+    { id: 'da4', br: 'dex', kind: 'small', name: '精准', a: 51, r: 650, mods: { crit: 0.03 } },
+    { id: 'da5', br: 'dex', kind: 'small', name: '锋利', a: 65, r: 650, mods: { critDmg: 0.15 } },
+    { id: 'da6', br: 'dex', kind: 'notable', name: '致命艺术', a: 58, r: 730, mods: { crit: 0.08, execute: 0.2 }, icon: '🗡' },
+    { id: 'daK', br: 'dex', kind: 'keystone', name: '刺客信条', a: 54, r: 840, mods: { crit: 0.25, critDmg: 0.5, maxHpPct: -0.2 }, icon: '😈' },
+    { id: 'db1', br: 'dex', kind: 'small', name: '轻盈', a: 90, r: 410, mods: { evade: 0.02 } },
+    { id: 'db2', br: 'dex', kind: 'small', name: '身法', a: 90, r: 490, mods: { dashCdr: 0.05 } },
+    { id: 'db3', br: 'dex', kind: 'notable', name: '残影步', a: 90, r: 570, mods: { evade: 0.04, dashCdr: 0.1 }, icon: '🌀' },
+    { id: 'db4', br: 'dex', kind: 'small', name: '灵动', a: 83, r: 650, mods: { moveSpd: 0.04 } },
+    { id: 'db5', br: 'dex', kind: 'small', name: '回避', a: 97, r: 650, mods: { evade: 0.02 } },
+    { id: 'db6', br: 'dex', kind: 'notable', name: '幻影', a: 90, r: 730, mods: { evade: 0.05, lowLifeEvade: 0.1 }, icon: '◐' },
+    { id: 'dK', br: 'dex', kind: 'keystone', name: '疾风之舞', a: 86, r: 840, mods: { evade: 0.2, defPct: -0.5 }, icon: '◌' },
+    { id: 'dM', br: 'dex', kind: 'mastery', name: '敏捷专精', a: 77, r: 790, mods: { atkSpd: 0.12, moveSpd: 0.08, crit: 0.05 }, icon: '🏹', need: 14 },
+    { id: 'dc1', br: 'dex', kind: 'small', name: '迅捷', a: 122, r: 410, mods: { atkSpd: 0.05 } },
+    { id: 'dc2', br: 'dex', kind: 'small', name: '疾行', a: 122, r: 490, mods: { moveSpd: 0.04 } },
+    { id: 'dc3', br: 'dex', kind: 'notable', name: '连射', a: 122, r: 570, mods: { atkSpd: 0.1, autoDmg: 0.1 }, icon: '➳' },
+    { id: 'dc4', br: 'dex', kind: 'small', name: '迅捷', a: 115, r: 650, mods: { atkSpd: 0.05 } },
+    { id: 'dc5', br: 'dex', kind: 'small', name: '冲锋', a: 129, r: 650, mods: { dashCdr: 0.05 } },
+    { id: 'dc6', br: 'dex', kind: 'notable', name: '风暴之眼', a: 122, r: 730, mods: { atkSpd: 0.1, moveSpd: 0.06 }, icon: '⇶' },
+    { id: 'dcK', br: 'dex', kind: 'keystone', name: '风行者', a: 118, r: 840, mods: { moveSpd: 0.25, dashCdr: 0.3, defPct: -0.3 }, icon: '🦅' },
+    { id: 'i1', br: 'int', kind: 'small', name: '智慧', a: -30, r: 88, mods: { skillDmg: 0.1 } },
+    { id: 'i2', br: 'int', kind: 'small', name: '专注', a: -43, r: 162, mods: { cdr: 0.05 } },
+    { id: 'i3', br: 'int', kind: 'small', name: '智慧', a: -17, r: 162, mods: { skillDmg: 0.1 } },
+    { id: 'iN1', br: 'int', kind: 'notable', name: '奥术精通', a: -53, r: 243, mods: { skillDmg: 0.25 }, icon: '✦' },
+    { id: 'iSk', br: 'int', kind: 'socket', name: 'E 连接孔', a: -30, r: 238, mods: { sockE: 1 }, icon: 'E' },
+    { id: 'iN2', br: 'int', kind: 'notable', name: '时间扭曲', a: -7, r: 243, mods: { cdr: 0.12 }, icon: '⧗' },
+    { id: 'i4', br: 'int', kind: 'small', name: '博学', a: -30, r: 318, mods: { skillDmg: 0.08, cdr: 0.04 } },
+    { id: 'ia1', br: 'int', kind: 'small', name: '冰霜', a: -62, r: 410, mods: { freeze: 0.02 } },
+    { id: 'ia2', br: 'int', kind: 'small', name: '灼热', a: -62, r: 490, mods: { dot: 0.1 } },
+    { id: 'ia3', br: 'int', kind: 'notable', name: '元素亲和', a: -62, r: 570, mods: { freeze: 0.03, dot: 0.2 }, icon: '❅' },
+    { id: 'ia4', br: 'int', kind: 'small', name: '寒意', a: -69, r: 650, mods: { freeze: 0.02 } },
+    { id: 'ia5', br: 'int', kind: 'small', name: '余烬', a: -55, r: 650, mods: { dot: 0.1 } },
+    { id: 'ia6', br: 'int', kind: 'notable', name: '冰火交融', a: -62, r: 730, mods: { freeze: 0.04, dot: 0.25 }, icon: '🔥' },
+    { id: 'iaK', br: 'int', kind: 'keystone', name: '元素过载', a: -66, r: 840, mods: { freeze: 0.08, dot: 0.5, critDmg: -0.5 }, icon: '☄' },
+    { id: 'ib1', br: 'int', kind: 'small', name: '专注', a: -30, r: 410, mods: { cdr: 0.03 } },
+    { id: 'ib2', br: 'int', kind: 'small', name: '奥术', a: -30, r: 490, mods: { skillDmg: 0.06 } },
+    { id: 'ib3', br: 'int', kind: 'notable', name: '法术回响', a: -30, r: 570, mods: { skillDmg: 0.12, cdr: 0.04 }, icon: '🔁' },
+    { id: 'ib4', br: 'int', kind: 'small', name: '冥思', a: -37, r: 650, mods: { cdr: 0.03 } },
+    { id: 'ib5', br: 'int', kind: 'small', name: '奥术', a: -23, r: 650, mods: { skillDmg: 0.06 } },
+    { id: 'ib6', br: 'int', kind: 'notable', name: '大魔导', a: -30, r: 730, mods: { skillDmg: 0.15, aoe: 0.1 }, icon: '✨' },
+    { id: 'iK', br: 'int', kind: 'keystone', name: '时空裂隙', a: -34, r: 840, mods: { cdr: 0.25, autoDmg: -0.3 }, icon: '⌛' },
+    { id: 'iM', br: 'int', kind: 'mastery', name: '智慧专精', a: -43, r: 790, mods: { skillDmg: 0.2, cdr: 0.08, aoe: 0.1 }, icon: '⚙', need: 14 },
+    { id: 'ic1', br: 'int', kind: 'small', name: '求知', a: 2, r: 410, mods: { expMult: 0.05 } },
+    { id: 'ic2', br: 'int', kind: 'small', name: '博闻', a: 2, r: 490, mods: { aoe: 0.05 } },
+    { id: 'ic3', br: 'int', kind: 'notable', name: '学者之道', a: 2, r: 570, mods: { expMult: 0.1, skillDmg: 0.08 }, icon: '📚' },
+    { id: 'ic4', br: 'int', kind: 'small', name: '洞悉', a: -5, r: 650, mods: { aoe: 0.05 } },
+    { id: 'ic5', br: 'int', kind: 'small', name: '求知', a: 9, r: 650, mods: { expMult: 0.05 } },
+    { id: 'ic6', br: 'int', kind: 'notable', name: '全知', a: 2, r: 730, mods: { expMult: 0.1, cdr: 0.06, aoe: 0.08 }, icon: '🌌' },
+    { id: 'icK', br: 'int', kind: 'keystone', name: '智者', a: -2, r: 840, mods: { expMult: 0.3, skillDmg: 0.2, autoDmg: -0.25 }, icon: '⚛' },
+    { id: 'b1', br: 'mix', kind: 'small', name: '嗜血回春', a: -90, r: 262, mods: { regen: 0.005, leech: 0.01 } },
+    { id: 'bK1', br: 'mix', kind: 'keystone', name: '不灭意志', a: -99, r: 352, mods: { dmgTaken: -0.25, dmg: -0.1 }, icon: '⛊' },
+    { id: 'h11', br: 'mix', kind: 'small', name: '坚毅', a: -84, r: 345, mods: { maxHealth: 20, defense: 2 } },
+    { id: 'h12', br: 'mix', kind: 'notable', name: '战法大师', a: -88, r: 430, mods: { dmg: 0.08, skillDmg: 0.08 }, icon: '⚔' },
+    { id: 'h13', br: 'mix', kind: 'small', name: '雷鸣', a: -96, r: 510, mods: { attack: 3 } },
+    { id: 'h14', br: 'mix', kind: 'small', name: '电弧', a: -81, r: 510, mods: { skillDmg: 0.05 } },
+    { id: 'h15', br: 'mix', kind: 'notable', name: '雷霆印记', a: -89, r: 590, mods: { dmg: 0.1, atkSpd: 0.05 }, icon: '⚡' },
+    { id: 'h16', br: 'mix', kind: 'small', name: '雷云', a: -87, r: 760, mods: { dmg: 0.03 } },
+    { id: 'h1K', br: 'mix', kind: 'keystone', name: '雷霆之怒', a: -98, r: 680, mods: { thunder: 1, atkSpd: -0.15 }, icon: '🌋' },
+    { id: 'b2', br: 'mix', kind: 'small', name: '毒理', a: 30, r: 262, mods: { dot: 0.3 } },
+    { id: 'bK2', br: 'mix', kind: 'keystone', name: '瘟疫使者', a: 21, r: 352, mods: { poisonHit: 1, dmg: -0.15 }, icon: '☣' },
+    { id: 'h21', br: 'mix', kind: 'small', name: '幸运', a: 36, r: 345, mods: { itemDur: 0.1 } },
+    { id: 'h22', br: 'mix', kind: 'notable', name: '命运之轮', a: 32, r: 430, mods: { scoreMult: 0.1, itemDur: 0.2 }, icon: '🎲' },
+    { id: 'h23', br: 'mix', kind: 'small', name: '寻宝', a: 24, r: 510, mods: { pickup: 20 } },
+    { id: 'h24', br: 'mix', kind: 'small', name: '财运', a: 39, r: 510, mods: { scoreMult: 0.05 } },
+    { id: 'h25', br: 'mix', kind: 'notable', name: '黄金律', a: 31, r: 590, mods: { expMult: 0.1, pickup: 40 }, icon: '💰' },
+    { id: 'h26', br: 'mix', kind: 'small', name: '福星', a: 33, r: 760, mods: { itemDur: 0.1 } },
+    { id: 'h2K', br: 'mix', kind: 'keystone', name: '幸运儿', a: 22, r: 680, mods: { itemDur: 0.5, pickup: 80, scoreMult: 0.25, dmg: -0.1 }, icon: '🎁' },
+    { id: 'b3', br: 'mix', kind: 'small', name: '广域', a: 150, r: 262, mods: { aoe: 0.15 } },
+    { id: 'bK3', br: 'mix', kind: 'keystone', name: '玻璃大炮', a: 141, r: 352, mods: { dmg: 0.4, dmgTaken: 0.4 }, icon: '✸' },
+    { id: 'h31', br: 'mix', kind: 'small', name: '斩杀', a: 156, r: 345, mods: { execute: 0.1 } },
+    { id: 'h32', br: 'mix', kind: 'notable', name: '处刑人', a: 152, r: 430, mods: { execute: 0.2, critDmg: 0.2 }, icon: '✂' },
+    { id: 'h33', br: 'mix', kind: 'small', name: '重击', a: 144, r: 510, mods: { dmg: 0.04 } },
+    { id: 'h34', br: 'mix', kind: 'small', name: '锋刃', a: 159, r: 510, mods: { crit: 0.02 } },
+    { id: 'h35', br: 'mix', kind: 'notable', name: '断头台', a: 151, r: 590, mods: { execute: 0.3, dmg: 0.06 }, icon: '💀' },
+    { id: 'h36', br: 'mix', kind: 'small', name: '血债', a: 153, r: 760, mods: { healOnKill: 1 } },
+    { id: 'h3K', br: 'mix', kind: 'keystone', name: '处刑者', a: 142, r: 680, mods: { execute: 0.8, healOnKill: 3, atkSpd: -0.1 }, icon: '⚖' },
+    { id: 'r1', br: 'str', kind: 'notable', name: '力量之星', a: -142, r: 975, mods: { attack: 8, maxHealth: 30 }, icon: '★' },
+    { id: 'r2', br: 'str', kind: 'notable', name: '力量之星', a: -110, r: 975, mods: { attack: 8, maxHealth: 30 }, icon: '★' },
+    { id: 'r3', br: 'mix', kind: 'notable', name: '混沌之星', a: -90, r: 975, mods: { dmg: 0.06, maxHpPct: 0.04 }, icon: '★' },
+    { id: 'r4', br: 'int', kind: 'notable', name: '智慧之星', a: -54, r: 975, mods: { skillDmg: 0.12, cdr: 0.04 }, icon: '★' },
+    { id: 'r5', br: 'int', kind: 'notable', name: '智慧之星', a: -22, r: 975, mods: { skillDmg: 0.12, cdr: 0.04 }, icon: '★' },
+    { id: 'r6', br: 'int', kind: 'notable', name: '智慧之星', a: 10, r: 975, mods: { skillDmg: 0.12, cdr: 0.04 }, icon: '★' },
+    { id: 'r7', br: 'mix', kind: 'notable', name: '混沌之星', a: 30, r: 975, mods: { dmg: 0.06, maxHpPct: 0.04 }, icon: '★' },
+    { id: 'r8', br: 'dex', kind: 'notable', name: '敏捷之星', a: 66, r: 975, mods: { atkSpd: 0.08, crit: 0.04 }, icon: '★' },
+    { id: 'r9', br: 'dex', kind: 'notable', name: '敏捷之星', a: 98, r: 975, mods: { atkSpd: 0.08, crit: 0.04 }, icon: '★' },
+    { id: 'r10', br: 'dex', kind: 'notable', name: '敏捷之星', a: 130, r: 975, mods: { atkSpd: 0.08, crit: 0.04 }, icon: '★' },
+    { id: 'r11', br: 'mix', kind: 'notable', name: '混沌之星', a: 150, r: 975, mods: { dmg: 0.06, maxHpPct: 0.04 }, icon: '★' },
+    { id: 'r12', br: 'str', kind: 'notable', name: '力量之星', a: -174, r: 975, mods: { attack: 8, maxHealth: 30 }, icon: '★' },
+    { id: 'rm1', br: 'mix', kind: 'small', name: '星尘', a: -130.0, r: 1010, mods: { dmg: 0.02, maxHealth: 10 } },
+    { id: 'rm2', br: 'mix', kind: 'small', name: '星尘', a: -100.0, r: 1010, mods: { dmg: 0.02, maxHealth: 10 } },
+    { id: 'rm3', br: 'mix', kind: 'small', name: '星尘', a: -72.0, r: 1010, mods: { dmg: 0.02, maxHealth: 10 } },
+    { id: 'rm4', br: 'mix', kind: 'small', name: '星尘', a: -42.0, r: 1010, mods: { dmg: 0.02, maxHealth: 10 } },
+    { id: 'rm5', br: 'mix', kind: 'small', name: '星尘', a: -10.0, r: 1010, mods: { dmg: 0.02, maxHealth: 10 } },
+    { id: 'rm6', br: 'mix', kind: 'small', name: '星尘', a: 20.0, r: 1010, mods: { dmg: 0.02, maxHealth: 10 } },
+    { id: 'rm7', br: 'mix', kind: 'small', name: '星尘', a: 48.0, r: 1010, mods: { dmg: 0.02, maxHealth: 10 } },
+    { id: 'rm8', br: 'mix', kind: 'small', name: '星尘', a: 78.0, r: 1010, mods: { dmg: 0.02, maxHealth: 10 } },
+    { id: 'rm9', br: 'mix', kind: 'small', name: '星尘', a: 110.0, r: 1010, mods: { dmg: 0.02, maxHealth: 10 } },
+    { id: 'rm10', br: 'mix', kind: 'small', name: '星尘', a: 140.0, r: 1010, mods: { dmg: 0.02, maxHealth: 10 } },
+    { id: 'rm11', br: 'mix', kind: 'small', name: '星尘', a: 168.0, r: 1010, mods: { dmg: 0.02, maxHealth: 10 } },
+    { id: 'rm12', br: 'mix', kind: 'small', name: '星尘', a: -162.0, r: 1010, mods: { dmg: 0.02, maxHealth: 10 } }
 ];
 const TREE_LINKS = [
-    ['start', 's1'], ['s1', 's2'], ['s1', 's3'], ['s2', 'sN1'], ['s2', 'sSk'], ['s3', 'sSk'], ['s3', 'sN2'],
-    ['sN1', 's4'], ['sSk', 's4'], ['sN2', 's4'], ['s4', 'sK'],
-    ['start', 'd1'], ['d1', 'd2'], ['d1', 'd3'], ['d2', 'dN1'], ['d2', 'dSk'], ['d3', 'dSk'], ['d3', 'dN2'],
-    ['dN1', 'd4'], ['dSk', 'd4'], ['dN2', 'd4'], ['d4', 'dK'],
-    ['start', 'i1'], ['i1', 'i2'], ['i1', 'i3'], ['i2', 'iN1'], ['i2', 'iSk'], ['i3', 'iSk'], ['i3', 'iN2'],
-    ['iN1', 'i4'], ['iSk', 'i4'], ['iN2', 'i4'], ['i4', 'iK'],
-    ['sN2', 'b1'], ['iN1', 'b1'], ['b1', 'bK1'],
-    ['iN2', 'b2'], ['dN1', 'b2'], ['b2', 'bK2'],
-    ['dN2', 'b3'], ['sN1', 'b3'], ['b3', 'bK3']
+    ['start', 's1'], ['s1', 's2'], ['s1', 's3'], ['s2', 'sN1'], ['s2', 'sSk'], ['s3', 'sSk'], ['s3', 'sN2'], ['sN1', 's4'], ['sSk', 's4'], ['sN2', 's4'], ['sN1', 'sa1'], ['sa1', 'sa2'], ['sa2', 'sa3'], ['sa3', 'sa4'], ['sa3', 'sa5'], ['sa4', 'sa6'], ['sa5', 'sa6'], ['sa6', 'saK'], ['s4', 'sb1'], ['sb1', 'sb2'], ['sb2', 'sb3'], ['sb3', 'sb4'], ['sb3', 'sb5'], ['sb4', 'sb6'], ['sb5', 'sb6'], ['sb6', 'sK'], ['sb6', 'sM'], ['sN2', 'sc1'], ['sc1', 'sc2'], ['sc2', 'sc3'], ['sc3', 'sc4'], ['sc3', 'sc5'], ['sc4', 'sc6'], ['sc5', 'sc6'], ['sc6', 'scK'], ['start', 'd1'], ['d1', 'd2'], ['d1', 'd3'], ['d2', 'dN1'], ['d2', 'dSk'], ['d3', 'dSk'], ['d3', 'dN2'], ['dN1', 'd4'], ['dSk', 'd4'], ['dN2', 'd4'], ['dN1', 'da1'], ['da1', 'da2'], ['da2', 'da3'], ['da3', 'da4'], ['da3', 'da5'], ['da4', 'da6'], ['da5', 'da6'], ['da6', 'daK'], ['d4', 'db1'], ['db1', 'db2'], ['db2', 'db3'], ['db3', 'db4'], ['db3', 'db5'], ['db4', 'db6'], ['db5', 'db6'], ['db6', 'dK'], ['db6', 'dM'], ['dN2', 'dc1'], ['dc1', 'dc2'], ['dc2', 'dc3'], ['dc3', 'dc4'], ['dc3', 'dc5'], ['dc4', 'dc6'], ['dc5', 'dc6'], ['dc6', 'dcK'], ['start', 'i1'], ['i1', 'i2'], ['i1', 'i3'], ['i2', 'iN1'], ['i2', 'iSk'], ['i3', 'iSk'], ['i3', 'iN2'], ['iN1', 'i4'], ['iSk', 'i4'], ['iN2', 'i4'], ['iN1', 'ia1'], ['ia1', 'ia2'], ['ia2', 'ia3'], ['ia3', 'ia4'], ['ia3', 'ia5'], ['ia4', 'ia6'], ['ia5', 'ia6'], ['ia6', 'iaK'], ['i4', 'ib1'], ['ib1', 'ib2'], ['ib2', 'ib3'], ['ib3', 'ib4'], ['ib3', 'ib5'], ['ib4', 'ib6'], ['ib5', 'ib6'], ['ib6', 'iK'], ['ib6', 'iM'], ['iN2', 'ic1'], ['ic1', 'ic2'], ['ic2', 'ic3'], ['ic3', 'ic4'], ['ic3', 'ic5'], ['ic4', 'ic6'], ['ic5', 'ic6'], ['ic6', 'icK'], ['sN2', 'b1'], ['iN1', 'b1'], ['b1', 'bK1'], ['b1', 'h11'], ['h11', 'h12'], ['h12', 'h13'], ['h12', 'h14'], ['h13', 'h15'], ['h14', 'h15'], ['h15', 'h16'], ['h12', 'sc2'], ['h12', 'ia2'], ['h15', 'h1K'], ['iN2', 'b2'], ['dN1', 'b2'], ['b2', 'bK2'], ['b2', 'h21'], ['h21', 'h22'], ['h22', 'h23'], ['h22', 'h24'], ['h23', 'h25'], ['h24', 'h25'], ['h25', 'h26'], ['h22', 'ic2'], ['h22', 'da2'], ['h25', 'h2K'], ['dN2', 'b3'], ['sN1', 'b3'], ['b3', 'bK3'], ['b3', 'h31'], ['h31', 'h32'], ['h32', 'h33'], ['h32', 'h34'], ['h33', 'h35'], ['h34', 'h35'], ['h35', 'h36'], ['h32', 'dc2'], ['h32', 'sa2'], ['h35', 'h3K'], ['sb6', 'r1'], ['sc6', 'r2'], ['h16', 'r3'], ['ia6', 'r4'], ['ib6', 'r5'], ['ic6', 'r6'], ['h26', 'r7'], ['da6', 'r8'], ['db6', 'r9'], ['dc6', 'r10'], ['h36', 'r11'], ['sa6', 'r12'], ['r1', 'rm1'], ['rm1', 'r2'], ['r2', 'rm2'], ['rm2', 'r3'], ['r3', 'rm3'], ['rm3', 'r4'], ['r4', 'rm4'], ['rm4', 'r5'], ['r5', 'rm5'], ['rm5', 'r6'], ['r6', 'rm6'], ['rm6', 'r7'], ['r7', 'rm7'], ['rm7', 'r8'], ['r8', 'rm8'], ['rm8', 'r9'], ['r9', 'rm9'], ['rm9', 'r10'], ['r10', 'rm10'], ['rm10', 'r11'], ['r11', 'rm11'], ['rm11', 'r12'], ['r12', 'rm12'], ['rm12', 'r1']
 ];
 const TREE_BY_ID = {};
 const TREE_ADJ = {};
@@ -725,6 +828,19 @@ const TREE_MOD_TEXT = {
     healTaken:  v => `受到治疗 ${sgnPct(v)}`,
     lowLifeDmg: v => `生命低于 50% 时伤害 +${fmtPct(v)}`,
     poisonHit:  () => '所有命中附带 1 层剧毒',
+    moveSpd:    v => `移动速度 ${sgnPct(v)}`,
+    maxHpPct:   v => `最大生命 ${sgnPct(v)}`,
+    flatRed:    v => `每次受伤固定减免 ${v}`,
+    execute:    v => `对生命低于 30% 的敌人伤害 +${fmtPct(v)}`,
+    freeze:     v => `命中 ${fmtPct(v)} 几率冻结敌人 0.8 秒`,
+    thunder:    () => '每第 3 次命中召唤天雷(120% 攻击范围伤害)',
+    healOnKill: v => `击杀回复 ${v} 点生命`,
+    oocRegen:   v => `脱战 3 秒后每秒回复 ${v} 生命`,
+    expMult:    v => `击杀经验 +${fmtPct(v)}`,
+    pickup:     v => `拾取范围 +${v}`,
+    itemDur:    v => `道具停留时间 +${fmtPct(v)}`,
+    scoreMult:  v => `击杀分数 +${fmtPct(v)}`,
+    lowLifeEvade: v => `生命低于 35% 时闪避 +${fmtPct(v)}`,
     sockQ:      () => 'Q 技能 +1 连接孔',
     sockE:      () => 'E 技能 +1 连接孔',
     sockA:      () => '普攻 +1 连接孔'
@@ -5918,7 +6034,59 @@ class Game {
     }
 
     _treeCanAlloc(p, id) {
-        return !p.treeNodes.has(id) && TREE_ADJ[id].some(n => p.treeNodes.has(n)) && this._treePoints(p).free > 0;
+        return !p.treeNodes.has(id) && TREE_ADJ[id].some(n => p.treeNodes.has(n)) && this._treePoints(p).free > 0 && this._treeNeedMet(p, id);
+    }
+
+    // 专精节点:该系已点亮节点数(不含自己)达到 need 才能点
+    _treeBranchCount(p, br, without) {
+        let n = 0;
+        for (const id of p.treeNodes) if (id !== without && TREE_BY_ID[id] && TREE_BY_ID[id].br === br && TREE_BY_ID[id].kind !== 'mastery') n++;
+        return n;
+    }
+
+    _treeNeedMet(p, id, without) {
+        const n = TREE_BY_ID[id];
+        return !n.need || this._treeBranchCount(p, n.br, without) >= n.need;
+    }
+
+    // 从已点亮区域走到 id 的最短路径(只经过未点亮的节点),返回要点亮的节点列表(含 id),走不到返回 null
+    _treePath(p, id) {
+        if (!TREE_ADJ[id]) return null;
+        if (p.treeNodes.has(id)) return [];
+        const prev = { [id]: null };
+        const queue = [id];
+        while (queue.length) {
+            const cur = queue.shift();
+            for (const nb of TREE_ADJ[cur]) {
+                if (p.treeNodes.has(nb)) {
+                    const path = [];
+                    for (let x = cur; x; x = prev[x]) path.push(x);
+                    return path;   // 从靠近已点亮区的一端开始
+                }
+                if (nb in prev) continue;
+                prev[nb] = cur;
+                queue.push(nb);
+            }
+        }
+        return null;
+    }
+
+    // 沿最短路径一路点亮到 id;点数不够或中途遇到专精门槛就停在那里
+    _treeAllocPath(id) {
+        const p = this.player;
+        const path = this._treePath(p, id);
+        if (!path || !path.length) return 0;
+        let n = 0;
+        for (const x of path) {
+            if (!this._treeCanAlloc(p, x)) break;
+            p.treeNodes.add(x);
+            n++;
+        }
+        if (n) {
+            this._recomputeTree(p, true);
+            Sound.play('pickup', TREE_BY_ID[path[n - 1]].kind === 'keystone' ? 'epic' : 'rare');
+        }
+        return n;
     }
 
     // 取消点亮后剩下的节点必须仍然连回起点
@@ -5933,7 +6101,10 @@ class Game {
                 stack.push(n);
             }
         }
-        return seen.size === p.treeNodes.size - 1;
+        if (seen.size !== p.treeNodes.size - 1) return false;
+        // 取消后仍要满足已点亮专精的门槛
+        for (const x of p.treeNodes) if (x !== id && !this._treeNeedMet(p, x, id)) return false;
+        return true;
     }
 
     _treeAllocate(id) {
@@ -5991,9 +6162,9 @@ class Game {
         p.skillE.maxCooldown = this._skillMaxCd(p, 'e');
     }
 
-    // 联机编码:天赋树 = 已点亮节点下标(36 进制),镶嵌 = 3 个技能位 × 3 孔,'-' 为空
+    // 联机编码:天赋树 = 已点亮节点下标(36 进制,每个固定 2 位),镶嵌 = 3 个技能位 × 3 孔,'-' 为空
     _encodeTree(p) {
-        return [...p.treeNodes].map(id => TREE_BY_ID[id].idx.toString(36)).sort().join('');
+        return [...p.treeNodes].map(id => TREE_BY_ID[id].idx.toString(36).padStart(2, '0')).sort().join('');
     }
 
     _encodeSockets(p) {
@@ -6005,8 +6176,8 @@ class Game {
         if (typeof tr === 'string' && tr !== gp._trKey) {
             gp._trKey = tr;
             gp.treeNodes = new Set(['start']);
-            for (const ch of tr) {
-                const n = TREE_NODES[parseInt(ch, 36)];
+            for (let i = 0; i + 1 < tr.length; i += 2) {
+                const n = TREE_NODES[parseInt(tr.slice(i, i + 2), 36)];
                 if (n) gp.treeNodes.add(n.id);
             }
             this._recomputeTree(gp, false);
@@ -12837,7 +13008,7 @@ class Game {
         this._gemSel = null;
         this._gemMsg = '';
         this._buildShowTab(tab || (this._treePoints().free > 0 ? 'tree' : p._newGem ? 'gems' : (this._buildTab || 'tree')));
-        this._treeFit();
+        this._treeFocus();
     }
 
     closeBuild() {
@@ -12978,14 +13149,22 @@ class Game {
             return el;
         };
         const deco = mk('g', {}, svg);
-        for (const r of [88, 162, 243, 318, 398]) mk('circle', { class: 'orbit', r }, deco);
+        for (const r of [88, 162, 243, 318, 410, 490, 570, 650, 730, 840, 975]) mk('circle', { class: 'orbit', r }, deco);
+        // 三系扇区的底色,远看能分清方向
+        for (const [br, a] of [['str', -150], ['dex', 90], ['int', -30]]) {
+            const R0 = 360, R1 = 900, h = 52 * Math.PI / 180, c = a * Math.PI / 180;
+            const pt = (r, t) => `${(Math.cos(t) * r).toFixed(1)} ${(Math.sin(t) * r).toFixed(1)}`;
+            mk('path', { class: 'sector', d: `M ${pt(R0, c - h)} A ${R0} ${R0} 0 0 1 ${pt(R0, c + h)} L ${pt(R1, c + h)} A ${R1} ${R1} 0 0 0 ${pt(R1, c - h)} Z`, fill: TREE_COLORS[br] }, deco);
+            const lb = mk('text', { class: 'sector-lbl', x: Math.cos(c) * 935, y: Math.sin(c) * 935 + 10, fill: TREE_COLORS[br] }, deco);
+            lb.textContent = TREE_BRANCH_NAMES[br];
+        }
         const links = mk('g', {}, svg);
         this._treeLinkEls = TREE_LINKS.map(([a, b]) => {
             const A = TREE_BY_ID[a], B = TREE_BY_ID[b];
             return { a, b, el: mk('line', { class: 'tl', x1: A.x, y1: A.y, x2: B.x, y2: B.y }, links) };
         });
         const nodes = mk('g', {}, svg);
-        const R = { start: 22, small: 14, notable: 22, socket: 19, keystone: 28 };
+        const R = { start: 22, small: 14, notable: 22, socket: 19, keystone: 28, mastery: 30 };
         this._treeNodeEls = {};
         for (const n of TREE_NODES) {
             const g = mk('g', { class: `tn k-${n.kind}`, transform: `translate(${n.x} ${n.y})` }, nodes);
@@ -12993,13 +13172,17 @@ class Game {
             g.style.setProperty('--c', TREE_COLORS[n.br]);
             mk('circle', { class: 'hit', r: 34 }, g);
             if (n.kind === 'keystone') mk('circle', { class: 'ring', r: R.keystone + 7 }, g);
-            if (n.kind === 'socket') mk('rect', { class: 'body', x: -R.socket, y: -R.socket, width: R.socket * 2, height: R.socket * 2, rx: 7 }, g);
+            if (n.kind === 'mastery') {
+                const hex = r => [...Array(6)].map((_, k) => `${(Math.cos(k * Math.PI / 3) * r).toFixed(1)},${(Math.sin(k * Math.PI / 3) * r).toFixed(1)}`).join(' ');
+                mk('polygon', { class: 'ring', points: hex(R.mastery + 9) }, g);
+                mk('polygon', { class: 'body', points: hex(R.mastery) }, g);
+            } else if (n.kind === 'socket') mk('rect', { class: 'body', x: -R.socket, y: -R.socket, width: R.socket * 2, height: R.socket * 2, rx: 7 }, g);
             else mk('circle', { class: 'body', r: R[n.kind] }, g);
             if (n.icon || n.kind === 'start') {
                 const icon = n.icon || '✦';
                 const u = typeof Art !== 'undefined' ? Art.url(icon) : '';
                 if (u) {
-                    const sz = n.kind === 'keystone' ? 36 : n.kind === 'small' ? 20 : 28;
+                    const sz = n.kind === 'keystone' || n.kind === 'mastery' ? 36 : n.kind === 'small' ? 20 : 28;
                     mk('image', { class: 'icon-img', href: u, x: -sz / 2, y: -sz / 2, width: sz, height: sz }, g);
                 } else {
                     const t = mk('text', { class: 'icon', 'font-size': n.kind === 'keystone' ? 24 : 18 }, g);
@@ -13007,7 +13190,7 @@ class Game {
                 }
             }
             if (n.kind !== 'small' && n.kind !== 'start') {
-                const t = mk('text', { class: 'lbl', y: R[n.kind] + (n.kind === 'keystone' ? 24 : 17) }, g);
+                const t = mk('text', { class: 'lbl', y: R[n.kind] + (n.kind === 'keystone' || n.kind === 'mastery' ? 24 : 17) }, g);
                 t.textContent = n.name;
             }
             this._treeNodeEls[n.id] = g;
@@ -13094,7 +13277,7 @@ class Game {
             if (!e.target.closest('.ti-act') || !this._treeSel) return;
             const id = this._treeSel;
             if (this.player.treeNodes.has(id)) this._treeRefund(id);
-            else this._treeAllocate(id);
+            else if (!this._treeAllocate(id)) this._treeAllocPath(id);
             this._buildRefresh();
         });
         document.getElementById('buildGems').addEventListener('click', (e) => this._gemClick(e));
@@ -13105,15 +13288,31 @@ class Game {
         document.getElementById('treeSvg').setAttribute('viewBox', `${v.x} ${v.y} ${v.w} ${v.h}`);
     }
 
-    _treeFit() {
-        this._treeView = { x: -440, y: -470, w: 880, h: 910 };   // 上方多留一点,别让图例压住顶端的基石
+    // 打开面板时:框住已点亮的节点和它们的邻居(至少内圈大小),树长大了也能直接看到正在点的地方
+    _treeFocus() {
+        const p = this.player;
+        let x0 = -360, x1 = 360, y0 = -360, y1 = 360;
+        for (const id of p.treeNodes) {
+            for (const nid of [id, ...TREE_ADJ[id]]) {
+                const n = TREE_BY_ID[nid];
+                x0 = Math.min(x0, n.x); x1 = Math.max(x1, n.x); y0 = Math.min(y0, n.y); y1 = Math.max(y1, n.y);
+            }
+        }
+        const pad = 90, w = Math.max(880, x1 - x0 + pad * 2), h = Math.max(910, y1 - y0 + pad * 2), sz = Math.min(2160, Math.max(w, h));
+        this._treeView = { x: (x0 + x1) / 2 - sz / 2, y: (y0 + y1) / 2 - sz / 2 - 15, w: sz, h: sz + 30 };
+        this._treeApplyView();
+    }
+
+    // 整棵树(全景);inner = 只看内圈
+    _treeFit(inner) {
+        this._treeView = inner ? { x: -440, y: -470, w: 880, h: 910 } : { x: -1080, y: -1110, w: 2160, h: 2190 };
         this._treeApplyView();
     }
 
     // 以 (cx,cy)(SVG 坐标)为中心缩放;f > 1 拉远
     _treeZoom(f, cx, cy) {
         const v = this._treeView;
-        const nw = Math.max(240, Math.min(1100, v.w * f));
+        const nw = Math.max(240, Math.min(2400, v.w * f));
         const k = nw / v.w;
         v.x = cx - (cx - v.x) * k;
         v.y = cy - (cy - v.y) * k;
@@ -13125,7 +13324,10 @@ class Game {
     _treeTap(id) {
         if (!id) return;
         const p = this.player;
-        if (this._treeSel === id && !p.treeNodes.has(id) && this._treeCanAlloc(p, id)) this._treeAllocate(id);
+        if (this._treeSel === id && !p.treeNodes.has(id)) {
+            if (this._treeCanAlloc(p, id)) this._treeAllocate(id);
+            else this._treeAllocPath(id);
+        }
         this._treeSel = id;
         this._buildRefresh();
     }
@@ -13133,17 +13335,22 @@ class Game {
     _treeRefresh() {
         const p = this.player;
         const pts = this._treePoints();
-        const can = id => !p.treeNodes.has(id) && TREE_ADJ[id].some(n => p.treeNodes.has(n)) && pts.free > 0;
+        const can = id => this._treeCanAlloc(p, id);
+        // 选中了还没连上的节点:高亮从已点亮区走过去的最短路径
+        const path = this._treeSel && !p.treeNodes.has(this._treeSel) ? (this._treePath(p, this._treeSel) || []) : [];
+        const onPath = new Set(path);
         for (const n of TREE_NODES) {
             const g = this._treeNodeEls[n.id];
             g.classList.toggle('on', p.treeNodes.has(n.id));
             g.classList.toggle('can', can(n.id));
             g.classList.toggle('sel', this._treeSel === n.id);
+            g.classList.toggle('path', onPath.has(n.id));
         }
         for (const l of this._treeLinkEls) {
             const ia = p.treeNodes.has(l.a), ib = p.treeNodes.has(l.b);
             l.el.classList.toggle('on', ia && ib);
             l.el.classList.toggle('can', (ia && can(l.b)) || (ib && can(l.a)));
+            l.el.classList.toggle('path', (onPath.has(l.a) || ia) && (onPath.has(l.b) || ib) && (onPath.has(l.a) || onPath.has(l.b)));
         }
         // 选中节点详情
         const info = document.getElementById('treeInfo');
@@ -13151,18 +13358,25 @@ class Game {
         if (!n) {
             info.style.removeProperty('--c');
             info.innerHTML = `<div class="ti-name">天赋点 ${pts.free} / ${pts.total}</div>
-                <div class="ti-hint">每升 1 级、每击退 1 次魔王获得 1 点。点选节点查看效果,再点一次(或按下方按钮)点亮。只能点亮与已点亮节点相连的节点;尽头的「基石」会改变玩法,但有代价。拖动平移,双指或滚轮缩放。</div>`;
+                <div class="ti-hint">每升 1 级、每击退 1 次魔王获得 1 点。共 ${TREE_NODES.length - 1} 个节点:三系各分三路星团,尽头的「基石」改变玩法但有代价,中路的「专精」要该系点够节点才能点;三系之间是混合区,最外圈的星座连成一环。点选节点查看效果,再点一次点亮;选中远处节点会显示最短路径,可一次点亮整条路。拖动平移,双指或滚轮缩放,「⤢」看全景。</div>`;
         } else {
-            const kindName = { start: '起点', small: '小天赋', notable: '大天赋', socket: '连接孔', keystone: '基石' }[n.kind];
+            const kindName = { start: '起点', small: '小天赋', notable: '大天赋', socket: '连接孔', keystone: '基石', mastery: '专精' }[n.kind];
             const brName = TREE_BRANCH_NAMES[n.br] || (n.br === 'mix' ? '混合' : '');
             const lines = n.kind === 'start' ? [n.desc] : treeModLines(n.mods);
+            if (n.need) lines.push(`需要${TREE_BRANCH_NAMES[n.br]}系已点亮 ${n.need} 个节点(当前 ${this._treeBranchCount(p, n.br)})`);
             const on = p.treeNodes.has(n.id);
             let btn;
             if (n.kind === 'start') btn = '';
             else if (on) btn = this._treeCanRefund(p, n.id)
                 ? `<button class="mp-btn mp-btn-ghost ti-act">取消点亮(返还 1 点)</button>`
                 : `<button class="mp-btn mp-btn-ghost ti-act" disabled>需先取消更外侧的节点</button>`;
-            else if (!TREE_ADJ[n.id].some(x => p.treeNodes.has(x))) btn = `<button class="mp-btn mp-btn-primary ti-act" disabled>需要先点亮相连的节点</button>`;
+            else if (!this._treeNeedMet(p, n.id)) btn = `<button class="mp-btn mp-btn-primary ti-act" disabled>${TREE_BRANCH_NAMES[n.br]}系节点不足 ${n.need} 个</button>`;
+            else if (!TREE_ADJ[n.id].some(x => p.treeNodes.has(x))) {
+                const cost = path.length;
+                btn = cost && pts.free >= cost
+                    ? `<button class="mp-btn mp-btn-primary ti-act">沿最短路径点亮(${cost} 点)</button>`
+                    : `<button class="mp-btn mp-btn-primary ti-act" disabled>${cost ? `最短路径需要 ${cost} 点(剩余 ${pts.free})` : '走不到这里'}</button>`;
+            }
             else if (pts.free <= 0) btn = `<button class="mp-btn mp-btn-primary ti-act" disabled>没有天赋点(升级/击退魔王获得)</button>`;
             else btn = `<button class="mp-btn mp-btn-primary ti-act">点亮(剩余 ${pts.free} 点)</button>`;
             info.style.setProperty('--c', TREE_COLORS[n.br]);

@@ -807,6 +807,7 @@ kbd {
     gap: 10px;
     overflow-y: auto;
 }
+.tree-side > * { flex-shrink: 0; }   /* 侧栏内容多时整体滚动,不要把信息框压扁 */
 .tree-info {
     background: rgba(0, 200, 255, 0.05);
     border: 1px solid rgba(0, 200, 255, 0.15);
@@ -850,6 +851,12 @@ kbd {
 #treeSvg .tn.can .icon-img { opacity: 0.85; }
 #treeSvg .tn.on .icon-img { opacity: 1; }
 #treeSvg .tn.sel .ring { stroke: #fff; }
+#treeSvg .sector { opacity: 0.045; pointer-events: none; }
+#treeSvg .sector-lbl { font-size: 46px; font-weight: 800; text-anchor: middle; opacity: 0.35; pointer-events: none; letter-spacing: 8px; }
+#treeSvg .tn.k-mastery .body { stroke-width: 4; }
+#treeSvg .tn.k-mastery .ring { stroke-dasharray: 6 5; }
+#treeSvg .tn.path .body { stroke: #ffd740; stroke-dasharray: 5 4; stroke-width: 4; }
+#treeSvg .tl.path { stroke: rgba(255, 215, 64, 0.75); stroke-dasharray: 10 8; stroke-width: 6; }
 @keyframes treePulse { 50% { stroke-opacity: 0.35; } }
 
 .gem-pane { overflow-y: auto; padding: 12px 14px 16px; }
