@@ -170,6 +170,33 @@ button:active {
     margin-bottom: 6px;
 }
 
+/* 大厅标题上方的一排角色立绘(art.js 生成),轻轻上下浮动 */
+.mp-heroes {
+    display: flex;
+    justify-content: center;
+    align-items: flex-end;
+    gap: 6px;
+    height: 64px;
+    margin: -6px 0 4px;
+}
+.mp-heroes img {
+    width: 48px;
+    height: 48px;
+    animation: mp-hero-bob 2.4s ease-in-out infinite;
+    filter: drop-shadow(0 4px 10px rgba(0, 0, 0, 0.5));
+}
+.mp-heroes img.hero-main { width: 64px; height: 64px; }
+.mp-heroes img.hero-boss { width: 60px; height: 60px; }
+.mp-heroes img:nth-child(2n) { animation-delay: -1.2s; }
+.mp-heroes img:nth-child(3n) { animation-delay: -0.6s; }
+@keyframes mp-hero-bob {
+    0%, 100% { transform: translateY(0); }
+    50% { transform: translateY(-5px); }
+}
+@media (prefers-reduced-motion: reduce) {
+    .mp-heroes img { animation: none; }
+}
+
 .mp-subtitle {
     color: rgba(0, 200, 255, 0.45);
     font-size: 0.85em;
@@ -360,6 +387,9 @@ button:active {
     .mp-card {
         padding: 16px 20px;
         max-height: calc(100dvh - 16px);
+    }
+    .mp-heroes {
+        display: none;
     }
     .mp-title {
         font-size: 1.6em;

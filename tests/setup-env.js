@@ -121,6 +121,8 @@ global.WebSocket = class {
 };
 
 const path = require('path');
+// 角色立绘表(node 里没有 Image,Art 自动禁用,渲染走原来的矢量方块画法)
+vm.runInThisContext(fs.readFileSync(path.resolve(__dirname, '../art.js'), 'utf8'));
 const gamePath = path.resolve(__dirname, '../game.js');
 const code = fs.readFileSync(gamePath, 'utf8');
 vm.runInThisContext(code);

@@ -160,6 +160,10 @@ const SpriteCache = {
     }
 };
 
+// 角色立绘(art.js):已解码返回 Image,否则返回 null 让调用方用原来的矢量方块画法
+const artImg = (key, make) => (typeof Art !== 'undefined' ? Art.get(key, make) : null);
+const ArtSVG_has = type => typeof ArtSVG !== 'undefined' && !!ArtSVG.enemies[type];
+
 // 场上敌人数量上限(随难度从 50 增至 80),防止挂机堆怪拖垮帧率
 // 难度模式:start 起始难度、ramp 每多少秒 +1、cap 封顶、score 分数倍率。大厅选择,联机以房主为准
 const DIFF_MODES = {
@@ -2822,10 +2826,17 @@ class Game {
                 roundRect(ctx, p.x - 2, p.y - 2, p.size + 4, p.size + 4, 6);
                 ctx.stroke();
             }
-            ctx.shadowBlur = 8; ctx.shadowColor = color;
-            ctx.fillStyle = color;
-            roundRect(ctx, p.x, p.y, p.size, p.size, 5);
-            ctx.fill();
+            // 队友立绘:用其编号颜色给小方块英雄上色
+            const art = typeof ArtSVG !== 'undefined' && /^#[0-9a-f]{6}$/i.test(color)
+                ? artImg('player|c|' + color, () => ArtSVG.player(Art.mix(color, 'white', 0.35), Art.mix(color, 'black', 0.45))) : null;
+            if (art) {
+                SpriteCache.draw(ctx, Art.sprite('player|c|' + color, art, p.size, 8, color), p.x, p.y, p.size, p.size);
+            } else {
+                ctx.shadowBlur = 8; ctx.shadowColor = color;
+                ctx.fillStyle = color;
+                roundRect(ctx, p.x, p.y, p.size, p.size, 5);
+                ctx.fill();
+            }
             ctx.restore();
 
             // 血条
@@ -13139,18 +13150,32 @@ class Player {
             c1 = `hsl(${hue}, 90%, 72%)`; c2 = `hsl(${(hue + 120) % 360}, 80%, 42%)`;
             ctx.shadowColor = c1;
         }
-        const grad = ctx.createLinearGradient(this.x, this.y, this.x + this.size, this.y + this.size);
-        grad.addColorStop(0, isInvincible ? '#fff176' : c1);
-        grad.addColorStop(1, isInvincible ? '#f9a825' : c2);
-        ctx.fillStyle = grad;
-        roundRect(ctx, this.x, this.y, this.size, this.size, 7);
-        ctx.fill();
+        // 立绘:按皮肤配色;幻彩皮肤的色相按 15° 一档换图;无敌时金色
+        let artKey, a1 = c1, a2 = c2;
+        if (isInvincible) { artKey = 'player|inv'; a1 = '#fff176'; a2 = '#f9a825'; }
+        else if (skin.prism) {
+            const hue = Math.floor(((performance.now() / 12) % 360) / 15) * 15;
+            artKey = 'player|prism|' + hue; a1 = `hsl(${hue}, 90%, 72%)`; a2 = `hsl(${(hue + 120) % 360}, 80%, 42%)`;
+        } else artKey = 'player|' + skin.id;
+        const art = typeof ArtSVG !== 'undefined' ? artImg(artKey, () => ArtSVG.player(a1, a2)) : null;
+        if (art) {
+            ctx.shadowBlur = 0;
+            const spr = Art.sprite(artKey, art, this.size, isInvincible ? 16 : 10, isInvincible ? '#ffeb3b' : (skin.prism ? a1 : skin.glow));
+            SpriteCache.draw(ctx, spr, this.x, this.y, this.size, this.size);
+        } else {
+            const grad = ctx.createLinearGradient(this.x, this.y, this.x + this.size, this.y + this.size);
+            grad.addColorStop(0, isInvincible ? '#fff176' : c1);
+            grad.addColorStop(1, isInvincible ? '#f9a825' : c2);
+            ctx.fillStyle = grad;
+            roundRect(ctx, this.x, this.y, this.size, this.size, 7);
+            ctx.fill();
 
-        ctx.shadowBlur = 0;
-        ctx.strokeStyle = isInvincible ? 'rgba(255,235,59,0.8)' : skin.stroke;
-        ctx.lineWidth = 2;
-        roundRect(ctx, this.x, this.y, this.size, this.size, 7);
-        ctx.stroke();
+            ctx.shadowBlur = 0;
+            ctx.strokeStyle = isInvincible ? 'rgba(255,235,59,0.8)' : skin.stroke;
+            ctx.lineWidth = 2;
+            roundRect(ctx, this.x, this.y, this.size, this.size, 7);
+            ctx.stroke();
+        }
 
         // 玩家护盾外框: 当 shield > 0 时，在玩家方块外扩 3px 画淡蓝色半透明圆角描边
         // 透明度随护盾占上限比例变化并有缓慢呼吸;处于受击无敌(hurtCooldown > 0)且有护盾时不额外处理。不用 shadowBlur。
@@ -13207,6 +13232,8 @@ class Player {
 
 class Enemy {
     static SPAWN_IN = 0.5;
+    // 立绘外发光颜色(与原来方块的光晕一致)
+    static GLOW = { chaser: '#ff1744', patroller: '#2979ff', giant: '#d500f9', gunner: '#ff6f00', dasher: '#ffd600', bomber: '#ff4081', treasure: '#ffd740', healer: '#00e676', splitter: '#00e5ff', shard: '#18ffff', reaper: '#d500f9' };
     static onDamage = null; // 伤害统计回调(Game._creditDmg),敌人和魔王共用
     static INTROS = {
         dasher: { text: '新敌人「冲」:蓄力后直线冲刺,看准路线侧身躲开', color: '#ffe57f' },
@@ -13824,7 +13851,9 @@ class Enemy {
         const r = this.type === 'giant' ? 10 : this.type === 'gunner' ? 7 : 6;
         const alpha = ctx.globalAlpha;
         ctx.globalAlpha = Math.min(1, this.hitFlash / 0.08) * 0.85;
-        SpriteCache.drawPx(ctx, Enemy.flashSprite(this.size, r), this.x, this.y, snap);
+        // 有立绘时用立绘的白色剪影,白闪形状和角色(角、引信等)完全贴合
+        const art = Enemy.artImage(this.type);
+        SpriteCache.drawPx(ctx, art ? Art.silhouette('enemy|' + this.type, art, this.size) : Enemy.flashSprite(this.size, r), this.x, this.y, snap);
         ctx.globalAlpha = alpha;
     }
 
@@ -14041,8 +14070,8 @@ class Enemy {
             ctx.restore();
         }
 
-        // 中心图标(盖在炮管上,缓存成精灵)
-        SpriteCache.drawPx(ctx, Enemy.gunnerLabelSprite(this.size), this.x, this.y, snap);
+        // 中心图标(盖在炮管上,缓存成精灵):有立绘时是金属炮塔盖,否则是「炮」字
+        SpriteCache.drawPx(ctx, Enemy.artImage('gunner') ? Enemy.gunnerCapSprite(this.size) : Enemy.gunnerLabelSprite(this.size), this.x, this.y, snap);
     }
 
     // 第 2 遍:所有敌人的血条(炮手另有装弹条)合并绘制,每种颜色一条路径、一次 fill
@@ -14145,6 +14174,8 @@ class Enemy {
 
     // ── 精灵缓存(静态部分只画一次,之后 drawImage) ──
     static bodySprite(type, size) {
+        const art = Enemy.artImage(type);
+        if (art) return Art.sprite('enemy|' + type, art, size, type === 'giant' ? 12 : 8, Enemy.GLOW[type] || '#ff1744');
         // 外扩按光晕实际范围算(原先固定 24,高分屏上大半是透明像素,每帧白白参与混合)
         const pad = SpriteCache.padFor(type === 'gunner' ? 14 : type === 'giant' ? 20 : 12);
         return SpriteCache.get(`enemy|${type}|${size}`, size, size, pad, g => {
@@ -14207,6 +14238,11 @@ class Enemy {
         });
     }
 
+    // 立绘(art.js),未解码时返回 null
+    static artImage(type) {
+        return ArtSVG_has(type) ? artImg('enemy|' + type, ArtSVG.enemies[type]) : null;
+    }
+
     // 精英金框 + 头顶皇冠(皇冠在血条上方,外扩要留够)
     static eliteSprite(size, r) {
         return SpriteCache.get(`enemy|elite|${size}|${r}`, size, size, SpriteCache.padFor(10) + 22, g => {
@@ -14233,6 +14269,24 @@ class Enemy {
         });
     }
 
+    // 炮塔盖:盖住炮管根部的金属圆顶(半径与立绘里的炮塔一致)
+    static gunnerCapSprite(size) {
+        return SpriteCache.get(`enemy|gunnerCap|${size}`, size, size, 2, g => {
+            const c = size / 2, r = size * 0.13;
+            const grad = g.createRadialGradient(c - r * 0.35, c - r * 0.4, r * 0.1, c, c, r);
+            grad.addColorStop(0, '#eceff1');
+            grad.addColorStop(0.6, '#78909c');
+            grad.addColorStop(1, '#263238');
+            g.fillStyle = grad;
+            g.beginPath();
+            g.arc(c, c, r, 0, Math.PI * 2);
+            g.fill();
+            g.strokeStyle = '#120d22';
+            g.lineWidth = Math.max(1, size * 0.03);
+            g.stroke();
+        });
+    }
+
     static gunnerLabelSprite(size) {
         return SpriteCache.get(`enemy|gunnerLabel|${size}`, size, size, 1, g => {
             g.fillStyle = 'rgba(255,255,255,0.9)';
@@ -14256,20 +14310,25 @@ class Enemy {
         });
     }
 
+    // 炮管:金属枪管(纵向明暗)+ 橙色炮口环 + 深色描边
     static barrelSprite(len, w) {
-        return SpriteCache.get(`enemy|barrel|${len}|${w}`, len, w, SpriteCache.padFor(8), g => {
-            g.shadowBlur = SpriteCache.blur(8);
+        return SpriteCache.get(`enemy|barrel2|${len}|${w}`, len, w, SpriteCache.padFor(6), g => {
+            g.shadowBlur = SpriteCache.blur(6);
             g.shadowColor = '#ff9800';
-            const bGrad = g.createLinearGradient(0, 0, len, w);
-            bGrad.addColorStop(0, '#ffd54f');
-            bGrad.addColorStop(1, '#bf360c');
+            const bGrad = g.createLinearGradient(0, 0, 0, w);
+            bGrad.addColorStop(0, '#eceff1');
+            bGrad.addColorStop(0.45, '#90a4ae');
+            bGrad.addColorStop(1, '#37474f');
             g.fillStyle = bGrad;
-            roundRect(g, 0, 0, len, w, 3);
+            roundRect(g, 0, 0, len, w, 2.5);
             g.fill();
             g.shadowBlur = 0;
-            g.strokeStyle = 'rgba(255,200,50,0.7)';
-            g.lineWidth = 1;
-            roundRect(g, 0, 0, len, w, 3);
+            g.fillStyle = '#ff6d00';
+            roundRect(g, len - w * 0.7, -0.5, w * 0.7, w + 1, 2);
+            g.fill();
+            g.strokeStyle = '#120d22';
+            g.lineWidth = 1.2;
+            roundRect(g, 0, 0, len, w, 2.5);
             g.stroke();
         });
     }
@@ -14954,6 +15013,22 @@ class BlockBoss {
         ctx.arc(cx, cy, this.size * 0.95 * pulse, 0, Math.PI * 2);
         ctx.fill();
 
+        // 立绘:皇冠 + 恶魔角 + 怒目;狂暴时换红色版本
+        const artKey = this.enraged ? 'boss|enraged' : 'boss';
+        const art = typeof ArtSVG !== 'undefined' ? artImg(artKey, () => ArtSVG.boss(this.enraged)) : null;
+        if (art) {
+            ctx.shadowBlur = 0;
+            SpriteCache.draw(ctx, Art.sprite(artKey, art, this.size, 16, this.enraged ? '#ff1744' : '#7c4dff'), this.x, this.y, this.size, this.size);
+            this._renderStatusRings(ctx, cx, cy);
+            if (this.hitFlash > 0) {
+                ctx.shadowBlur = 0;
+                ctx.globalAlpha *= Math.min(1, this.hitFlash / 0.08) * 0.6;
+                SpriteCache.draw(ctx, Art.silhouette(artKey, art, this.size), this.x, this.y, this.size, this.size);
+            }
+            ctx.restore();
+            return;
+        }
+
         // 紫色主体光晕
         ctx.shadowBlur = 25;
         ctx.shadowColor = '#7c4dff';
@@ -14975,6 +15050,32 @@ class BlockBoss {
         roundRect(ctx, this.x, this.y, this.size, this.size, 14);
         ctx.stroke();
 
+        this._renderStatusRings(ctx, cx, cy);
+
+        if (this.hitFlash > 0) {
+            ctx.shadowBlur = 0;
+            ctx.globalAlpha *= Math.min(1, this.hitFlash / 0.08) * 0.6;
+            ctx.fillStyle = '#ffffff';
+            roundRect(ctx, this.x, this.y, this.size, this.size, 14);
+            ctx.fill();
+        }
+        ctx.restore();
+
+        // 中心红色眼睛/符号
+        ctx.save();
+        ctx.globalAlpha = this.retreating ? Math.max(0, this.retreatTimer / 1.5) : 1;
+        ctx.fillStyle = '#ff1744';
+        ctx.shadowBlur = 12;
+        ctx.shadowColor = '#ff1744';
+        ctx.font = `bold ${Math.floor(this.size * 0.45)}px Arial`;
+        ctx.textAlign = 'center';
+        ctx.textBaseline = 'middle';
+        ctx.fillText('魔', cx, cy);
+        ctx.restore();
+    }
+
+    // 绝境暗影护盾与破盾虚弱的光环(立绘与旧方块画法共用)
+    _renderStatusRings(ctx, cx, cy) {
         // 绝境暗影护盾外层光环
         if (this.barrier > 0) {
             ctx.shadowBlur = 25;
@@ -15001,27 +15102,6 @@ class BlockBoss {
             ctx.stroke();
             ctx.setLineDash([]);
         }
-
-        if (this.hitFlash > 0) {
-            ctx.shadowBlur = 0;
-            ctx.globalAlpha *= Math.min(1, this.hitFlash / 0.08) * 0.6;
-            ctx.fillStyle = '#ffffff';
-            roundRect(ctx, this.x, this.y, this.size, this.size, 14);
-            ctx.fill();
-        }
-        ctx.restore();
-
-        // 中心红色眼睛/符号
-        ctx.save();
-        ctx.globalAlpha = this.retreating ? Math.max(0, this.retreatTimer / 1.5) : 1;
-        ctx.fillStyle = '#ff1744';
-        ctx.shadowBlur = 12;
-        ctx.shadowColor = '#ff1744';
-        ctx.font = `bold ${Math.floor(this.size * 0.45)}px Arial`;
-        ctx.textAlign = 'center';
-        ctx.textBaseline = 'middle';
-        ctx.fillText('魔', cx, cy);
-        ctx.restore();
     }
 }
 
@@ -15353,6 +15433,24 @@ window.addEventListener('load', () => {
     game.render();
     updateBestScoreLabel();
     updateProgressLabel();
+
+    // 大厅标题上方的一排角色立绘(纯装饰)
+    const heroes = document.getElementById('mpHeroes');
+    if (heroes && typeof ArtSVG !== 'undefined') {
+        const svgUrl = svg => 'data:image/svg+xml;charset=utf-8,' + encodeURIComponent(svg);
+        const row = [
+            ['', ArtSVG.enemies.patroller()], ['', ArtSVG.enemies.chaser()],
+            ['hero-main', ArtSVG.player('#69f0ae', '#00897b')],
+            ['', ArtSVG.enemies.bomber()], ['hero-boss', ArtSVG.boss(false)]
+        ];
+        for (const [cls, svg] of row) {
+            const img = document.createElement('img');
+            img.src = svgUrl(svg);
+            img.alt = '';
+            if (cls) img.className = cls;
+            heroes.appendChild(img);
+        }
+    }
 
     // ── 新手指南:首次打开自动弹出一次,之后可从大厅再次打开 ──
     const tipsOverlay = document.getElementById('tipsOverlay');
