@@ -348,6 +348,203 @@ function relicMod(p, key) {
 // 遗物掉率:魔王击退 / 完美击退 / 深渊层 / 深渊层(仙女座 Lv3) / 虚空裂隙 / 词缀精英
 const RELIC_DROP = { boss: 0.35, bossPerfect: 0.6, abyss: 0.2, abyssBoost: 0.4, rift: 0.5, elite: 0.08 };
 
+// 技能特效渲染表:effects 里 type 命中这里的项由 _renderEffects 统一分发。
+//   参数 (ctx, fx, t, a):t = 播放进度 0→1,a = 剩余比例 1→0。只用填充 / 描边,不用 shadowBlur
+//   (fx 只放数字 / 字符串字段,联机时原样随快照 ef 同步给客机)
+const easeOut = t => 1 - (1 - t) * (1 - t);
+const SKILL_FX = {
+    // 施法法阵:脚下展开的旋转符文圈(n = 内部星形边数)
+    sigil(ctx, fx, t) {
+        const grow = easeOut(Math.min(1, t / 0.22));
+        const fade = t < 0.55 ? 1 : 1 - (t - 0.55) / 0.45;
+        const r = fx.r * (0.55 + 0.45 * grow), n = fx.n || 6;
+        const rot = (fx.rot || 0) + t * 2.4 * (fx.spin || 1);
+        ctx.translate(fx.x, fx.y);
+        ctx.globalAlpha = fade * 0.16;
+        ctx.fillStyle = fx.color;
+        ctx.beginPath(); ctx.arc(0, 0, r, 0, Math.PI * 2); ctx.fill();
+        ctx.strokeStyle = fx.color;
+        ctx.globalAlpha = fade * 0.3; ctx.lineWidth = 6;
+        ctx.beginPath(); ctx.arc(0, 0, r, 0, Math.PI * 2); ctx.stroke();
+        ctx.globalAlpha = fade * 0.95; ctx.lineWidth = 2;
+        ctx.beginPath(); ctx.arc(0, 0, r, 0, Math.PI * 2); ctx.stroke();
+        ctx.lineWidth = 1.2;
+        ctx.beginPath(); ctx.arc(0, 0, r * 0.8, 0, Math.PI * 2); ctx.stroke();
+        // 外圈符文刻度
+        ctx.rotate(rot);
+        ctx.beginPath();
+        for (let i = 0; i < 24; i++) {
+            const a = i / 24 * Math.PI * 2, l = i % 3 === 0 ? 0.14 : 0.07;
+            ctx.moveTo(Math.cos(a) * r * 0.8, Math.sin(a) * r * 0.8);
+            ctx.lineTo(Math.cos(a) * r * (0.8 + l), Math.sin(a) * r * (0.8 + l));
+        }
+        ctx.stroke();
+        // 内部两层反向旋转的星形
+        // 奇数边:一笔画的星形 {n/2};偶数边:两个交错的 n/2 边形(六芒星 = 两个三角形)
+        const star = rr => {
+            ctx.beginPath();
+            if (n % 2) {
+                for (let i = 0; i <= n; i++) {
+                    const a = (i * 2 % n) / n * Math.PI * 2 - Math.PI / 2;
+                    if (i === 0) ctx.moveTo(Math.cos(a) * rr, Math.sin(a) * rr); else ctx.lineTo(Math.cos(a) * rr, Math.sin(a) * rr);
+                }
+            } else {
+                const m = n / 2;
+                for (const off of [0, Math.PI / m]) {
+                    for (let i = 0; i <= m; i++) {
+                        const a = off + i / m * Math.PI * 2;
+                        if (i === 0) ctx.moveTo(Math.cos(a) * rr, Math.sin(a) * rr); else ctx.lineTo(Math.cos(a) * rr, Math.sin(a) * rr);
+                    }
+                }
+            }
+            ctx.stroke();
+        };
+        star(r * 0.78);
+        ctx.rotate(-rot * 2.6);   // 内圈反向转
+        star(r * 0.45);
+    },
+    // 旋斩:一道刀光绕身体扫过一圈,后面拖着渐隐的残光
+    spin(ctx, fx, t) {
+        const fade = 1 - t * t;
+        const lead = (fx.a0 || 0) + (fx.dir || 1) * Math.PI * 2.3 * easeOut(t);
+        const r = fx.r * (0.75 + 0.25 * easeOut(t));
+        ctx.translate(fx.x, fx.y);
+        ctx.strokeStyle = fx.color;
+        ctx.lineCap = 'round';
+        for (let k = 0; k < 8; k++) {
+            const a1 = lead - (fx.dir || 1) * k * 0.28, a0 = a1 - (fx.dir || 1) * 0.3;
+            ctx.globalAlpha = fade * (1 - k / 8) * 0.85;
+            ctx.lineWidth = (fx.w || 10) * (1 - k / 11);
+            ctx.beginPath();
+            ctx.arc(0, 0, r * (1 - k * 0.025), Math.min(a0, a1), Math.max(a0, a1));
+            ctx.stroke();
+        }
+        ctx.globalAlpha = fade;
+        ctx.strokeStyle = '#ffffff';
+        ctx.lineWidth = 2.5;
+        ctx.beginPath();
+        ctx.moveTo(Math.cos(lead) * r * 0.35, Math.sin(lead) * r * 0.35);
+        ctx.lineTo(Math.cos(lead) * r * 1.05, Math.sin(lead) * r * 1.05);
+        ctx.stroke();
+    },
+    // 锁链:从施法者甩出到目标,再收回(勾住的敌人被拽回来)
+    chain(ctx, fx, t) {
+        const ext = t < 0.35 ? easeOut(t / 0.35) : 1 - easeOut((t - 0.35) / 0.65);
+        const dx = fx.x2 - fx.x1, dy = fx.y2 - fx.y1, len = Math.hypot(dx, dy) * ext;
+        if (len < 2) return;
+        ctx.translate(fx.x1, fx.y1);
+        ctx.rotate(Math.atan2(dy, dx));
+        ctx.globalAlpha = t < 0.8 ? 1 : (1 - t) / 0.2;
+        ctx.strokeStyle = fx.color;
+        ctx.fillStyle = fx.color;
+        ctx.lineWidth = 2;
+        for (let x = 6; x < len - 6; x += 9) {
+            if ((x / 9 | 0) % 2) ctx.strokeRect(x - 5, -3.5, 10, 7);
+            else ctx.fillRect(x - 5, -1.5, 10, 3);
+        }
+        ctx.fillStyle = '#ffffff';
+        ctx.beginPath();
+        ctx.moveTo(len + 6, 0); ctx.lineTo(len - 6, -7); ctx.lineTo(len - 3, 0); ctx.lineTo(len - 6, 7); ctx.closePath();
+        ctx.fill();
+        ctx.stroke();
+    },
+    // 残影:沿位移路径留下一串渐隐的身影
+    afterimage(ctx, fx, t) {
+        const n = fx.n || 5, s = fx.s || 30;
+        ctx.fillStyle = fx.color;
+        ctx.strokeStyle = '#ffffff';
+        ctx.lineWidth = 1;
+        for (let k = 0; k < n; k++) {
+            const f = n > 1 ? k / (n - 1) : 1;
+            const x = fx.x1 + (fx.x2 - fx.x1) * f, y = fx.y1 + (fx.y2 - fx.y1) * f;
+            const sz = s * (0.7 + 0.3 * f);
+            ctx.globalAlpha = (0.12 + 0.5 * f) * (1 - t);
+            ctx.fillRect(x - sz / 2, y - sz / 2, sz, sz);
+            ctx.globalAlpha *= 0.8;
+            ctx.strokeRect(x - sz / 2, y - sz / 2, sz, sz);
+        }
+    },
+    // 十字斩:两道交叉的月牙刃,先划出再淡出
+    xslash(ctx, fx, t) {
+        const draw = easeOut(Math.min(1, t / 0.3)), fade = t < 0.4 ? 1 : 1 - (t - 0.4) / 0.6;
+        const L = (fx.len || 34) * (0.4 + 0.6 * draw), w = (fx.w || 9) * fade;
+        ctx.translate(fx.x, fx.y);
+        ctx.rotate(fx.rot || 0);
+        for (const a of [Math.PI / 4, -Math.PI / 4]) {
+            ctx.save();
+            ctx.rotate(a);
+            ctx.beginPath();
+            ctx.moveTo(-L, 0);
+            ctx.quadraticCurveTo(0, -w, L, 0);
+            ctx.quadraticCurveTo(0, -w * 0.25, -L, 0);
+            ctx.globalAlpha = fade * 0.55;
+            ctx.strokeStyle = fx.color; ctx.lineWidth = 3; ctx.stroke();
+            ctx.globalAlpha = fade;
+            ctx.fillStyle = '#ffffff'; ctx.fill();
+            ctx.restore();
+        }
+    },
+    // 圣光柱:从天而降的光束 + 地面光斑
+    pillar(ctx, fx, t) {
+        const fade = t < 0.25 ? t / 0.25 : 1 - (t - 0.25) / 0.75;
+        const w = (fx.w || 26) * (1 - 0.6 * t), top = fx.y - (fx.h || 260);
+        const g = ctx.createLinearGradient(0, top, 0, fx.y);
+        g.addColorStop(0, 'rgba(255,255,255,0)');
+        g.addColorStop(0.6, fx.color);
+        g.addColorStop(1, '#ffffff');
+        ctx.globalAlpha = fade * 0.75;
+        ctx.fillStyle = g;
+        ctx.fillRect(fx.x - w / 2, top, w, fx.y - top);
+        ctx.globalAlpha = fade;
+        ctx.fillStyle = '#ffffff';
+        ctx.fillRect(fx.x - w * 0.15, top, w * 0.3, fx.y - top);
+        ctx.globalAlpha = fade * 0.5;
+        ctx.fillStyle = fx.color;
+        ctx.beginPath();
+        ctx.ellipse(fx.x, fx.y, w * 1.8 * (0.6 + t), w * 0.6 * (0.6 + t), 0, 0, Math.PI * 2);
+        ctx.fill();
+    },
+    // 落点范围:旋转虚线圈 + 淡色填充(箭雨等)
+    zone(ctx, fx, t) {
+        const fade = t < 0.15 ? t / 0.15 : t > 0.8 ? (1 - t) / 0.2 : 1;
+        ctx.translate(fx.x, fx.y);
+        ctx.globalAlpha = fade * 0.14;
+        ctx.fillStyle = fx.color;
+        ctx.beginPath(); ctx.arc(0, 0, fx.r, 0, Math.PI * 2); ctx.fill();
+        ctx.globalAlpha = fade * 0.8;
+        ctx.strokeStyle = fx.color;
+        ctx.lineWidth = 2;
+        ctx.setLineDash([10, 8]);
+        ctx.lineDashOffset = -t * 120;
+        ctx.beginPath(); ctx.arc(0, 0, fx.r, 0, Math.PI * 2); ctx.stroke();
+        ctx.setLineDash([]);
+        ctx.lineWidth = 1;
+        ctx.beginPath(); ctx.arc(0, 0, fx.r * (0.3 + 0.7 * ((t * 3) % 1)), 0, Math.PI * 2); ctx.stroke();
+    },
+    // 枪口焰:朝射击方向张开的锥形闪光
+    muzzle(ctx, fx, t) {
+        const L = (fx.len || 34) * (0.6 + 0.7 * easeOut(t));
+        ctx.translate(fx.x, fx.y);
+        ctx.rotate(fx.angle || 0);
+        ctx.globalAlpha = (1 - t) * 0.85;
+        ctx.fillStyle = fx.color;
+        ctx.beginPath();
+        ctx.moveTo(0, 0);
+        ctx.lineTo(L, -L * 0.32);
+        ctx.quadraticCurveTo(L * 1.25, 0, L, L * 0.32);
+        ctx.closePath();
+        ctx.fill();
+        ctx.globalAlpha = 1 - t;
+        ctx.fillStyle = '#ffffff';
+        ctx.beginPath();
+        ctx.moveTo(0, 0);
+        ctx.lineTo(L * 0.6, -L * 0.1);
+        ctx.lineTo(L * 0.6, L * 0.1);
+        ctx.closePath();
+        ctx.fill();
+    }
+};
+
 // 天赋流派:每张天赋属于一个流派,每拿一层计一点;同流派 3 / 6 / 9 层依次解锁「流派共鸣」
 //   共鸣的数值修正与遗物、天赋修正(p.tmods)共用 key,统一从 statMod(p, key) 读出
 const SCHOOL_TIERS = [3, 6, 9];
@@ -5654,6 +5851,8 @@ class Game {
         const res = this._gemResonance(p, slot);
 
         this._withCtx(Game.CTX[slot], () => this._dispatchSkill(slot, skill));
+        // 施放成功(进入冷却)时脚下展开职业色法阵
+        if (skill.cooldown > 0.3) this._castSigil(p, slot === 'q' ? 34 : 44, slot === 'q' ? 6 : 5);
         if (p.legend && p.legend.singularity) p.singularityArmed = true; // 传说天赋「秘法奇点」
         // 若部分职业技能未显式写 cooldown 则在此统一置冷却，防狂按并保障回响判定
         if (skill.cooldown <= 0 && !(p.class === 'mage' && slot === 'q')) {
@@ -8963,6 +9162,13 @@ class Game {
         return list.filter(p => p && p.currentHealth > 0);
     }
 
+    // 施法法阵(技能动画的统一起手):职业色、按技能位换星形边数
+    _castSigil(p, r, n, color) {
+        const x = p.x + p.size / 2, y = p.y + p.size / 2;
+        this.effects.push({ type: 'sigil', x, y, r, n, color: color || CLASS_COLORS[p.class] || '#80d8ff', rot: Math.random() * Math.PI,
+            spin: Math.random() < 0.5 ? 1 : -1, ttl: 0.55, maxTtl: 0.55 });
+    }
+
     // 传说天赋的命中触发(剑圣之魂 / 雷霆万钧);伤害延后一帧结算,并用 _legendActive 防止自身再次触发
     _legendHitMods(p, target, slot) {
         const L = p.legend;
@@ -9419,7 +9625,8 @@ class Game {
                 }
             }
         }
-        this.effects.push({ type: 'ring', x: pcx, y: pcy, radius: range, color: '#ff6030', ttl: 0.5, maxTtl: 0.5, rotation: 0, rotSpeed: 4 });
+        this.effects.push({ type: 'spin', x: pcx, y: pcy, r: range, w: 14, color: '#ff6030', a0: Math.random() * Math.PI * 2, dir: 1, ttl: 0.32, maxTtl: 0.32 });
+        this.effects.push({ type: 'shockwave', x: pcx, y: pcy, radius: range * 0.3, maxRadius: range, color: '#ff8a50', ttl: 0.4, maxTtl: 0.4 });
         this.spawnBurstRing(pcx, pcy, range * 0.6, '#ff8040', particleCount);
         this.spawnParticles(pcx, pcy, '#ff4020', particleCount, 2, 6, 2, 5, 0.04);
         skill.cooldown = skill.maxCooldown;
@@ -9437,7 +9644,7 @@ class Game {
                 const pcx = p.x + p.size / 2, pcy = p.y + p.size / 2;
                 const hits = this._hitAround(pcx, pcy, range, dmg * 0.45);
                 if (aw && hits) p.heal(p.maxHealth * 0.01 * hits);
-                this.effects.push({ type: 'meleeSwing', x: pcx, y: pcy, radius: range, startAngle: i * 1.3, endAngle: i * 1.3 + Math.PI * 1.4, color: '#ff3d00', ttl: 0.24, maxTtl: 0.24 });
+                this.effects.push({ type: 'spin', x: pcx, y: pcy, r: range, w: 10, color: '#ff3d00', a0: i * 1.3, dir: 1, ttl: 0.26, maxTtl: 0.26 });
                 if (i === 0) this._showFloatingText('旋风!', pcx, pcy - 30, '#ff6e40');
                 this.spawnParticles(pcx, pcy, '#ff7043', 6, 2, 5, 1, 3, 0.05);
             } });
@@ -9476,7 +9683,7 @@ class Game {
             this._dealDamage(e, dmg);
             this._knockbackDir(e, -dy * (Math.random() < 0.5 ? 1 : -1) + dx, dx * (Math.random() < 0.5 ? 1 : -1) + dy, 8);
         }
-        this.effects.push({ type: 'slash', x1: sx, y1: sy, x2: ex, y2: ey, color: '#4488ff', ttl: 0.35, maxTtl: 0.35 });
+        this.effects.push({ type: 'afterimage', x1: sx, y1: sy, x2: ex, y2: ey, s: p.size, n: 6, color: '#4488ff', ttl: 0.4, maxTtl: 0.4 });
         this.effects.push({ type: 'shockwave', x: ex, y: ey, radius: 10, maxRadius: 90, color: '#88aaff', ttl: 0.35, maxTtl: 0.35 });
         this.spawnParticles(ex, ey, '#82b1ff', 14, 2, 6, 2, 5, 0.04);
         this.screenShake = Math.max(this.screenShake, 0.15);
@@ -9505,8 +9712,10 @@ class Game {
             target.y -= ny * pull;
             const dmg = this._computeAttackDamage(this.player.attack) * 2 * this._getSkillMultiplier(skill.level) * (this.player.warriorSkillDmgMult || 1);
             this._dealDamage(target, dmg);
-            this.effects.push({ type: 'slash', x1: pcx, y1: pcy, x2: pcx + nx * 100, y2: pcy + ny * 100, color: '#4488ff', ttl: 0.3, maxTtl: 0.3 });
-            this.effects.push({ type: 'shockwave', x: tcx, y: tcy, radius: 10, maxRadius: 80, color: '#88aaff', ttl: 0.35, maxTtl: 0.35 });
+            this.effects.push({ type: 'chain', x1: pcx, y1: pcy, x2: tcx, y2: tcy, color: '#cfd8dc', ttl: 0.4, maxTtl: 0.4 });
+            const hx = target.x + target.size / 2, hy = target.y + target.size / 2;
+            this.effects.push({ type: 'xslash', x: hx, y: hy, len: 30, w: 10, rot: Math.atan2(ny, nx), color: '#4488ff', ttl: 0.3, maxTtl: 0.3 });
+            this.effects.push({ type: 'shockwave', x: hx, y: hy, radius: 10, maxRadius: 70, color: '#88aaff', ttl: 0.35, maxTtl: 0.35 });
             this.spawnParticles(tcx, tcy, '#4488ff', 12, 2, 5, 2, 5, 0.04);
         }
         skill.cooldown = skill.maxCooldown;
@@ -9552,7 +9761,7 @@ class Game {
         // 先冻住再结算伤害,让觉醒「碎冰」对这一下也生效
         this._hitAround(pcx, pcy, range, dmg, e => { e.stunTimer = Math.max(e.stunTimer || 0, e === this.boss ? 0.6 : 2); });
         this.effects.push({ type: 'shockwave', x: pcx, y: pcy, radius: 14, maxRadius: range, color: '#b3e5fc', ttl: 0.5, maxTtl: 0.5 });
-        this.effects.push({ type: 'ring', x: pcx, y: pcy, radius: range * 0.7, color: '#e1f5fe', ttl: 0.5, maxTtl: 0.5, rotation: 0, rotSpeed: 2 });
+        this.effects.push({ type: 'sigil', x: pcx, y: pcy, r: range * 0.7, n: 6, color: '#e1f5fe', rot: 0, spin: 1, ttl: 0.6, maxTtl: 0.6 });
         for (let i = 0; i < 16; i++) {
             this.effects.push({ type: 'iceShard', x: pcx, y: pcy, angle: (i / 16) * Math.PI * 2, length: 26 + Math.random() * 16, color: '#e1f5fe', ttl: 0.4, maxTtl: 0.4 });
         }
@@ -9570,6 +9779,7 @@ class Game {
         this._withSrc('e', () => this._hitAround(pcx, pcy, range, base * 1.6));
         this.effects.push({ type: 'shockwave', x: pcx, y: pcy, radius: 14, maxRadius: range, color: '#ff7043', ttl: 0.45, maxTtl: 0.45 });
         this.effects.push({ type: 'shockwave', x: pcx, y: pcy, radius: 6, maxRadius: range * 0.6, color: '#ffd180', ttl: 0.3, maxTtl: 0.3 });
+        this.effects.push({ type: 'sigil', x: pcx, y: pcy, r: range * 0.75, n: 5, color: '#ff7043', rot: 0, spin: -1, ttl: 0.6, maxTtl: 0.6 });
         this.spawnParticles(pcx, pcy, '#ff5722', 26, 2, 6, 2, 5, 0.04);
         this._showFloatingText('烈焰新星!', pcx, pcy - 28, '#ff8a65');
         this.screenShake = 0.2;
@@ -9638,6 +9848,7 @@ class Game {
         // 视觉:扩散冲击波 + 放射线粒子
         this.effects.push({ type: 'shockwave', x: pcx, y: pcy, radius: 14, maxRadius: range, color: '#80d8ff', ttl: 0.45, maxTtl: 0.45 });
         this.effects.push({ type: 'shockwave', x: pcx, y: pcy, radius: 6,  maxRadius: range * 0.6, color: '#ffffff', ttl: 0.3, maxTtl: 0.3 });
+        this.effects.push({ type: 'sigil', x: pcx, y: pcy, r: range * 0.6, n: 6, color: '#80d8ff', rot: 0, spin: 1, ttl: 0.55, maxTtl: 0.55 });
         this.spawnBurstRing(pcx, pcy, range * 0.4, '#b3e5fc', particleCount);
         // 放射状光线
         for (let i = 0; i < particleCount; i++) {
@@ -9699,6 +9910,8 @@ class Game {
         this._dealDamage(target, dmg);
         const newPcx = this.player.x + this.player.size / 2;
         const newPcy = this.player.y + this.player.size / 2;
+        this.effects.push({ type: 'afterimage', x1: pcx, y1: pcy, x2: newPcx, y2: newPcy, s: p.size, n: 6, color: '#aa44ff', ttl: 0.35, maxTtl: 0.35 });
+        this.effects.push({ type: 'xslash', x: tcx, y: tcy, len: 34, w: 11, rot: Math.atan2(dy, dx), color: '#dd88ff', ttl: 0.32, maxTtl: 0.32 });
         // 影舞者觉醒:落点范围斩击
         if (p.spec === 'shadow' && p.awakened) {
             const r = this._aoe(75);
@@ -9715,13 +9928,9 @@ class Game {
                 skill.cooldown = skill.maxCooldown * 0.5;
             }
             this.spawnParticles(newPcx, newPcy, '#cc88ff', 8, 2, 4, 2, 4, 0.05);
-            this.spawnSlashEffect(newPcx - 20, newPcy - 20, newPcx + 20, newPcy + 20, '#dd88ff');
-            this.spawnSlashEffect(newPcx - 20, newPcy + 20, newPcx + 20, newPcy - 20, '#dd88ff');
             return;
         }
         this.spawnParticles(newPcx, newPcy, '#cc88ff', 8, 2, 4, 2, 4, 0.05);
-        this.spawnSlashEffect(newPcx - 20, newPcy - 20, newPcx + 20, newPcy + 20, '#dd88ff');
-        this.spawnSlashEffect(newPcx - 20, newPcy + 20, newPcx + 20, newPcy - 20, '#dd88ff');
         skill.cooldown = skill.maxCooldown;
     }
 
@@ -9740,8 +9949,7 @@ class Game {
                     this._dealDamage(t, dmg);
                     const tx = t.x + t.size / 2;
                     const ty = t.y + t.size / 2;
-                    this.spawnSlashEffect(tx - 25, ty, tx + 25, ty, '#ffffff');
-                    this.spawnSlashEffect(tx, ty - 25, tx, ty + 25, '#ffffff');
+                    this.effects.push({ type: 'xslash', x: tx, y: ty, len: 28, w: 9, rot: idx * 0.7, color: '#cc88ff', ttl: 0.28, maxTtl: 0.28 });
                     this.spawnParticles(tx, ty, '#ffffff', 6, 2, 4, 1, 3, 0.06);
                 }
             });
@@ -9777,6 +9985,7 @@ class Game {
             this.projectiles.push(arrow);
         }
         const arrowColor = isLastArrow ? '#ffeb3b' : '#aaff44';
+        this.effects.push({ type: 'muzzle', x: pcx + Math.cos(angle) * 12, y: pcy + Math.sin(angle) * 12, angle, len: isLastArrow ? 46 : 32, color: arrowColor, ttl: 0.2, maxTtl: 0.2 });
         this.effects.push({ type: 'arrow', x: pcx, y: pcy, angle, length: isLastArrow ? 42 : 30, color: arrowColor, ttl: 0.3, maxTtl: 0.3 });
         this.spawnParticles(pcx, pcy, isLastArrow ? '#fff176' : '#ccff88', isLastArrow ? 16 : 8, 2, 5, 2, 4, 0.05);
         if (isLastArrow) this._showFloatingText('最后一发!', pcx, pcy - 30, '#ffeb3b');
@@ -9797,6 +10006,7 @@ class Game {
         const dmg = this._computeAttackDamage(this.player.attack) * 0.8 * this._getSkillMultiplier(skill.level) * (this.player.archerSkillDmgMult || 1);
         // 游侠:每支箭锁定附近一个敌人(轮流分配),落下时追到它当前位置
         const pool = ranger ? this._findClosestEnemies(8).filter(e => Math.hypot(e.x - pcx, e.y - pcy) < 340) : [];
+        if (!ranger) this.effects.push({ type: 'zone', x: pcx, y: pcy, r: 110, color: '#aaff44', ttl: count * 0.1 + 0.3, maxTtl: count * 0.1 + 0.3 });
         for (let i = 0; i < count; i++) {
             this.pendingActions.push({
                 delay: i * 0.1,
@@ -9841,6 +10051,7 @@ class Game {
                 target.stunTimer = 1.5;
             }
         });
+        this.effects.push({ type: 'pillar', x: tcx, y: tcy, w: skill.level >= 3 ? 34 : 26, h: 280, color: '#ffd700', ttl: 0.5, maxTtl: 0.5 });
         this.effects.push({ type: 'shockwave', x: tcx, y: tcy, radius: 5, maxRadius: skill.level >= 3 ? 100 : 70, color: '#ffd700', ttl: 0.5, maxTtl: 0.5 });
         this.spawnParticles(tcx, tcy - 30, '#ffd700', skill.level >= 3 ? 20 : 14, 1, 4, 2, 5, 0.03);
         this.spawnParticles(tcx, tcy, '#fff8dc', 8, 0.5, 2, 1, 3, 0.04);
@@ -9856,6 +10067,7 @@ class Game {
         const pcy = this.player.y + this.player.size / 2;
         const auraR = this._auraRadius(this.player);
         this.effects.push({ type: 'holyAura', x: pcx, y: pcy, radius: auraR, color: '#ffd700', ttl: 0.6, maxTtl: 0.6, pulse: 5 });
+        this.effects.push({ type: 'sigil', x: pcx, y: pcy, r: auraR, n: 8, color: '#ffe082', rot: 0, spin: 0.5, ttl: 0.9, maxTtl: 0.9 });
         this.spawnBurstRing(pcx, pcy, auraR, '#ffd700', skill.level >= 3 ? 24 : 16);
         skill.cooldown = skill.maxCooldown;
     }
@@ -12320,6 +12532,12 @@ class Game {
         for (const fx of this.effects) {
             const alpha = Math.max(0, fx.ttl / fx.maxTtl);
             ctx.save();
+            const sfx = fx.type && SKILL_FX[fx.type];
+            if (sfx) {
+                sfx(ctx, fx, 1 - alpha);
+                ctx.restore();
+                continue;
+            }
 
             if (!fx.type) {
                 ctx.globalAlpha = alpha * 0.5;

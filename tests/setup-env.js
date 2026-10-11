@@ -23,6 +23,9 @@ global.CanvasRenderingContext2D = class {
     lineTo() {}
     arc() {}
     arcTo() {}
+    quadraticCurveTo() {}
+    bezierCurveTo() {}
+    ellipse() {}
     roundRect() {}
     fill() {}
     stroke() {}
