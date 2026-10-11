@@ -301,7 +301,7 @@ const MP_ITEM_TYPES = ['potion', 'exp_book', 'snowflake', 'bomb', 'heart', 'poti
 
 // 永久战利品暗金遗物系统 (Relic Loot System)
 //   玩家最多同时装备 3 件遗物,整局常驻。每件都是一笔交易:pros 增益 + cons 代价(至少一条)
-//   mods 是数值修正,各使用点统一用 relicMod(p, key) 读取已装备遗物的合计值:
+//   mods 是数值修正,使用点统一用 statMod(p, key) 读取(遗物 + 天赋修正 + 流派共鸣的合计;只看遗物用 relicMod):
 //     dmg / autoDmg / skillDmg 伤害   atkSpd 普攻速度   crit 暴击率   cdr 技能冷却缩减   dashCdr 冲刺冷却缩减
 //     speed 移速   maxHp 最大生命(固定)   maxHpPct 最大生命(百分比)   defPct 防御   flatRed 每次受伤固定减免
 //     dmgTaken 受到伤害   lowLifeDmg / lowLifeEvade 生命 <35% 时的伤害 / 闪避   healOnKill 击杀回血(溢出转护盾)
@@ -347,6 +347,72 @@ function relicMod(p, key) {
 }
 // 遗物掉率:魔王击退 / 完美击退 / 深渊层 / 深渊层(仙女座 Lv3) / 虚空裂隙 / 词缀精英
 const RELIC_DROP = { boss: 0.35, bossPerfect: 0.6, abyss: 0.2, abyssBoost: 0.4, rift: 0.5, elite: 0.08 };
+
+// 天赋流派:每张天赋属于一个流派,每拿一层计一点;同流派 3 / 6 / 9 层依次解锁「流派共鸣」
+//   共鸣的数值修正与遗物、天赋修正(p.tmods)共用 key,统一从 statMod(p, key) 读出
+const SCHOOL_TIERS = [3, 6, 9];
+const TALENT_SCHOOLS = {
+    atk:  { name: '攻势', icon: '⚔', color: '#ff7043', tiers: [{ dmg: 0.05 }, { dmg: 0.12, crit: 0.05 }, { dmg: 0.20, crit: 0.10, critDmg: 0.3 }] },
+    def:  { name: '坚守', icon: '🛡', color: '#42a5f5', tiers: [{ dmgTaken: -0.05 }, { dmgTaken: -0.10, regenPct: 0.005 }, { dmgTaken: -0.15, regenPct: 0.01 }] },
+    spd:  { name: '迅捷', icon: '💨', color: '#66bb6a', tiers: [{ speed: 0.05 }, { speed: 0.10, dashCdr: 0.10 }, { speed: 0.15, dashCdr: 0.20, atkSpd: 0.12 }] },
+    arc:  { name: '秘法', icon: '✨', color: '#b388ff', tiers: [{ cdr: 0.05 }, { cdr: 0.10, skillDmg: 0.10 }, { cdr: 0.15, skillDmg: 0.20, aoe: 0.10 }] },
+    luck: { name: '机缘', icon: '🎲', color: '#ffd740', tiers: [{ expMult: 0.10 }, { expMult: 0.20, pickup: 40 }, { expMult: 0.30, pickup: 60, scoreMult: 0.20 }] }
+};
+const SCHOOL_TYPES = Object.keys(TALENT_SCHOOLS);
+// 天赋 id → 流派(没列出的算 atk)
+const TALENT_SCHOOL = {
+    blade: 'atk', berserk: 'atk', wrath: 'atk', warriorHeavyHit: 'atk', warriorBloodRage: 'atk', warriorRavenous: 'atk', assassinDeadly: 'atk',
+    archerSharpshooter: 'atk', archerStrongBow: 'atk', paladinHolyStrike: 'atk', magePenetrate: 'atk', lifeSteal: 'atk',
+    precision: 'atk', lethality: 'atk', executioner: 'atk', swordSaint: 'atk', bloodTide: 'atk',
+    ironWall: 'def', vitality: 'def', evasion: 'def', armorMaster: 'def', warriorIronWill: 'def', paladinBulwark: 'def', paladinHolyShield: 'def',
+    paladinHolyVow: 'def', heritage: 'def', titanPhysique: 'def', projDeflection: 'def', mageBloodMagic: 'def',
+    toughness: 'def', regrowth: 'def', lastStand: 'def', undying: 'def', fortress: 'def', thornThrone: 'def',
+    rapidFire: 'spd', swift: 'spd', blink: 'spd', dashCD: 'spd', phantomDash: 'spd', archerSwiftBolt: 'spd', archerFastReload: 'spd',
+    archerMultiShot: 'spd', archerPiercing: 'spd', assassinFleet: 'spd', assassinShadowstep: 'spd', assassinSwiftCharge: 'spd', assassinCombo: 'spd',
+    nimbleMini: 'spd', projWindWalk: 'spd', fleet: 'spd', haste: 'spd', afterimage: 'spd', galeLord: 'spd', stormcaller: 'spd',
+    skillQUp: 'arc', skillEUp: 'arc', warriorRageBoost: 'arc', warriorWildTide: 'arc', mageManaWell: 'arc', mageFrostMastery: 'arc', mageCondense: 'arc',
+    mageMulticast: 'arc', assassinShadow: 'arc', archerBigQuiver: 'arc', archerHunter: 'arc', paladinFaithLight: 'arc', paladinAuraDuration: 'arc',
+    meditation: 'arc', spellPower: 'arc', widen: 'arc', wellspring: 'arc', singularity: 'arc',
+    fastLearner: 'luck', bounty: 'luck', scavenger: 'luck', scholar: 'luck', fortune: 'luck', destiny: 'luck'
+};
+// 修正 key 的中文名(流派共鸣说明、角色面板用)
+const MOD_LABEL = {
+    dmg: ['伤害', 1], crit: ['暴击率', 1], critDmg: ['暴击伤害', 1], dmgTaken: ['受到伤害', 1], regenPct: ['每秒回复生命', 1], speed: ['移速', 1],
+    dashCdr: ['冲刺冷却缩减', 1], atkSpd: ['攻速', 1], cdr: ['技能冷却缩减', 1], skillDmg: ['技能伤害', 1], aoe: ['范围', 1],
+    expMult: ['经验', 1], pickup: ['磁吸范围', 0], scoreMult: ['击杀分数', 1]
+};
+function fmtMods(mods) {
+    return Object.keys(mods).map(k => {
+        const [label, pct] = MOD_LABEL[k] || [k, 1];
+        const v = mods[k], n = pct ? Math.round(v * 1000) / 10 : v;
+        return `${label} ${v >= 0 ? '+' : ''}${n}${pct ? '%' : ''}`;
+    }).join(',');
+}
+// 各流派层数与已解锁的共鸣修正(按天赋层数总和缓存)
+function schoolState(p) {
+    const list = (p && p.acquiredTalents) || [];
+    let sig = list.length * 1000;
+    for (const a of list) sig += a.count;
+    if (p._schoolSig === sig && p._school) return p._school;
+    const counts = {};
+    for (const k of SCHOOL_TYPES) counts[k] = 0;
+    for (const a of list) counts[TALENT_SCHOOL[a.id] || 'atk'] += a.count;
+    const mods = {}, tiers = {};
+    for (const k of SCHOOL_TYPES) {
+        let tier = 0;
+        while (tier < SCHOOL_TIERS.length && counts[k] >= SCHOOL_TIERS[tier]) tier++;
+        tiers[k] = tier;
+        if (tier > 0) { const m = TALENT_SCHOOLS[k].tiers[tier - 1]; for (const key in m) mods[key] = (mods[key] || 0) + m[key]; }
+    }
+    p._schoolSig = sig;
+    p._school = { counts, tiers, mods };
+    return p._school;
+}
+// 构筑修正合计:暗金遗物 + 天赋修正 + 流派共鸣
+function statMod(p, key) {
+    if (!p) return 0;
+    return relicMod(p, key) + ((p.tmods && p.tmods[key]) || 0) + (schoolState(p).mods[key] || 0);
+}
 const RELIC_TYPES = Object.keys(RELICS);
 
 // 限时装备:捡起后一段时间内强化属性,并附带一种独立于职业的特殊攻击(Game._tickGear 驱动)
@@ -1266,6 +1332,7 @@ const Music = {
 class Game {
     static MAGNET_RADIUS = 85; // 道具拾取磁吸半径
     static RELIC_MAX = 3;      // 暗金遗物同时最多装备几件
+    static LEGEND_CHANCE = 0.5; // 传说进化天赋前置齐了以后,每批天赋卡出现一张的几率
     static JOY_RADIUS = 56;   // 摇杆半径(CSS px)
     static ORB_SPIN = 4.2;    // 烈焰法球转速(弧度/秒)
     static ORB_RADIUS = 58;   // 烈焰法球环绕半径
@@ -1702,8 +1769,110 @@ class Game {
               apply: g => {
                   g.player.projEvade = Math.min(0.6, (g.player.projEvade || 0) + 0.30);
                   g.player.windWalkOnEvade = true;
-              } }
+              } },
+
+            // --- 通用扩充:数值写进 p.tmods,由 statMod 统一读取 ---
+            { id: 'precision',   name: '精准',     icon: '🎯', color: '#ff8a65', rarity: 'common',
+              desc: '暴击率 +5%', stackable: true, maxStacks: 4, apply: g => g._tmod('crit', 0.05) },
+            { id: 'lethality',   name: '致命',     icon: '💥', color: '#ff5252', rarity: 'rare',
+              desc: '暴击伤害 +30%', stackable: true, maxStacks: 3, apply: g => g._tmod('critDmg', 0.3) },
+            { id: 'executioner', name: '处决',     icon: '☠', color: '#e53935', rarity: 'rare',
+              desc: '对生命低于 30% 的敌人伤害 +25%', stackable: true, maxStacks: 2, apply: g => g._tmod('execute', 0.25) },
+            { id: 'toughness',   name: '坚韧',     icon: '⛨', color: '#5c9ded', rarity: 'common',
+              desc: '受到伤害 -4%', stackable: true, maxStacks: 5, apply: g => g._tmod('dmgTaken', -0.04) },
+            { id: 'regrowth',    name: '再生',     icon: '🌱', color: '#66bb6a', rarity: 'common',
+              desc: '每秒回复 0.4% 最大生命', stackable: true, maxStacks: 3, apply: g => g._tmod('regenPct', 0.004) },
+            { id: 'lastStand',   name: '背水一战', icon: '🩸', color: '#ef5350', rarity: 'rare',
+              desc: '生命低于 35% 时闪避 +15%', stackable: true, maxStacks: 2, apply: g => g._tmod('lowLifeEvade', 0.15) },
+            { id: 'undying',     name: '不灭意志', icon: '✝', color: '#ffd740', rarity: 'epic',
+              desc: `抵挡一次致死伤害并回复到 30% 生命(冷却 ${Player.CHEAT_DEATH_CD} 秒)`, stackable: false,
+              apply: g => { g.player.cheatDeath = true; } },
+            { id: 'fleet',       name: '轻灵',     icon: '➤', color: '#81c784', rarity: 'common',
+              desc: '移动速度 +6%', stackable: true, maxStacks: 4, apply: g => g._tmod('speed', 0.06) },
+            { id: 'haste',       name: '急速',     icon: '⏩', color: '#aed581', rarity: 'common',
+              desc: '普攻速度 +8%', stackable: true, maxStacks: 4, apply: g => g._tmod('atkSpd', 0.08) },
+            { id: 'afterimage',  name: '残影',     icon: '🌀', color: '#80deea', rarity: 'rare',
+              desc: '完美闪避后 2 秒内伤害 +30%', stackable: false, apply: g => { g.player.afterimage = true; } },
+            { id: 'meditation',  name: '冥想',     icon: '⌛', color: '#b39ddb', rarity: 'common',
+              desc: '技能冷却 -5%', stackable: true, maxStacks: 4, applicable: g => !!g.player.class, apply: g => g._tmod('cdr', 0.05) },
+            { id: 'spellPower',  name: '法术强化', icon: '✨', color: '#ce93d8', rarity: 'common',
+              desc: '技能伤害 +10%', stackable: true, maxStacks: 4, applicable: g => !!g.player.class, apply: g => g._tmod('skillDmg', 0.10) },
+            { id: 'widen',       name: '广域',     icon: '◎', color: '#9575cd', rarity: 'rare',
+              desc: '技能、光环与范围攻击半径 +12%', stackable: true, maxStacks: 3, apply: g => g._tmod('aoe', 0.12) },
+            { id: 'wellspring',  name: '源泉',     icon: '⛲', color: '#4fc3f7', rarity: 'rare',
+              desc: '职业资源上限 +25%(弓手箭矢 +1)', stackable: true, maxStacks: 2, applicable: g => !!g.player.class,
+              apply: g => {
+                  const p = g.player;
+                  if (p.class === 'mage') { p.maxMana = Math.round(p.maxMana * 1.25); p.mana = p.maxMana; }
+                  else if (p.class === 'warrior') p.maxRage = Math.round(p.maxRage * 1.25);
+                  else if (p.class === 'paladin') { p.maxFaith = Math.round(p.maxFaith * 1.25); p.faith = p.maxFaith; }
+                  else if (p.class === 'archer') { p.maxArrows += 1; p.arrows = p.maxArrows; }
+                  else if (p.class === 'assassin') p.maxAssassinCharge = Math.round(p.maxAssassinCharge * 1.25);
+              } },
+            { id: 'scavenger',   name: '寻宝',     icon: '💰', color: '#ffca28', rarity: 'common',
+              desc: '道具拾取磁吸范围 +40', stackable: true, maxStacks: 2, apply: g => g._tmod('pickup', 40) },
+            { id: 'scholar',     name: '学者',     icon: '📚', color: '#ffe082', rarity: 'common',
+              desc: '击杀经验 +10%', stackable: true, maxStacks: 3, apply: g => g._tmod('expMult', 0.10) },
+            { id: 'fortune',     name: '幸运星',   icon: '⭐', color: '#fff176', rarity: 'rare',
+              desc: '道具停留时间 +30%,击杀分数 +10%', stackable: true, maxStacks: 2,
+              apply: g => { g._tmod('itemDur', 0.3); g._tmod('scoreMult', 0.1); } },
+
+            // --- 传说进化:拿齐前置天赋后才可能出现(requires: { 天赋 id: 层数 }) ---
+            { id: 'swordSaint',  name: '剑圣之魂', icon: '⚔', color: '#eceff1', rarity: 'legendary', requires: { blade: 3, berserk: 1 },
+              desc: '攻击力 +20;每第 5 次命中挥出剑气,对周围造成 100% 攻击伤害', stackable: false,
+              apply: g => { g.player.attack += 20; g._legend('swordSaint'); } },
+            { id: 'fortress',    name: '不落要塞', icon: '🏆', color: '#82b1ff', rarity: 'legendary', requires: { ironWall: 3, vitality: 2 },
+              desc: '生命跌破 30% 时获得 4 秒 60% 减伤(冷却 30 秒);最大生命 +50', stackable: false,
+              apply: g => { g.player.maxHealth += 50; g.player.currentHealth += 50; g._legend('fortress'); } },
+            { id: 'galeLord',    name: '疾风之主', icon: '🦅', color: '#69f0ae', rarity: 'legendary', requires: { swift: 2, dashCD: 1 },
+              desc: '每次冲刺后 2 秒内普攻速度 +50%、移速 +20%', stackable: false, apply: g => g._legend('galeLord') },
+            { id: 'bloodTide',   name: '血潮',     icon: '🧛', color: '#ff1744', rarity: 'legendary', requires: { lifeSteal: 2, wrath: 1 },
+              desc: '击杀回复 1% 最大生命,生命低于 50% 时翻倍;伤害 +10%', stackable: false,
+              apply: g => { g._tmod('dmg', 0.10); g._legend('bloodTide'); } },
+            { id: 'singularity', name: '秘法奇点', icon: '🌌', color: '#b388ff', rarity: 'legendary', requires: { skillQUp: 1, skillEUp: 1 },
+              desc: '每次施放技能后,下一次普攻伤害 ×3 并在命中处爆炸', stackable: false, apply: g => g._legend('singularity') },
+            { id: 'destiny',     name: '天命之子', icon: '🎁', color: '#ffd740', rarity: 'legendary', requires: { fastLearner: 1, bounty: 1 },
+              desc: '击杀有 3% 几率掉落随机道具;击杀经验 +15%', stackable: false,
+              apply: g => { g._tmod('expMult', 0.15); g._legend('destiny'); } },
+            { id: 'stormcaller', name: '雷霆万钧', icon: '⚡', color: '#80d8ff', rarity: 'legendary', requires: { rapidFire: 2, blink: 1 },
+              desc: '普攻命中有 15% 几率引发闪电,弹向附近 3 个敌人各造成 60% 攻击伤害', stackable: false, apply: g => g._legend('stormcaller') },
+            { id: 'thornThrone', name: '荆棘王座', icon: '👑', color: '#bcaaa4', rarity: 'legendary', requires: { armorMaster: 2, ironWall: 2 },
+              desc: '受到攻击时对周围敌人反击 300% 防御 + 50% 所受伤害(0.5 秒一次)', stackable: false, apply: g => g._legend('thornThrone') }
         ];
+    }
+
+    // 天赋修正(写在当前 this.player 上,guest 由 host 在 _runAsPlayer 里同样写一份)
+    _tmod(key, v) {
+        const p = this.player;
+        p.tmods = p.tmods || {};
+        p.tmods[key] = (p.tmods[key] || 0) + v;
+        if (key === 'cdr' && p.class) this._refreshSkillCds(p);
+    }
+
+    _legend(id) {
+        const p = this.player;
+        p.legend = p.legend || {};
+        p.legend[id] = true;
+    }
+
+    // 传说天赋的前置是否满足
+    _talentReqMet(t, p = this.player) {
+        if (!t.requires) return true;
+        for (const id in t.requires) {
+            const got = p.acquiredTalents.find(a => a.id === id);
+            if (!got || got.count < t.requires[id]) return false;
+        }
+        return true;
+    }
+
+    // 前置说明:「利刃×3 + 狂战」,已满足的打 ✓
+    _talentReqText(t, p = this.player) {
+        if (!t.requires) return '';
+        return Object.keys(t.requires).map(id => {
+            const d = this.talentDefs.find(x => x.id === id);
+            const n = t.requires[id], got = p.acquiredTalents.find(a => a.id === id);
+            return `${d ? d.name : id}${n > 1 ? '×' + n : ''}${got && got.count >= n ? '✓' : ''}`;
+        }).join(' + ');
     }
     
     _initStars(count) {
@@ -4759,9 +4928,9 @@ class Game {
         }
         // 天赋「嗜血回春」与暗金遗物【狂徒铠甲】(脱战缓回):每秒回复生命(死誓契禁用回血)
         const regen = this.player.tree && this.player.tree.regen;
-        const ooc = relicMod(this.player, 'oocRegen');
+        const ooc = statMod(this.player, 'oocRegen');
         const warmogRegen = (ooc && this.player.outOfCombat(3) && this.player.currentHealth < this.player.maxHealth) ? ooc : 0;
-        const pctRegen = (regen || 0) + relicMod(this.player, 'regenPct'); // 暗金遗物【鲜血圣杯】
+        const pctRegen = (regen || 0) + statMod(this.player, 'regenPct'); // 暗金遗物【鲜血圣杯】
         if ((pctRegen || warmogRegen) && this.player.currentHealth > 0 && this.player.greedContract !== 'death') {
             const healAmt = (this.player.maxHealth * pctRegen + warmogRegen) * DT;
             this.player.heal(healAmt);
@@ -4910,6 +5079,31 @@ class Game {
             p._evadeFx = false;
             this._showFloatingText('闪避', pcx, p.y - 22, '#b9f6ca');
         }
+        // 天赋「不灭意志」/ 传说「不落要塞」触发提示
+        if (p._cheatFx) {
+            p._cheatFx = false;
+            this._showFloatingText('不灭意志!', pcx, p.y - 30, '#ffd740');
+            this.effects.push({ type: 'shockwave', x: pcx, y: pcy, radius: 10, maxRadius: 120, color: '#ffd740', ttl: 0.6, maxTtl: 0.6 });
+            this.spawnBurstRing(pcx, pcy, 50, '#fff59d', 24);
+        }
+        if (p._fortressFx) {
+            p._fortressFx = false;
+            this._showFloatingText('不落要塞', pcx, p.y - 30, '#82b1ff');
+            this.effects.push({ type: 'ring', x: pcx, y: pcy, radius: p.size * 1.2, color: '#82b1ff', ttl: 0.5, maxTtl: 0.5 });
+        }
+        // 传说天赋「荆棘王座」:挨打时反击周围敌人(0.5 秒一次)
+        if (p.throneCd > 0) p.throneCd -= DT;
+        if (p._throneHit > 0) {
+            const raw = p._throneHit;
+            p._throneHit = 0;
+            if (!(p.throneCd > 0) && p.currentHealth > 0) {
+                p.throneCd = 0.5;
+                const r = this._aoe(110, null);
+                this._withSrc('body', () => this._hitAround(pcx, pcy, r, p.armorValue().def * 3 + raw * 0.5));
+                this.effects.push({ type: 'shockwave', x: pcx, y: pcy, radius: 8, maxRadius: r, color: '#a1887f', ttl: 0.3, maxTtl: 0.3 });
+                this.spawnBurstRing(pcx, pcy, r * 0.6, '#d7ccc8', 14);
+            }
+        }
         // 铁卫觉醒「不屈」触发提示
         if (p._undyingFx) {
             p._undyingFx = false;
@@ -5028,7 +5222,7 @@ class Game {
     // 雷霆之刃:闪电打向最近目标,再向附近弹跳(Lv1: 3次, Lv2 天怒神剑: 6次 + 天雷冲击波)
     _gearChainLightning(pcx, pcy, isEvo = false) {
         const targets = this._gearTargets();
-        const reaperMult = this.player.currentHealth < this.player.maxHealth * 0.35 ? 1 + relicMod(this.player, 'lowLifeDmg') : 1.0;
+        const reaperMult = this.player.currentHealth < this.player.maxHealth * 0.35 ? 1 + statMod(this.player, 'lowLifeDmg') : 1.0;
         const baseDmg = this._computeAttackDamage(this.player.attack) * (isEvo ? 0.95 : 0.7) * reaperMult;
         const hit = new Set();
         let x = pcx, y = pcy, range = isEvo ? 280 : 230;
@@ -5273,7 +5467,8 @@ class Game {
     _buildDmgMult(p, slot) {
         const t = p.tree || {};
         let m = 1 + (t.dmg || 0) + (slot === 'a' ? (t.autoDmg || 0) : slot ? (t.skillDmg || 0) : 0);
-        m += relicMod(p, 'dmg') + (slot === 'a' ? relicMod(p, 'autoDmg') : slot ? relicMod(p, 'skillDmg') : 0);
+        m += statMod(p, 'dmg') + (slot === 'a' ? statMod(p, 'autoDmg') : slot ? statMod(p, 'skillDmg') : 0);
+        if (p.afterimageTimer > 0) m += 0.3; // 天赋「残影」
         if (t.lowLifeDmg && p.currentHealth < p.maxHealth * 0.5) m += t.lowLifeDmg;
         const res = this._gemResonance(p, slot);
         if (res && res.id === 'trinity') m *= 1.25;
@@ -5286,12 +5481,13 @@ class Game {
     _aoe(r, slot) {
         const p = this.player;
         if (slot === undefined) slot = this._ctx ? this._ctx.slot : null;
-        return r * (1 + ((p.tree && p.tree.aoe) || 0) + this._gv(p, slot, 'aoe'));
+        return r * (1 + ((p.tree && p.tree.aoe) || 0) + this._gv(p, slot, 'aoe') + statMod(p, 'aoe'));
     }
 
     // 普攻速度倍率:天赋攻速 + 普攻位「快速冷却」
     _atkSpeedMult(p) {
-        return Math.max(0.3, 1 + ((p.tree && p.tree.atkSpd) || 0) + this._gv(p, 'a', 'faster') + relicMod(p, 'atkSpd'));
+        const gale = p.galeTimer > 0 ? 0.5 : 0; // 传说天赋「疾风之主」:冲刺后攻速 +50%
+        return Math.max(0.3, 1 + ((p.tree && p.tree.atkSpd) || 0) + this._gv(p, 'a', 'faster') + statMod(p, 'atkSpd') + gale);
     }
 
     // 命中之后:生命偷取 + 当前技能位宝石的命中效果。在 takeDamage 之后、死亡判定之前调用
@@ -5457,6 +5653,7 @@ class Game {
         const res = this._gemResonance(p, slot);
 
         this._withCtx(Game.CTX[slot], () => this._dispatchSkill(slot, skill));
+        if (p.legend && p.legend.singularity) p.singularityArmed = true; // 传说天赋「秘法奇点」
         // 若部分职业技能未显式写 cooldown 则在此统一置冷却，防狂按并保障回响判定
         if (skill.cooldown <= 0 && !(p.class === 'mage' && slot === 'q')) {
             skill.cooldown = skill.maxCooldown || 3;
@@ -5836,6 +6033,7 @@ class Game {
         p.dodgeCount = (p.dodgeCount || 0) + 1;
         p.dashCooldown = Math.max(0, p.dashCooldown - p.dashCdTotal() * 0.5);
         if (p.gainUltCharge) p.gainUltCharge(15);
+        if (p.afterimage) p.afterimageTimer = 2; // 天赋「残影」
         this._vibrate('dodge');
         const cx = p.x + p.size / 2, cy = p.y + p.size / 2;
         this._showFloatingText('闪避!', cx, p.y - 18, '#80d8ff');
@@ -7597,7 +7795,7 @@ class Game {
             let best = null, bd = Infinity;
             for (const p of players) {
                 if (it.type === 'potion_invicible' && p !== this.player) continue;
-                const magBonus = relicMod(p, 'pickup');
+                const magBonus = statMod(p, 'pickup');
                 // 🌟 星图天赋【仙女座】:基础磁吸范围 +40px ~ +80px
                 const andromedaBonus = (p.metagrowth && p.metagrowth.andromeda > 0) ? (p.metagrowth.andromeda >= 2 ? 80 : 40) : 0;
                 const R = Game.MAGNET_RADIUS + magBonus + andromedaBonus;
@@ -7605,7 +7803,7 @@ class Game {
                 if (d <= R && d < bd) { bd = d; best = p; }
             }
             if (!best || bd < 1) continue;
-            const magBonus = relicMod(best, 'pickup');
+            const magBonus = statMod(best, 'pickup');
             const andromedaBonus = (best.metagrowth && best.metagrowth.andromeda > 0) ? (best.metagrowth.andromeda >= 2 ? 80 : 40) : 0;
             const R = Game.MAGNET_RADIUS + magBonus + andromedaBonus;
             const step = Math.min(bd, 1.5 + 7 * (1 - bd / R));
@@ -8441,7 +8639,7 @@ class Game {
         const sk = key === 'q' ? p.skillQ : p.skillE;
         const flat = key === 'q' ? (p.qCdFlat || 0) : 0;
         // 冷却缩减:天赋 + 该技能位的「快速冷却」+ 暗金遗物(怀表 -18% / 圣杯 +20%)+ 每日突变【虚空狂涌】-35%,合计最多 -75%
-        const relicCdr = relicMod(p, 'cdr'); // 可为负:鲜血圣杯的代价
+        const relicCdr = statMod(p, 'cdr'); // 可为负:鲜血圣杯的代价
         const mutCdr = (this.mutations && this.mutations.includes('void_surge')) ? 0.35 : 0;
         const red = Math.max(-0.5, Math.min(0.75, ((p.tree && p.tree.cdr) || 0) + this._gv(p, key, 'faster') + relicCdr + mutCdr));
         const cd = base * this._getCDMultiplier(sk.level) * (1 - red);
@@ -8540,7 +8738,7 @@ class Game {
     // 暴击率(某个技能位):天赋树 + 技能石 + 刺客被动 + 契约 + 星图;角色面板与战斗结算共用
     _critChance(p, slot) {
         const t = p.tree || {};
-        let crit = (t.crit || 0) + this._gv(p, slot, 'crit') + relicMod(p, 'crit');
+        let crit = (t.crit || 0) + this._gv(p, slot, 'crit') + statMod(p, 'crit');
         if (p.class === 'assassin') crit += 0.2 + (p.spec === 'shadow' ? 0.15 : 0);
         // 贪婪诅咒【狂风契】:暴击率额外 +20%,暴击伤害额外 +60%
         if (p.greedContract === 'gale') crit += 0.20;
@@ -8552,7 +8750,7 @@ class Game {
     // 暴击额外伤害(暴击倍率 = 2 + 它)
     _critBonus(p) {
         const t = p.tree || {};
-        let critBonus = (t.critDmg || 0) + (p.greedContract === 'gale' ? 0.6 : 0);
+        let critBonus = (t.critDmg || 0) + statMod(p, 'critDmg') + (p.greedContract === 'gale' ? 0.6 : 0);
         if (p.metagrowth && p.metagrowth.sagitta >= 2) critBonus += 0.3;
         // 🌌 每日突变【熔岩炽地】:暴伤额外 +80%
         if (this.mutations && this.mutations.includes('magma_ground')) critBonus += 0.8;
@@ -8637,12 +8835,25 @@ class Game {
         if (p.spec === 'venom') this._applyPoison(target, p, 1);
         if (t.poisonHit) this._applyPoison(target, p, 1);
         // 暗金遗物【死神斗篷】:生命低于 35% 时伤害提升 50%
-        const lowLifeDmg = relicMod(p, 'lowLifeDmg');
+        const lowLifeDmg = statMod(p, 'lowLifeDmg');
         if (lowLifeDmg && p.currentHealth < p.maxHealth * 0.35) {
             dmg *= 1 + lowLifeDmg;
         }
+        // 天赋「处决」:对低血敌人增伤
+        const exe = statMod(p, 'execute');
+        if (exe && target.maxHealth && target.currentHealth < target.maxHealth * 0.3) dmg *= 1 + exe;
+        this._legendHitMods(p, target, slot);
+        if (slot === 'a' && p.singularityArmed && !p._legendActive) {
+            // 传说天赋「秘法奇点」:技能后的下一次普攻 ×3 并爆炸
+            p.singularityArmed = false;
+            dmg *= 3;
+            const tx = target.x + target.size / 2, ty = target.y + target.size / 2, boom = dmg * 0.5;
+            this.pendingActions.push({ delay: 0.02, ctx: null, player: p, fn: () => this._legendBurst(p, tx, ty, 70, boom, '#b388ff') });
+            this.effects.push({ type: 'shockwave', x: tx, y: ty, radius: 6, maxRadius: 70, color: '#b388ff', ttl: 0.35, maxTtl: 0.35 });
+            this.spawnBurstRing(tx, ty, 40, '#e1bee7', 16);
+        }
         // 暗金遗物【寒冰之心】:命中几率冻结(魔王免疫)
-        const frz = relicMod(p, 'freeze');
+        const frz = statMod(p, 'freeze');
         if (frz && target !== this.boss && !(target.stunTimer > 0.8) && Math.random() < frz) {
             target.stunTimer = 0.8;
             const fx = target.x + target.size / 2, fy = target.y + target.size / 2;
@@ -8650,7 +8861,7 @@ class Game {
             this.spawnParticles(fx, fy, '#e1f5fe', 6, 1, 3, 2, 4, 0.03);
         }
         // 暗金遗物【雷神指环】:每第 3 次攻击/技能召唤天雷轰顶(自身天雷不再递归自触发)
-        if (relicMod(p, 'thunder') && !p._relicThunderActive) {
+        if (statMod(p, 'thunder') && !p._relicThunderActive) {
             p._relicThunderCount = ((p._relicThunderCount || 0) + 1) % 3;
             if (p._relicThunderCount === 0) {
                 const tx = target.x + target.size / 2, ty = target.y + target.size / 2;
@@ -8749,6 +8960,42 @@ class Game {
         const list = [this._actingAs ? this._savedPlayer : this.player];
         if (this.mpMode === 'host') for (const gp of this.mpGuestPlayers.values()) list.push(gp);
         return list.filter(p => p && p.currentHealth > 0);
+    }
+
+    // 传说天赋的命中触发(剑圣之魂 / 雷霆万钧);伤害延后一帧结算,并用 _legendActive 防止自身再次触发
+    _legendHitMods(p, target, slot) {
+        const L = p.legend;
+        if (!L || p._legendActive) return;
+        const tx = target.x + target.size / 2, ty = target.y + target.size / 2;
+        if (L.swordSaint) {
+            p._saintCount = ((p._saintCount || 0) + 1) % 5;
+            if (p._saintCount === 0) {
+                const dmg = this._computeAttackDamage(p.attack);
+                this.pendingActions.push({ delay: 0.02, ctx: null, player: p, fn: () => this._legendBurst(p, tx, ty, this._aoe(75, null), dmg, '#eceff1') });
+                const sa = Math.random() * Math.PI, sx = Math.cos(sa) * 45, sy = Math.sin(sa) * 45;
+                this.spawnSlashEffect(tx - sx, ty - sy, tx + sx, ty + sy, '#eceff1');
+                this.effects.push({ type: 'shockwave', x: tx, y: ty, radius: 8, maxRadius: 75, color: '#cfd8dc', ttl: 0.25, maxTtl: 0.25 });
+            }
+        }
+        if (L.stormcaller && slot === 'a' && Math.random() < 0.15) {
+            const dmg = this._computeAttackDamage(p.attack) * 0.6;
+            const near = this.enemies.filter(e => e !== target && e.currentHealth > 0 && Math.hypot(e.x + e.size / 2 - tx, e.y + e.size / 2 - ty) < 170)
+                .sort((a, b) => Math.hypot(a.x - tx, a.y - ty) - Math.hypot(b.x - tx, b.y - ty)).slice(0, 3);
+            if (!near.length) return;
+            const pts = [[tx, ty]].concat(near.map(e => [e.x + e.size / 2, e.y + e.size / 2]));
+            this.effects.push({ type: 'lightning', pts, color: '#80d8ff', ttl: 0.2, maxTtl: 0.2 });
+            this.pendingActions.push({ delay: 0.02, ctx: null, player: p, fn: () => {
+                p._legendActive = true;
+                try { for (const e of near) if (e.currentHealth > 0 && this.enemies.includes(e)) this._dealDamage(e, dmg); }
+                finally { p._legendActive = false; }
+            } });
+        }
+    }
+
+    _legendBurst(p, x, y, r, dmg, color) {
+        p._legendActive = true;
+        try { this._hitAround(x, y, r, dmg); } finally { p._legendActive = false; }
+        this.spawnParticles(x, y, color, 8, 1.5, 4, 2, 4, 0.03);
     }
 
     _dealDamage(target, dmg) {
@@ -9862,10 +10109,10 @@ class Game {
         const horde = (this.event && this.event.type === 'horde') || (e && e._horde) ? 2 : 1;
         const greedBlood = (this.player.greedContract === 'blood') ? 2 : 1;
         const comboMult = this._registerCombo(e);
-        const idol = 1 + relicMod(this.player, 'scoreMult'); // 暗金遗物【贪婪金像】
+        const idol = 1 + statMod(this.player, 'scoreMult'); // 暗金遗物【贪婪金像】
         this.score += Math.round(10 * (this.scoreMult || 1) * horde * greedBlood * comboMult * idol * diffDef(this.diffMode).score);
         // 开局刷怪被 _spawnRamp 压低,击杀经验按倒数补回,前期升级(3 级选职业)节奏不被拖慢
-        this.exp += 5 * horde * greedBlood * (1 + relicMod(this.player, 'expMult')) / this._spawnRamp();
+        this.exp += 5 * horde * greedBlood * (1 + statMod(this.player, 'expMult')) / this._spawnRamp();
         if (e && e.type === 'treasure') this._treasureReward(e);
         else if (e && !e.elite && Math.random() < 0.006) this._dropGem(e.x, e.y);
         // 毒刃觉醒:中毒的敌人死亡时毒雾爆发
@@ -9914,8 +10161,19 @@ class Game {
         if (this.player.lifeStealPerKill) {
             this.player.heal(this.player.lifeStealPerKill);
         }
+        // 传说天赋「血潮」:击杀回复 1% 最大生命,半血以下翻倍
+        if (this.player.legend && this.player.legend.bloodTide && this.player.greedContract !== 'death') {
+            const lp = this.player;
+            lp.heal(lp.maxHealth * 0.01 * (lp.currentHealth < lp.maxHealth * 0.5 ? 2 : 1));
+        }
+        // 传说天赋「天命之子」:击杀有几率掉落随机道具
+        if (e && this.player.legend && this.player.legend.destiny && Math.random() < 0.03) {
+            const types = ['potion', 'exp_book', 'snowflake', 'bomb', 'heart'];
+            const it = new Item(Math.max(15, Math.min(this.width - 45, e.x)), Math.max(40, Math.min(this.height - 45, e.y)), types[Math.floor(Math.random() * types.length)]);
+            this.items.push(it);
+        }
         // 暗金遗物【吸血鬼獠牙】:每次击杀回复生命,溢出转为护盾
-        const killHeal = relicMod(this.player, 'healOnKill');
+        const killHeal = statMod(this.player, 'healOnKill');
         if (killHeal > 0) {
             const missingHp = Math.max(0, this.player.maxHealth - this.player.currentHealth);
             const overflow = Math.max(0, killHeal - missingHp);
@@ -10460,8 +10718,9 @@ class Game {
 
     _rollTalentChoices(count) {
         // 1. 过滤可用天赋:满足 applicable + 未达 maxStacks
-        const eligible = this.talentDefs.filter(t => {
+        const all = this.talentDefs.filter(t => {
             if (t.applicable && !t.applicable(this)) return false;
+            if (!this._talentReqMet(t)) return false;
             const got = this.player.acquiredTalents.find(a => a.id === t.id);
             if (got) {
                 if (!t.stackable) return false;
@@ -10469,7 +10728,10 @@ class Game {
             }
             return true;
         });
-        if (eligible.length === 0) return [];
+        // 传说进化不进普通权重池:前置齐了以后每批有 Game.LEGEND_CHANCE 的几率占一张
+        const legends = all.filter(t => t.rarity === 'legendary');
+        const eligible = all.filter(t => t.rarity !== 'legendary');
+        if (eligible.length === 0 && legends.length === 0) return [];
 
         // 2. 加权随机(common 60 / rare 30 / epic 10),不重复抽取同一张
         const weights = { common: 60, rare: 30, epic: 10 };
@@ -10486,6 +10748,11 @@ class Game {
             }
             chosen.push(pool[pickIdx]);
             pool.splice(pickIdx, 1);
+        }
+        if (legends.length && (chosen.length < count || Math.random() < Game.LEGEND_CHANCE)) {
+            const lg = legends[Math.floor(Math.random() * legends.length)];
+            if (chosen.length >= count) chosen.pop();
+            chosen.unshift(lg);
         }
         return chosen;
     }
@@ -10567,6 +10834,23 @@ class Game {
         }
     }
     
+    // 流派进度:「⚔攻势 4/6」,已有共鸣的流派用本色,其余灰色
+    _renderSchoolStrip(ctx, cx, y, w, fs) {
+        const st = schoolState(this.player);
+        const n = SCHOOL_TYPES.length, cell = w / n;
+        ctx.save();
+        ctx.font = `bold ${fs}px Arial`;
+        ctx.textAlign = 'center';
+        ctx.textBaseline = 'middle';
+        SCHOOL_TYPES.forEach((k, i) => {
+            const d = TALENT_SCHOOLS[k], c = st.counts[k], tier = st.tiers[k];
+            const next = SCHOOL_TIERS[tier];
+            ctx.fillStyle = tier > 0 ? d.color : 'rgba(176, 190, 197, 0.75)';
+            ctx.fillText(`${d.icon}${d.name} ${c}${next ? '/' + next : ' 满'}`, cx - w / 2 + cell * (i + 0.5), y);
+        });
+        ctx.restore();
+    }
+
     renderPotentialMenu() {
         if (!this.showingPotentialMenu) return;
         this.buttons = [];
@@ -10600,6 +10884,7 @@ class Game {
         ctx.font = `${subFontSize}px Arial`;
         ctx.fillText(`剩余潜能点: ${this.player.potentialPoints}`, MW / 2, MH * 0.14);
         ctx.restore();
+        this._renderSchoolStrip(ctx, MW / 2, MH * 0.175, Math.min(MW * 0.94, 600), Math.max(9, Math.min(12, MW * 0.026)));
 
         // 卡牌布局:横屏三列横排;竖屏(宽<高)三行竖排
         const portrait = MW < MH;
@@ -10611,7 +10896,7 @@ class Game {
             cardW = Math.min(280, MW * 0.75);
             cardH = Math.min(110, MH * 0.14);
             startX = (MW - cardW) / 2;
-            startY = MH * 0.20;
+            startY = MH * 0.21;
             stepX = 0;
             stepY = cardH + Math.max(8, MH * 0.015);
         } else {
@@ -10626,8 +10911,9 @@ class Game {
         }
 
         // 稀有度边框颜色
-        const rarityColor = { common: '#90a4ae', rare: '#42a5f5', epic: '#ba68c8' };
-        const rarityLabel = { common: '普通', rare: '稀有', epic: '史诗' };
+        const rarityColor = { common: '#90a4ae', rare: '#42a5f5', epic: '#ba68c8', legendary: '#ff9100' };
+        const rarityLabel = { common: '普通', rare: '稀有', epic: '史诗', legendary: '传说·进化' };
+        const school = schoolState(this.player);
 
         // 绘制卡牌
         for (let i = 0; i < n; i++) {
@@ -10667,6 +10953,13 @@ class Game {
             ctx.textAlign = 'right';
             ctx.textBaseline = 'top';
             ctx.fillText(rarityLabel[t.rarity] || '', cx + cardW - 8, cy + 6);
+            // 流派标签(左上角);这一层能让流派升一档共鸣时加 ★
+            const sk = TALENT_SCHOOL[t.id] || 'atk', sd = TALENT_SCHOOLS[sk];
+            const tierUp = SCHOOL_TIERS.includes(school.counts[sk] + 1);
+            ctx.fillStyle = sd.color;
+            ctx.textAlign = 'left';
+            ctx.fillText(sd.name + (tierUp ? ' ★共鸣' : ''), cx + 8, cy + 6);
+            const desc = t.requires ? `${t.desc}。进化自:${this._talentReqText(t)}` : t.desc;
 
             if (portrait || MW < 480) {
                 // 竖屏:图标左侧 | 名字/描述右侧
@@ -10689,7 +10982,7 @@ class Game {
 
                 ctx.fillStyle = 'rgba(200, 232, 255, 0.85)';
                 ctx.font = `${cardDescSize}px Arial`;
-                this._wrapText(ctx, t.desc, cx + iconBoxW, cy + 14 + cardNameSize + 6, cardW - iconBoxW - 10, cardDescSize + 3);
+                this._wrapText(ctx, desc, cx + iconBoxW, cy + 14 + cardNameSize + 6, cardW - iconBoxW - 10, cardDescSize + 3);
 
                 const got = this.player.acquiredTalents.find(a => a.id === t.id);
                 if (got) {
@@ -10718,7 +11011,7 @@ class Game {
                 ctx.font = `${cardDescSize}px Arial`;
                 ctx.textAlign = 'center';
                 ctx.textBaseline = 'top';
-                this._wrapTextCenter(ctx, t.desc, cx + cardW / 2, cy + cardH * 0.60, cardW - 16, cardDescSize + 3);
+                this._wrapTextCenter(ctx, desc, cx + cardW / 2, cy + cardH * 0.60, cardW - 16, cardDescSize + 3);
 
                 const got = this.player.acquiredTalents.find(a => a.id === t.id);
                 if (got) {
@@ -12365,12 +12658,12 @@ class Game {
             ['防御', `${Math.round(armor.def)}`, armor.flat ? `每次受伤另减 ${Math.round(armor.flat)}` : '最多抵消 80% 伤害'],
             ['受到伤害', pct(p.damageTakenMult()), '防御结算之后的倍率'],
             ['闪避', pct(Math.min(1, p.evadeChance())), p.projEvade ? `子弹偏折 ${pct(p.projEvade)}` : ''],
-            ['移动速度', `${p.moveSpeed().toFixed(1)}`, relicMod(p, 'speed') ? `基础 ${p.speed.toFixed(1)},含遗物修正` : ''],
+            ['移动速度', `${p.moveSpeed().toFixed(1)}`, statMod(p, 'speed') ? `基础 ${p.speed.toFixed(1)},含遗物 / 天赋修正` : ''],
             ['攻击间隔', `${(p.autoAttackInterval / this._atkSpeedMult(p)).toFixed(2)} 秒`, p.class === 'archer' ? '站定专注时更快' : ''],
-            ['作用范围', pct(1 + (t.aoe || 0)), ''],
+            ['作用范围', pct(1 + (t.aoe || 0) + statMod(p, 'aoe')), ''],
             ['冲刺冷却', `${p.dashCdTotal().toFixed(1)} 秒`, ''],
             ['击杀回血', `${p.lifeStealPerKill || 0}`, ''],
-            ['分数倍率', `×${(this.scoreMult || 1).toFixed(2)}`, relicMod(p, 'scoreMult') ? `全队共享;击杀另 +${Math.round(relicMod(p, 'scoreMult') * 100)}%(遗物)` : '全队共享']
+            ['分数倍率', `×${(this.scoreMult || 1).toFixed(2)}`, statMod(p, 'scoreMult') ? `全队共享;击杀另 +${Math.round(statMod(p, 'scoreMult') * 100)}%(遗物 / 天赋)` : '全队共享']
         ];
         const res = { mage: ['法力', p.mana, p.maxMana], warrior: ['怒气', p.rage, p.maxRage], paladin: ['信念', p.faith, p.maxFaith],
             assassin: ['蓄力', p.assassinCharge, p.maxAssassinCharge], archer: ['箭矢', p.arrows, p.maxArrows] }[p.class];
@@ -12431,7 +12724,16 @@ class Game {
             if (!d) return '';
             return `<span class="st-talent r-${d.rarity}" title="${esc(d.desc)}">${A ? img(A.badgeURL(d.icon, d.color), 'st-tal-ic') : d.icon}${d.name}${a.count > 1 ? ` <i>×${a.count}</i>` : ''}</span>`;
         }).join('');
+        const ss = schoolState(p);
+        const schools = SCHOOL_TYPES.map(k => {
+            const d = TALENT_SCHOOLS[k], tier = ss.tiers[k], next = SCHOOL_TIERS[tier];
+            const cur = tier ? fmtMods(d.tiers[tier - 1]) : '尚未共鸣';
+            const nxt = next ? `${next} 层:${fmtMods(d.tiers[tier])}` : '已满级';
+            return `<div class="st-school${tier ? ' on' : ''}" style="--c:${d.color}">${A ? img(A.badgeURL(d.icon, d.color), 'st-tal-ic') : d.icon}
+                <div><b>${d.name} <i>${ss.counts[k]} 层${tier ? ' · 共鸣 ' + tier : ''}</i></b><small>${esc(cur)}</small><small class="nx">下一档 ${esc(nxt)}</small></div></div>`;
+        }).join('');
         const talents = `<div class="st-card"><div class="st-title">天赋 <small>${(p.acquiredTalents || []).reduce((n, a) => n + a.count, 0)} 层</small></div>
+            <div class="st-schools">${schools}</div>
             <div class="st-talents">${tal || '<div class="st-empty">升级时从三张天赋卡里选一张。</div>'}</div></div>`;
         // 本局
         const run = `<div class="st-card"><div class="st-title">本局</div><div class="st-run">${this._runSummaryRows().filter(([k]) => k !== '职业' && k !== '暗金遗物')
@@ -13229,6 +13531,7 @@ class Player {
     static ARCHER_EVADE = 0.18; // 弓手被动「灵巧」:天生闪避率
     static ARCHER_DASH_CDR = 0.3; // 弓手被动「灵巧」:冲刺冷却缩减
     static PALADIN_SHIELD_DELAY = 1.5; // 圣骑士挨打后多少秒才开始回护盾
+    static CHEAT_DEATH_CD = 45; // 天赋「不灭意志」冷却
 
     constructor(x, y, game = null) {
         this.game = game || Game.instance || null;
@@ -13394,7 +13697,7 @@ class Player {
     }
 
     dashCdTotal() {
-        const relicCdr = relicMod(this, 'dashCdr');
+        const relicCdr = statMod(this, 'dashCdr');
         const mutCdr = (this.game && this.game.mutations && this.game.mutations.includes('hyper_frenzy')) ? 0.5 : 0;
         // 弓手被动「灵巧」:冲刺冷却 -30%(没有位移技能,靠冲刺拉开距离)
         const classCdr = this.class === 'archer' ? Player.ARCHER_DASH_CDR : 0;
@@ -13420,6 +13723,12 @@ class Player {
         const movedNow = Math.abs(this.x - startX) + Math.abs(this.y - startY);
         this.stillTime = movedNow < 0.8 ? this.stillTime + DT : 0;
         if (this.undyingCd > 0) this.undyingCd = Math.max(0, this.undyingCd - DT);
+        // 天赋 / 传说天赋计时
+        if (this.cheatDeathCd > 0) this.cheatDeathCd -= DT;
+        if (this.fortressCd > 0) this.fortressCd -= DT;
+        if (this.fortressTimer > 0) this.fortressTimer -= DT;
+        if (this.galeTimer > 0) this.galeTimer -= DT;
+        if (this.afterimageTimer > 0) this.afterimageTimer -= DT;
         if (this.auraGuard > 0) this.auraGuard = Math.max(0, this.auraGuard - DT);
         if (this._pendingIframes > 0) {
             this.hurtCooldown = Math.max(this.hurtCooldown, this._pendingIframes);
@@ -13454,6 +13763,7 @@ class Player {
         this.dashCooldown = this.dashCdTotal();
         this.dashDodged = false;
         this._dashHits = null;
+        if (this.legend && this.legend.galeLord) this.galeTimer = 2 + this.dashDuration;
         return true;
     }
 
@@ -13564,15 +13874,15 @@ class Player {
     }
 
     // pct:额外按最大生命百分比的真实伤害(无视防御/减伤值,护盾只能挡一半)
-    // 基础移速 × 暗金遗物修正(怀表 / 狂徒 -10%,风暴之靴 +20%)
+    // 基础移速 × 构筑修正(暗金遗物、天赋、迅捷共鸣、疾风之主)
     moveSpeed() {
-        return this.speed * Math.max(0.5, 1 + relicMod(this, 'speed'));
+        return this.speed * Math.max(0.5, 1 + statMod(this, 'speed') + (this.galeTimer > 0 ? 0.2 : 0));
     }
 
     // 闪避率:天赋「疾风之舞」+ 暗金遗物【死神斗篷】(低血量)+ 弓手被动「灵巧」;角色面板与受伤结算共用
     evadeChance() {
         const t = this.tree || {};
-        const reaperEvade = this.currentHealth < this.maxHealth * 0.35 ? relicMod(this, 'lowLifeEvade') : 0;
+        const reaperEvade = this.currentHealth < this.maxHealth * 0.35 ? statMod(this, 'lowLifeEvade') : 0;
         const classEvade = this.class === 'archer' ? Player.ARCHER_EVADE : 0;
         return (t.evade || 0) + reaperEvade + classEvade;
     }
@@ -13580,10 +13890,10 @@ class Player {
     // 护甲:def = 按天赋百分比放大的防御 + 限时装备防御;flat = 每次受伤固定减免
     armorValue() {
         const t = this.tree || {};
-        const relicFlatRed = relicMod(this, 'flatRed'); // 暗金遗物【狂徒铠甲】
+        const relicFlatRed = statMod(this, 'flatRed'); // 暗金遗物【狂徒铠甲】
         const gear = this.gear && GEARS[this.gear.type];
         const gearDef = gear ? ((this.gear.level === 2 && gear.evoDefBonus) ? gear.evoDefBonus : (gear.defBonus || 0)) : 0;
-        return { def: this.defense * Math.max(0, 1 + (t.defPct || 0) + relicMod(this, 'defPct')) + gearDef, flat: (this.flatDamageReduction || 0) + relicFlatRed };
+        return { def: this.defense * Math.max(0, 1 + (t.defPct || 0) + statMod(this, 'defPct')) + gearDef, flat: (this.flatDamageReduction || 0) + relicFlatRed };
     }
 
     // 受伤倍率(防御结算之后):天赋、战士战意 / 奥义、契约、突变、守护者光环
@@ -13601,9 +13911,11 @@ class Player {
         if (this.game && this.game.mutations && this.game.mutations.includes('glass_canon')) mult *= 1.4;
         // 守护者觉醒:神圣光环内减伤 50%
         if (this.auraGuard > 0) mult *= 0.5;
-        // 暗金遗物的代价(獠牙 / 狂战面具)
-        const rt = relicMod(this, 'dmgTaken');
-        if (rt) mult *= 1 + rt;
+        // 暗金遗物的代价(獠牙 / 狂战面具)、天赋「坚韧」、坚守共鸣
+        const rt = statMod(this, 'dmgTaken');
+        if (rt) mult *= Math.max(0.2, 1 + rt);
+        // 传说天赋「不落要塞」:触发后减伤 60%
+        if (this.fortressTimer > 0) mult *= 0.4;
         return mult;
     }
 
@@ -13651,6 +13963,7 @@ class Player {
         actualDamage -= pierce;
         if (this.spec === 'protector' && this.awakened) this._reflect = (this._reflect || 0) + damage;
         if (this.gear && this.gear.type === 'thorns') this._thornsHit = (this._thornsHit || 0) + damage;
+        if (this.legend && this.legend.thornThrone) this._throneHit = (this._throneHit || 0) + damage;
         // 圣骑士护盾优先全额抵挡(不再因 Math.max(1) 强制漏 1 点)
         if (this.shield > 0) {
             const absorbed = Math.min(this.shield, actualDamage);
@@ -13676,11 +13989,25 @@ class Player {
         if (actualDamage >= this.currentHealth && this.ultActiveTimer > 0 && this.class === 'warrior' && this.currentHealth > 1) {
             actualDamage = this.currentHealth - 1;
         }
+        // 天赋「不灭意志」:抵挡一次致死伤害并回复到 30% 生命(冷却 Player.CHEAT_DEATH_CD 秒)
+        if (actualDamage >= this.currentHealth && this.cheatDeath && !(this.cheatDeathCd > 0) && this.currentHealth > 0) {
+            actualDamage = 0;
+            this.currentHealth = Math.max(this.currentHealth, this.maxHealth * 0.3);
+            this.cheatDeathCd = Player.CHEAT_DEATH_CD;
+            this._pendingIframes = 1.5;
+            this._cheatFx = true;
+        }
         if (actualDamage > 0) {
             this.lastHitInfo = { src: src || '其他伤害', dmg: actualDamage };
             this.currentHealth = Math.max(0, this.currentHealth - actualDamage);
             if (this.currentHealth <= 0 && this.game) {
                 this.game.fatalBlow = { ...this.lastHitInfo };
+            }
+            // 传说天赋「不落要塞」:生命跌破 30% 时获得 4 秒 60% 减伤
+            if (this.legend && this.legend.fortress && this.currentHealth > 0 && this.currentHealth < this.maxHealth * 0.3 && !(this.fortressCd > 0)) {
+                this.fortressTimer = 4;
+                this.fortressCd = 30;
+                this._fortressFx = true;
             }
             // 受伤打断一半连杀:冲刺躲开攻击才能把连杀滚大
             if (this.combo > 0) {
@@ -15145,7 +15472,7 @@ class Item {
             : gm ? { color: gm.color, icon: gm.icon, rarity: 'rare', duration: 15 }
             : (cfg[type] || cfg.potion);
         const curGame = Game.instance;
-        const alchemistMult = 1 + (curGame ? relicMod(curGame.player, 'itemDur') : 0);
+        const alchemistMult = 1 + (curGame ? statMod(curGame.player, 'itemDur') : 0);
         this.color = (customRarity === 'epic' ? '#ffd700' : customRarity === 'rare' ? '#00e5ff' : c.color);
         this.icon = c.icon;
         this.rarity = customRarity || c.rarity;

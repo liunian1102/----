@@ -895,6 +895,15 @@ kbd {
     background: rgba(255, 255, 255, 0.04); border: 1px solid rgba(144, 164, 174, 0.4); }
 .st-talent.r-rare { border-color: rgba(66, 165, 245, 0.6); }
 .st-talent.r-epic { border-color: rgba(186, 104, 200, 0.75); }
+.st-talent.r-legendary { border-color: rgba(255, 145, 0, 0.9); background: rgba(255, 145, 0, 0.1); color: #ffcc80; }
+.st-schools { display: grid; grid-template-columns: repeat(auto-fill, minmax(190px, 1fr)); gap: 6px; margin-bottom: 10px; }
+.st-school { display: flex; align-items: flex-start; gap: 7px; padding: 6px 8px; border-radius: 9px; opacity: 0.6;
+    background: rgba(255, 255, 255, 0.03); border: 1px solid rgba(255, 255, 255, 0.06); }
+.st-school.on { opacity: 1; border-color: color-mix(in srgb, var(--c) 45%, transparent); background: color-mix(in srgb, var(--c) 9%, transparent); }
+.st-school b { display: block; color: var(--c); font-size: 0.86em; }
+.st-school b i { font-style: normal; font-weight: 400; color: rgba(200, 232, 255, 0.7); font-size: 0.9em; }
+.st-school small { display: block; color: rgba(200, 232, 255, 0.8); font-size: 0.76em; line-height: 1.35; }
+.st-school small.nx { color: rgba(200, 232, 255, 0.45); }
 .st-talent i { font-style: normal; color: #ffd740; }
 .st-tal-ic { width: 22px; height: 22px; }
 .st-run { display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); gap: 6px 10px; }
