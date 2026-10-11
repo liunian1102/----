@@ -464,3 +464,305 @@ const ArtSVG = (() => {
 
     return { enemies, player, boss, items };
 })();
+
+// ══════════════════════════════════════════════════════════════════
+//  emoji → 同画风小图标(viewBox 0 0 100 100)
+//  画布:EmojiArt.patchCanvas 让 ctx.fillText 里的 emoji 自动画成图标;
+//  网页:EmojiArt.patchDom 把页面文字里的 emoji 换成 <img>。
+//  不同系统的 emoji 字体长得不一样,这样各端看到的完全一致。
+// ══════════════════════════════════════════════════════════════════
+const EmojiSVG = (() => {
+    const OUT = '#120d22';
+    const svg = (defs, body) =>
+        `<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 100 100" width="128" height="128"><defs>${defs}</defs>${body}</svg>`;
+    const lg = (id, c1, c2, x2 = 0.5, y2 = 1) =>
+        `<linearGradient id="${id}" x1="0" y1="0" x2="${x2}" y2="${y2}"><stop offset="0" stop-color="${c1}"/><stop offset="1" stop-color="${c2}"/></linearGradient>`;
+    const P = (d, fill, w = 5) => `<path d="${d}" fill="${fill}" stroke="${OUT}" stroke-width="${w}" stroke-linejoin="round" stroke-linecap="round"/>`;
+    const C = (cx, cy, r, fill, w = 5) => `<circle cx="${cx}" cy="${cy}" r="${r}" fill="${fill}" stroke="${OUT}" stroke-width="${w}"/>`;
+    const L = (d, w, c = OUT) => `<path d="${d}" fill="none" stroke="${c}" stroke-width="${w}" stroke-linecap="round" stroke-linejoin="round"/>`;
+    const LL = (d, w, c) => L(d, w + 5) + L(d, w, c); // 描边 + 彩色内芯
+    const hi = (cx, cy, rx, ry, rot = -35) => `<ellipse cx="${cx}" cy="${cy}" rx="${rx}" ry="${ry}" transform="rotate(${rot} ${cx} ${cy})" fill="#fff" opacity="0.55"/>`;
+    const star = (cx, cy, R, r, n = 5, rot = -Math.PI / 2) => {
+        let d = '';
+        for (let i = 0; i < n * 2; i++) {
+            const a = rot + i * Math.PI / n, rr = i % 2 ? r : R;
+            d += (i ? 'L' : 'M') + (cx + Math.cos(a) * rr).toFixed(1) + ' ' + (cy + Math.sin(a) * rr).toFixed(1);
+        }
+        return d + 'Z';
+    };
+    const g1 = (c1, c2) => lg('a', c1, c2);
+    const sword = (rot, c1 = '#ffffff', c2 = '#90a4ae') =>
+        `<g transform="rotate(${rot} 50 50)">` + P('M50 4 L58 16 V62 H42 V16 Z', `url(#s${rot < 0 ? 'b' : 'a'})`, 4.5) +
+        P('M28 60 H72 V70 H28 Z', '#ffb300', 4.5) + P('M45 70 H55 V88 H45 Z', '#6d4c41', 4) + C(50, 92, 6, '#ffd54f', 4) + `</g>`;
+    const bird = (c1, c2) => svg(g1(c1, c2),
+        P('M6 44 C22 26 40 30 50 48 C60 30 78 26 94 44 C78 42 66 48 58 60 L50 74 L42 60 C34 48 22 42 6 44 Z', 'url(#a)') +
+        P('M44 62 Q50 50 56 62 Q50 70 44 62 Z', c2, 3));
+    const arrowsCircle = (c1, c2) => svg(g1(c1, c2),
+        LL('M20 54 A30 30 0 0 1 72 28', 9, 'url(#a)') + P('M64 16 L84 30 L62 40 Z', c1, 4) +
+        LL('M80 46 A30 30 0 0 1 28 72', 9, 'url(#a)') + P('M36 84 L16 70 L38 60 Z', c2, 4));
+
+    const S = {
+        // ── 武器与战斗 ──
+        '⚔': () => svg(lg('sa', '#ffffff', '#90a4ae', 1, 0) + lg('sb', '#ffffff', '#90a4ae', 1, 0), sword(-42) + sword(42)),
+        '🗡': () => svg(lg('sa', '#ffffff', '#b0bec5', 1, 0), sword(40)),
+        '🔱': () => svg(g1('#fff59d', '#ff8f00'),
+            P('M45 40 H55 V96 H45 Z', 'url(#a)', 4) +
+            P('M20 10 L28 22 H25 V38 Q25 48 50 48 Q75 48 75 38 V22 H72 L80 10 L88 22 H84 V40 Q84 58 50 58 Q16 58 16 40 V22 H12 Z', 'url(#a)', 4) +
+            P('M50 4 L58 18 H54 V46 H46 V18 H42 Z', 'url(#a)', 4)),
+        '🔨': () => svg(g1('#eceff1', '#546e7a'), `<g transform="rotate(-30 50 50)">` + P('M45 34 H55 V94 H45 Z', '#8d6e63', 4) + P('M22 12 H78 V40 H22 Z', 'url(#a)') + hi(36, 20, 9, 4, 0) + `</g>`),
+        '🎯': () => svg('', C(50, 52, 42, '#e53935') + C(50, 52, 30, '#fff', 0) + C(50, 52, 19, '#e53935', 0) + C(50, 52, 8, '#fff', 0) +
+            `<circle cx="50" cy="52" r="42" fill="none" stroke="${OUT}" stroke-width="5"/>` +
+            LL('M52 50 L86 16', 4, '#ffd54f') + P('M80 8 L94 6 L92 20 Z', '#4fc3f7', 3)),
+        '💥': () => svg(g1('#ffeb3b', '#ff3d00'), P(star(50, 50, 47, 24, 10), 'url(#a)') + P(star(50, 50, 24, 12, 8), '#fffde7', 3)),
+        '💢': () => svg('', ['M14 38 Q30 36 32 14', 'M62 14 Q64 36 86 38', 'M86 62 Q64 64 62 86', 'M38 86 Q36 64 14 62'].map(d => LL(d, 9, '#ff1744')).join('')),
+        '☠': () => svg(g1('#ffffff', '#b0bec5'),
+            P('M50 8 C26 8 12 26 14 48 C15 60 22 66 26 70 V84 Q26 92 34 92 H66 Q74 92 74 84 V70 C78 66 85 60 86 48 C88 26 74 8 50 8 Z', 'url(#a)') +
+            `<ellipse cx="35" cy="50" rx="11" ry="12" fill="${OUT}"/><ellipse cx="65" cy="50" rx="11" ry="12" fill="${OUT}"/>` +
+            P('M50 60 L56 72 H44 Z', OUT, 2) + L('M40 80 V90 M50 80 V90 M60 80 V90', 3.5) + hi(32, 24, 10, 5)),
+        '😈': () => svg(g1('#ce93d8', '#6a1b9a'),
+            P('M18 28 L10 4 L36 18 Z', '#4a148c', 4) + P('M82 28 L90 4 L64 18 Z', '#4a148c', 4) + C(50, 56, 38, 'url(#a)') +
+            L('M28 42 L44 48 M72 42 L56 48', 5) + `<ellipse cx="38" cy="54" rx="5" ry="6" fill="${OUT}"/><ellipse cx="62" cy="54" rx="5" ry="6" fill="${OUT}"/>` +
+            P('M30 66 Q50 84 70 66 Q50 74 30 66 Z', '#fff', 3.5) + hi(34, 34, 9, 5)),
+        '🛡': () => svg(g1('#bbdefb', '#1565c0'),
+            P('M50 5 L87 18 V46 C87 72 71 87 50 95 C29 87 13 72 13 46 V18 Z', 'url(#a)') +
+            P('M50 18 L74 27 V46 C74 64 64 75 50 81 C36 75 26 64 26 46 V27 Z', '#e3f2fd', 3.5) + P('M50 30 V70 M34 46 H66', 'none', 5) + hi(30, 26, 8, 4)),
+
+        // ── 元素与自然 ──
+        '🔥': () => svg(g1('#ffca28', '#e64a19'),
+            P('M50 4 C60 22 78 30 78 58 C78 80 64 95 50 95 C36 95 22 80 22 58 C22 40 33 32 37 18 C42 30 46 34 50 37 C53 26 51 15 50 4 Z', 'url(#a)') +
+            P('M50 50 C57 60 65 66 63 79 C62 88 57 91 50 91 C43 91 38 88 37 79 C36 69 45 62 50 50 Z', '#fff59d', 3)),
+        '⚡': () => svg(g1('#fff9c4', '#ffb300'), P('M60 3 L20 56 H45 L36 97 L80 40 H55 L68 3 Z', 'url(#a)')),
+        '🌊': () => svg(g1('#80d8ff', '#01579b'),
+            P('M5 58 C18 36 38 30 54 42 C45 44 43 56 54 60 C68 66 84 54 95 40 V93 H5 Z', 'url(#a)') +
+            L('M10 76 Q30 68 50 76 T90 74', 3.5, 'rgba(255,255,255,0.7)')),
+        '🌋': () => svg(g1('#8d6e63', '#3e2723'),
+            `<circle cx="38" cy="16" r="10" fill="#9e9e9e" opacity="0.8"/><circle cx="56" cy="10" r="8" fill="#bdbdbd" opacity="0.8"/>` +
+            P('M6 92 L36 34 H64 L94 92 Z', 'url(#a)') + P('M36 34 H64 L58 48 L52 42 L46 54 L40 44 Z', '#ff5722', 3.5)),
+        '☀': () => {
+            let rays = '';
+            for (let i = 0; i < 8; i++) {
+                const a = i * Math.PI / 4, c = Math.cos(a), s = Math.sin(a);
+                rays += P(`M${50 + c * 30} ${50 + s * 30} L${50 + Math.cos(a + 0.22) * 38} ${50 + Math.sin(a + 0.22) * 38} L${50 + c * 48} ${50 + s * 48} L${50 + Math.cos(a - 0.22) * 38} ${50 + Math.sin(a - 0.22) * 38} Z`, '#ffb300', 3.5);
+            }
+            return svg(g1('#fff59d', '#ff8f00'), rays + C(50, 50, 26, 'url(#a)') + hi(42, 40, 8, 5));
+        },
+        '🌙': () => svg(g1('#fff9c4', '#ffb300'), P('M62 6 A44 44 0 1 0 94 66 A34 34 0 1 1 62 6 Z', 'url(#a)') + hi(26, 40, 5, 10, 20)),
+        '🌱': () => svg(g1('#b9f6ca', '#2e7d32'),
+            LL('M50 94 Q48 70 50 48', 5, '#66bb6a') + P('M50 54 Q58 24 90 24 Q86 56 50 54 Z', 'url(#a)', 4.5) + P('M48 60 Q36 34 10 38 Q18 64 48 60 Z', 'url(#a)', 4.5)),
+        '🌀': () => {
+            let d = 'M50 50';
+            for (let t = 0; t <= 4.2 * Math.PI; t += 0.25) d += ` L${(50 + Math.cos(t) * (3 + t * 3.3)).toFixed(1)} ${(50 + Math.sin(t) * (3 + t * 3.3)).toFixed(1)}`;
+            return svg(lg('a', '#b388ff', '#2979ff', 1, 1), LL(d, 9, 'url(#a)'));
+        },
+        '💨': () => svg('', LL('M10 34 H60 Q76 34 76 22 Q76 12 66 12 Q58 12 58 20', 7, '#e1f5fe') + LL('M10 54 H80 Q94 54 94 66 Q94 78 82 78 Q74 78 74 70', 7, '#b3e5fc') + LL('M18 74 H50', 7, '#e1f5fe')),
+        '☄': () => svg(lg('a', '#ffffff', '#ff7043', 1, 1), P('M8 8 Q40 22 70 50 L50 70 Q22 40 8 8 Z', '#ffab40', 3) + C(66, 66, 22, 'url(#a)') + hi(60, 58, 7, 4)),
+        '🌠': () => svg(g1('#fff59d', '#ffb300'), LL('M10 90 L46 54 M8 72 L36 50 M28 94 L52 66', 4, '#fff59d') + P(star(64, 36, 30, 13), 'url(#a)')),
+        '✨': () => svg(g1('#fff9c4', '#ffc400'), P(star(40, 56, 34, 9, 4, 0), 'url(#a)', 4.5) + P(star(76, 22, 18, 5, 4, 0), 'url(#a)', 4) + P(star(80, 76, 13, 4, 4, 0), 'url(#a)', 3.5)),
+        '🌟': () => svg(g1('#fffde7', '#ffab00') + `<radialGradient id="h"><stop offset="0.4" stop-color="#ffe57f" stop-opacity="0.7"/><stop offset="1" stop-color="#ffe57f" stop-opacity="0"/></radialGradient>`,
+            `<circle cx="50" cy="52" r="48" fill="url(#h)"/>` + P(star(50, 54, 42, 18), 'url(#a)') + hi(40, 40, 8, 5)),
+        '⭐': () => svg(g1('#fff59d', '#ff8f00'), P(star(50, 54, 46, 20), 'url(#a)') + hi(40, 40, 8, 5)),
+        '🌌': () => svg(`<radialGradient id="a" cx="0.5" cy="0.5" r="0.6"><stop offset="0" stop-color="#e1bee7"/><stop offset="0.4" stop-color="#7c4dff"/><stop offset="1" stop-color="#1a0638"/></radialGradient>`,
+            C(50, 50, 44, 'url(#a)') + L('M50 50 C60 40 76 46 76 58 M50 50 C40 60 24 54 24 42', 4, 'rgba(255,255,255,0.75)') +
+            [[30, 26], [72, 30], [70, 74], [28, 72], [52, 18]].map(([x, y]) => `<circle cx="${x}" cy="${y}" r="2.6" fill="#fff"/>`).join('')),
+        '🕊': () => bird('#ffffff', '#cfd8dc'),
+        '🦅': () => bird('#ffcc80', '#6d4c41'),
+        '🪶': () => svg(g1('#e0f7fa', '#26a69a'), P('M84 8 C40 14 18 46 22 84 C52 80 80 52 84 8 Z', 'url(#a)') + L('M84 8 L12 92', 4)),
+        '🎐': () => svg(g1('#e1f5fe', '#4fc3f7'), LL('M50 4 V18', 3, '#cfd8dc') + P('M24 50 Q24 16 50 16 Q76 16 76 50 Z', 'url(#a)') + `<path d="M30 34 Q40 26 48 26" fill="none" stroke="#fff" stroke-width="3" opacity="0.7"/>` +
+            LL('M50 50 V70', 2.5, '#cfd8dc') + P('M40 70 H60 V94 H40 Z', '#ffcdd2', 3.5)),
+        '⛲': () => svg(g1('#b3e5fc', '#0277bd'), LL('M50 46 Q30 20 18 50 M50 46 Q70 20 82 50', 4, '#81d4fa') + LL('M50 60 V30', 5, '#81d4fa') + P('M8 62 H92 L82 90 H18 Z', 'url(#a)')),
+        '🗿': () => svg(g1('#bdbdbd', '#616161'), P('M26 6 H74 L78 90 H22 Z', 'url(#a)') + P('M26 34 H74 V42 H26 Z', '#757575', 3) + P('M50 42 L58 66 H42 Z', '#9e9e9e', 3) + L('M36 76 H64', 4)),
+        '🌳': () => svg(g1('#a5d6a7', '#2e7d32'), P('M44 62 H56 V94 H44 Z', '#795548', 4) + C(32, 50, 22, 'url(#a)') + C(68, 50, 22, 'url(#a)') + C(50, 32, 26, 'url(#a)') + hi(42, 22, 8, 5)),
+
+        // ── 物品 ──
+        '⌛': () => svg(g1('#fff59d', '#ff8f00'), P('M20 6 H80 V14 H20 Z M20 86 H80 V94 H20 Z', '#8d6e63', 4) +
+            P('M26 14 H74 Q74 40 54 50 Q74 60 74 86 H26 Q26 60 46 50 Q26 40 26 14 Z', '#e1f5fe', 4.5) + P('M34 24 H66 Q62 40 50 46 Q38 40 34 24 Z M30 84 Q34 66 50 62 Q66 66 70 84 Z', 'url(#a)', 0)),
+        '🧪': () => svg(g1('#ccff90', '#00c853'), `<g transform="rotate(25 50 50)">` + P('M38 6 H62 V12 H58 V80 Q58 94 50 94 Q42 94 42 80 V12 H38 Z', '#e0f7fa', 4.5) + P('M44 50 H56 V80 Q56 90 50 90 Q44 90 44 80 Z', 'url(#a)', 0) + `</g>`),
+        '💰': () => svg(g1('#ffe082', '#c79100'), P('M36 22 L30 8 H70 L64 22 Z', '#a1887f', 4) + P('M36 22 H64 C90 40 94 92 50 92 C6 92 10 40 36 22 Z', 'url(#a)') + C(50, 62, 15, '#fff59d', 3.5) + L('M50 52 V72 M44 58 H56 M44 66 H56', 3)),
+        '💎': () => svg(g1('#e1f5fe', '#0288d1'), P('M24 12 H76 L94 36 L50 92 L6 36 Z', 'url(#a)') + L('M6 36 H94 M24 12 L38 36 L50 92 L62 36 L76 12 M38 36 L50 12 L62 36', 2.5, 'rgba(255,255,255,0.7)')),
+        '👑': () => svg(g1('#fff59d', '#ff8f00'), P('M10 76 L6 26 L30 48 L50 14 L70 48 L94 26 L90 76 Z', 'url(#a)') + P('M10 76 H90 V90 H10 Z', '#ffb300', 4.5) + C(50, 44, 6, '#e53935', 3) + C(26, 62, 4.5, '#40c4ff', 2.5) + C(74, 62, 4.5, '#40c4ff', 2.5)),
+        '🏆': () => svg(g1('#fff59d', '#ff8f00'), L('M28 22 Q8 22 12 40 Q16 54 34 52 M72 22 Q92 22 88 40 Q84 54 66 52', 6, '#ffb300') +
+            P('M26 8 H74 V34 C74 56 64 66 50 66 C36 66 26 56 26 34 Z', 'url(#a)') + P('M44 66 H56 V78 H44 Z', '#ffb300', 4) + P('M28 78 H72 V92 H28 Z', '#6d4c41', 4.5) + hi(38, 22, 6, 9, 0)),
+        '🔒': () => svg(g1('#ffe082', '#ff8f00'), L('M30 46 V32 Q30 10 50 10 Q70 10 70 32 V46', 9) + L('M30 46 V32 Q30 10 50 10 Q70 10 70 32 V46', 4, '#b0bec5') +
+            P('M16 44 H84 V92 H16 Z', 'url(#a)') + C(50, 64, 7, OUT, 0) + P('M47 64 H53 V80 H47 Z', OUT, 0)),
+        '📍': () => svg(g1('#ff8a80', '#c62828'), P('M50 96 C36 74 18 58 18 38 C18 18 32 6 50 6 C68 6 82 18 82 38 C82 58 64 74 50 96 Z', 'url(#a)') + C(50, 38, 12, '#fff', 4)),
+        '🩸': () => svg(g1('#ff8a80', '#b71c1c'), P('M50 6 C62 30 80 46 80 64 C80 82 66 94 50 94 C34 94 20 82 20 64 C20 46 38 30 50 6 Z', 'url(#a)') + hi(36, 62, 6, 10, 15)),
+        '⚙': () => {
+            let d = '';
+            for (let i = 0; i < 8; i++) {
+                const a = i * Math.PI / 4, p = (r, da) => `${(50 + Math.cos(a + da) * r).toFixed(1)} ${(50 + Math.sin(a + da) * r).toFixed(1)}`;
+                d += `${i ? 'L' : 'M'}${p(32, -0.38)} L${p(46, -0.22)} L${p(46, 0.22)} L${p(32, 0.38)} `;
+            }
+            return svg(g1('#eceff1', '#546e7a'), P(d + 'Z', 'url(#a)') + C(50, 50, 13, '#263238', 4));
+        },
+        '⚛': () => svg('', [0, 60, -60].map(r => `<ellipse cx="50" cy="50" rx="44" ry="16" transform="rotate(${r} 50 50)" fill="none" stroke="${OUT}" stroke-width="9"/><ellipse cx="50" cy="50" rx="44" ry="16" transform="rotate(${r} 50 50)" fill="none" stroke="#4fc3f7" stroke-width="4.5"/>`).join('') + C(50, 50, 9, '#ff5252', 4)),
+        '☣': () => svg(g1('#f4ff81', '#64dd17'),
+            [0, 120, 240].map(r => `<g transform="rotate(${r} 50 52)">${C(50, 26, 19, 'url(#a)', 4.5)}<circle cx="50" cy="20" r="9" fill="${OUT}"/></g>`).join('') +
+            `<circle cx="50" cy="52" r="20" fill="none" stroke="${OUT}" stroke-width="10"/><circle cx="50" cy="52" r="20" fill="none" stroke="#c6ff00" stroke-width="5"/>` + C(50, 52, 7, '#c6ff00', 4)),
+        '⚖': () => svg(g1('#fff59d', '#ff8f00'), P('M46 14 H54 V84 H46 Z', 'url(#a)', 4) + P('M28 84 H72 V94 H28 Z', 'url(#a)', 4) + LL('M12 26 H88', 5, '#ffd54f') +
+            LL('M14 28 L4 60 M14 28 L24 60 M86 28 L76 60 M86 28 L96 60', 2.2, '#ffe082') + P('M2 60 Q14 74 26 60 Z', 'url(#a)', 4) + P('M74 60 Q86 74 98 60 Z', 'url(#a)', 4) + C(50, 14, 6, '#ffd54f', 3.5)),
+        '⚠': () => svg(g1('#fff59d', '#ffb300'), P('M50 6 L96 90 H4 Z', 'url(#a)') + P('M45 32 H55 L53 66 H47 Z', OUT, 0) + C(50, 77, 5.5, OUT, 0)),
+        '🔁': () => arrowsCircle('#69f0ae', '#00c853'),
+        '🔄': () => arrowsCircle('#80d8ff', '#0288d1'),
+        '🔀': () => svg('', LL('M8 28 H34 Q50 28 58 50 Q66 72 82 72', 7, '#80d8ff') + LL('M8 72 H34 Q50 72 58 50 Q66 28 82 28', 7, '#b388ff') + P('M80 16 L96 28 L80 40 Z', '#b388ff', 4) + P('M80 60 L96 72 L80 84 Z', '#80d8ff', 4)),
+        '⏩': () => svg(g1('#b9f6ca', '#00c853'), P('M8 18 L50 50 L8 82 Z', 'url(#a)') + P('M50 18 L92 50 L50 82 Z', 'url(#a)')),
+        '🎮': () => svg(g1('#9575cd', '#311b92'), P('M22 28 H78 C94 28 98 52 92 72 C88 86 74 86 68 72 L62 62 H38 L32 72 C26 86 12 86 8 72 C2 52 6 28 22 28 Z', 'url(#a)') +
+            P('M22 42 H30 V34 H38 V42 H46 V50 H38 V58 H30 V50 H22 Z', '#e0e0e0', 2.5) + C(68, 40, 5, '#ff5252', 2.5) + C(78, 50, 5, '#69f0ae', 2.5)),
+        '🎭': () => svg(g1('#fff59d', '#ffb300') + lg('b', '#ce93d8', '#6a1b9a'),
+            P('M44 20 Q70 8 94 22 Q96 64 72 78 Q50 70 44 20 Z', 'url(#b)', 4.5) + P('M6 26 Q30 12 56 26 Q58 70 32 86 Q8 72 6 26 Z', 'url(#a)', 4.5) +
+            L('M18 42 Q22 38 26 42 M36 42 Q40 38 44 42 M20 60 Q31 72 42 60', 3.5) + L('M60 40 Q64 44 68 40 M76 42 Q80 46 84 42 M64 62 Q72 54 80 62', 3.5)),
+        '🎨': () => svg(g1('#ffe0b2', '#d7a86e'), P('M50 6 C78 6 96 26 94 50 C92 66 76 64 70 70 C64 78 72 94 52 94 C24 94 6 74 6 50 C6 26 24 6 50 6 Z', 'url(#a)') +
+            C(30, 36, 7, '#ff5252', 3) + C(52, 24, 7, '#ffeb3b', 3) + C(74, 34, 7, '#40c4ff', 3) + C(28, 62, 7, '#69f0ae', 3)),
+        '👼': () => svg(g1('#ffe0b2', '#ffb74d'), `<ellipse cx="50" cy="12" rx="22" ry="6" fill="none" stroke="${OUT}" stroke-width="8"/><ellipse cx="50" cy="12" rx="22" ry="6" fill="none" stroke="#fff59d" stroke-width="4"/>` +
+            P('M22 52 Q2 40 6 70 Q18 70 26 62 Z', '#ffffff', 4) + P('M78 52 Q98 40 94 70 Q82 70 74 62 Z', '#ffffff', 4) + C(50, 56, 30, 'url(#a)') +
+            L('M38 56 Q42 52 46 56 M54 56 Q58 52 62 56 M42 68 Q50 74 58 68', 3.5) + `<ellipse cx="34" cy="64" rx="5" ry="3" fill="#ff8a80" opacity="0.7"/><ellipse cx="66" cy="64" rx="5" ry="3" fill="#ff8a80" opacity="0.7"/>`),
+        '✝': () => svg(g1('#fff59d', '#ff8f00'), P('M42 6 H58 V30 H82 V46 H58 V94 H42 V46 H18 V30 H42 Z', 'url(#a)') + hi(48, 16, 3, 7, 0)),
+        '🔊': () => svg(g1('#e1f5fe', '#4fc3f7'), P('M10 36 H28 L52 14 V86 L28 64 H10 Z', 'url(#a)') + L('M64 34 Q74 50 64 66', 6, '#fff') + L('M74 22 Q92 50 74 78', 6, '#fff')),
+        '🔇': () => svg(g1('#cfd8dc', '#78909c'), P('M10 36 H28 L52 14 V86 L28 64 H10 Z', 'url(#a)') + L('M64 36 L90 64 M90 36 L64 64', 7, '#ff5252')),
+        '⏸': () => svg(g1('#e1f5fe', '#4fc3f7'), P('M22 12 H42 V88 H22 Z', 'url(#a)') + P('M58 12 H78 V88 H58 Z', 'url(#a)')),
+        '🕹': () => svg(g1('#78909c', '#263238'), LL('M50 62 V28', 7, '#b0bec5') + C(50, 24, 14, '#ff5252') + P('M10 64 H90 V88 H10 Z', 'url(#a)') + hi(44, 18, 5, 3)),
+        '📱': () => svg(g1('#455a64', '#102027'), P('M26 4 H74 Q82 4 82 12 V88 Q82 96 74 96 H26 Q18 96 18 88 V12 Q18 4 26 4 Z', 'url(#a)') + `<rect x="26" y="14" width="48" height="64" rx="3" fill="#4fc3f7"/>` + C(50, 87, 4, '#cfd8dc', 0)),
+        '👾': () => svg('', P('M26 18 H34 V26 H42 V18 H58 V26 H66 V18 H74 V34 H82 V50 H90 V74 H82 V66 H74 V82 H58 V74 H42 V82 H26 V66 H18 V74 H10 V50 H18 V34 H26 Z', '#b388ff', 4.5) +
+            `<rect x="34" y="42" width="8" height="10" fill="${OUT}"/><rect x="58" y="42" width="8" height="10" fill="${OUT}"/>`),
+        '🎲': () => svg(g1('#ffffff', '#cfd8dc'), P('M14 10 H86 Q92 10 92 16 V84 Q92 90 86 90 H14 Q8 90 8 84 V16 Q8 10 14 10 Z', 'url(#a)') +
+            [[28, 30], [72, 30], [50, 50], [28, 70], [72, 70]].map(([x, y]) => `<circle cx="${x}" cy="${y}" r="7" fill="#e53935"/>`).join('')),
+        '🎁': () => svg(g1('#ff8a80', '#c62828'), P('M10 34 H90 V52 H10 Z', 'url(#a)') + P('M16 52 H84 V92 H16 Z', 'url(#a)') + P('M44 34 H56 V92 H44 Z', '#ffd54f', 3.5) +
+            P('M50 32 Q30 6 22 22 Q24 32 50 32 Z', '#ffd54f', 3.5) + P('M50 32 Q70 6 78 22 Q76 32 50 32 Z', '#ffd54f', 3.5)),
+        '👆': () => svg(g1('#ffe0b2', '#ffb74d'), P('M40 54 V16 Q40 6 48 6 Q56 6 56 16 V44 Q62 40 68 44 Q74 40 80 46 Q84 46 86 52 V72 Q86 94 62 94 H52 Q34 94 26 78 L16 58 Q14 50 22 50 Q28 50 32 58 L40 70 Z', 'url(#a)', 4.5))
+    };
+    // 与道具/遗物图标共用同一张图
+    Object.assign(S, {
+        '💊': () => ArtSVG.items.potion(), '📚': () => ArtSVG.items.exp_book(), '❄': () => ArtSVG.items.snowflake(),
+        '💣': () => ArtSVG.items.bomb(), '❤': () => ArtSVG.items.heart(), '🏹': () => ArtSVG.items.gear_bow(),
+        '🌵': () => ArtSVG.items.gear_thorns(), '💍': () => ArtSVG.items.relic_thunder_ring(), '🧛': () => ArtSVG.items.relic_vampire_fang(),
+        '⌚': () => ArtSVG.items.relic_chrono_watch(), '⏱': () => ArtSVG.items.relic_chrono_watch(), '🧥': () => ArtSVG.items.relic_reaper_cloak(),
+        '🦺': () => ArtSVG.items.relic_warmog_vest(), '💀': () => S['☠'](), '⚒': () => S['🔨']()
+    });
+    return S;
+})();
+
+const EmojiArt = {
+    // emoji 后面可能跟 FE0F(彩色呈现选择符),一并吃掉
+    re: null,
+    urls: new Map(),
+    _cache: new Map(),
+    regex() {
+        if (!this.re) {
+            const keys = Object.keys(EmojiSVG).sort((a, b) => b.length - a.length)
+                .map(k => k.replace(/[.*+?^${}()|[\]\\]/g, '\\$&'));
+            this.re = new RegExp(`(${keys.join('|')})\\uFE0F?`, 'gu');
+        }
+        return this.re;
+    },
+    // 文字拆成 [文字 | emoji] 段;不含已知 emoji 返回 null(结果按字符串缓存,文字逐帧重复)
+    split(text) {
+        let r = this._cache.get(text);
+        if (r !== undefined) return r;
+        const re = this.regex();
+        re.lastIndex = 0;
+        const segs = [];
+        let last = 0, m;
+        while ((m = re.exec(text))) {
+            if (m.index > last) segs.push({ t: text.slice(last, m.index) });
+            segs.push({ e: m[1] });
+            last = m.index + m[0].length;
+        }
+        r = segs.length ? (last < text.length && segs.push({ t: text.slice(last) }), segs) : null;
+        if (this._cache.size > 3000) this._cache.clear();
+        this._cache.set(text, r);
+        return r;
+    },
+    url(e) {
+        let u = this.urls.get(e);
+        if (!u) { u = 'data:image/svg+xml;charset=utf-8,' + encodeURIComponent(EmojiSVG[e]()); this.urls.set(e, u); }
+        return u;
+    },
+
+    // 主画布:fillText 里的 emoji 画成图标(图标未解码完的那几帧照常画 emoji)
+    patchCanvas(ctx) {
+        if (!Art.enabled || ctx._emojiPatched) return;
+        ctx._emojiPatched = true;
+        const fill = ctx.fillText.bind(ctx), measure = ctx.measureText.bind(ctx);
+        const quick = /[\u2300-\u27BF\u2B50\uD83C-\uD83E]/;
+        ctx.fillText = (text, x, y, maxWidth) => {
+            const s = typeof text === 'string' ? text : String(text);
+            const segs = quick.test(s) ? this.split(s) : null;
+            if (!segs || maxWidth !== undefined) return fill(text, x, y, maxWidth);
+            const m = /(\d+(?:\.\d+)?)px/.exec(ctx.font);
+            const px = m ? parseFloat(m[1]) : 12;
+            const gw = px * 1.12; // 图标宽度(含一点字距)
+            let total = 0;
+            for (const sg of segs) total += sg.e ? gw : measure(sg.t).width;
+            const align = ctx.textAlign;
+            let cx = align === 'center' ? x - total / 2 : (align === 'right' || align === 'end') ? x - total : x;
+            const base = ctx.textBaseline;
+            const top = base === 'middle' ? y - px / 2 : (base === 'top' || base === 'hanging') ? y : (base === 'bottom' || base === 'ideographic') ? y - px : y - px * 0.82;
+            const shadow = ctx.shadowBlur;
+            ctx.textAlign = 'left';
+            for (const sg of segs) {
+                if (sg.t) { fill(sg.t, cx, y); cx += measure(sg.t).width; continue; }
+                const img = Art.get('emoji|' + sg.e, EmojiSVG[sg.e]);
+                if (img) {
+                    const sz = Math.max(4, Math.round(px));
+                    const spr = SpriteCache.get(`emoji|${sg.e}|${sz}`, sz, sz, 1, g => g.drawImage(img, 0, 0, sz, sz));
+                    ctx.shadowBlur = 0;
+                    SpriteCache.draw(ctx, spr, cx + (gw - px) / 2, top, px, px);
+                    ctx.shadowBlur = shadow;
+                } else fill(sg.e, cx, y);
+                cx += gw;
+            }
+            ctx.textAlign = align;
+        };
+        // 量宽度时 emoji 也按图标宽度算,和实际画出来的一致(排版换行用)
+        ctx.measureText = (text) => {
+            const s = typeof text === 'string' ? text : String(text);
+            const segs = quick.test(s) ? this.split(s) : null;
+            if (!segs) return measure(text);
+            const m = /(\d+(?:\.\d+)?)px/.exec(ctx.font);
+            const px = m ? parseFloat(m[1]) : 12;
+            const r = measure(segs.map(sg => sg.t || '').join(''));
+            let w = 0;
+            for (const sg of segs) w += sg.e ? px * 1.12 : measure(sg.t).width;
+            return { width: w, actualBoundingBoxAscent: r.actualBoundingBoxAscent, actualBoundingBoxDescent: r.actualBoundingBoxDescent };
+        };
+    },
+
+    // 网页:把文字节点里的 emoji 换成 <img class="emo">;之后动态插入的内容由 MutationObserver 接着换
+    patchDom(root) {
+        if (!Art.enabled || typeof document === 'undefined' || !root) return;
+        const SKIP = { SCRIPT: 1, STYLE: 1, TEXTAREA: 1, INPUT: 1, OPTION: 1, TITLE: 1, CANVAS: 1 };
+        const fixText = node => {
+            const p = node.parentNode;
+            if (!p || SKIP[p.nodeName]) return;
+            const segs = this.split(node.nodeValue);
+            if (!segs) return;
+            const frag = document.createDocumentFragment();
+            for (const sg of segs) {
+                if (sg.t) { frag.appendChild(document.createTextNode(sg.t)); continue; }
+                const img = document.createElement('img');
+                img.className = 'emo';
+                img.alt = sg.e;
+                img.draggable = false;
+                img.src = this.url(sg.e);
+                frag.appendChild(img);
+            }
+            p.replaceChild(frag, node);
+        };
+        const walk = el => {
+            if (el.nodeType === 3) { fixText(el); return; }
+            if (el.nodeType !== 1 || SKIP[el.nodeName]) return;
+            const tw = document.createTreeWalker(el, NodeFilter.SHOW_TEXT);
+            const list = [];
+            while (tw.nextNode()) list.push(tw.currentNode);
+            list.forEach(fixText);
+        };
+        walk(root);
+        if (typeof MutationObserver !== 'undefined') {
+            new MutationObserver(muts => {
+                for (const m of muts) {
+                    if (m.type === 'characterData') fixText(m.target);
+                    else m.addedNodes.forEach(walk);
+                }
+            }).observe(root, { childList: true, subtree: true, characterData: true });
+        }
+    }
+};
