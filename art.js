@@ -617,6 +617,9 @@ const EmojiSVG = (() => {
             L('M38 56 Q42 52 46 56 M54 56 Q58 52 62 56 M42 68 Q50 74 58 68', 3.5) + `<ellipse cx="34" cy="64" rx="5" ry="3" fill="#ff8a80" opacity="0.7"/><ellipse cx="66" cy="64" rx="5" ry="3" fill="#ff8a80" opacity="0.7"/>`),
         '✝': () => svg(g1('#fff59d', '#ff8f00'), P('M42 6 H58 V30 H82 V46 H58 V94 H42 V46 H18 V30 H42 Z', 'url(#a)') + hi(48, 16, 3, 7, 0)),
         '🔊': () => svg(g1('#e1f5fe', '#4fc3f7'), P('M10 36 H28 L52 14 V86 L28 64 H10 Z', 'url(#a)') + L('M64 34 Q74 50 64 66', 6, '#fff') + L('M74 22 Q92 50 74 78', 6, '#fff')),
+        '🎵': () => svg(g1('#e1bee7', '#7e57c2'), LL('M38 74 V18 L80 10 V64', 6, '#ce93d8') + P('M38 26 L80 18 V10 L38 18 Z', 'url(#a)', 4) +
+            `<ellipse cx="28" cy="76" rx="13" ry="10" transform="rotate(-20 28 76)" fill="url(#a)" stroke="${OUT}" stroke-width="5"/>` +
+            `<ellipse cx="70" cy="66" rx="13" ry="10" transform="rotate(-20 70 66)" fill="url(#a)" stroke="${OUT}" stroke-width="5"/>`),
         '🔇': () => svg(g1('#cfd8dc', '#78909c'), P('M10 36 H28 L52 14 V86 L28 64 H10 Z', 'url(#a)') + L('M64 36 L90 64 M90 36 L64 64', 7, '#ff5252')),
         '⏸': () => svg(g1('#e1f5fe', '#4fc3f7'), P('M22 12 H42 V88 H22 Z', 'url(#a)') + P('M58 12 H78 V88 H58 Z', 'url(#a)')),
         '🕹': () => svg(g1('#78909c', '#263238'), LL('M50 62 V28', 7, '#b0bec5') + C(50, 24, 14, '#ff5252') + P('M10 64 H90 V88 H10 Z', 'url(#a)') + hi(44, 18, 5, 3)),
