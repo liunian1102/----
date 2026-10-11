@@ -846,6 +846,9 @@ kbd {
 #treeSvg .tn.on .icon { fill: #0b1624; }
 #treeSvg .tn.on .lbl { fill: var(--c); }
 #treeSvg .tn.sel .body { stroke: #fff; stroke-width: 5; }
+#treeSvg .tn .icon-img { opacity: 0.4; pointer-events: none; }
+#treeSvg .tn.can .icon-img { opacity: 0.85; }
+#treeSvg .tn.on .icon-img { opacity: 1; }
 #treeSvg .tn.sel .ring { stroke: #fff; }
 @keyframes treePulse { 50% { stroke-opacity: 0.35; } }
 
@@ -861,6 +864,7 @@ kbd {
     border: 1px solid rgba(0, 200, 255, 0.12);
 }
 .gem-row-title { width: 110px; flex: none; font-weight: 700; font-size: 0.9em; color: #fff; }
+.gem-row-title .slot-ic { width: 24px; height: 24px; vertical-align: -7px; margin-right: 5px; }
 .gem-row-title small { display: block; font-weight: 400; color: rgba(200, 232, 255, 0.5); font-size: 0.8em; }
 .gem-res-badge {
     display: inline-block;
@@ -894,6 +898,8 @@ kbd {
     line-height: 1.1;
 }
 .sock small { font-size: 0.55em; }
+.build-card .sock .gem-ic { width: 26px; height: 26px; pointer-events: none; }
+.gem-card .gc-icon .gem-ic { width: 22px; height: 22px; }
 .build-card .sock.filled {
     border: 2px solid var(--c);
     background: radial-gradient(circle at 35% 30%, #ffffff55, var(--c) 45%, #0d1620 100%);

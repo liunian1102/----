@@ -287,7 +287,7 @@ const AFFIX_INFO = {
 const GAME_EVENTS = {
     meteor:    { name: '流星雨',   icon: '🌠', color: '#ff9100', dur: 10, desc: '躲开地面红圈,陨石也会砸伤敌人' },
     treasure:  { name: '宝藏方块', icon: '💰', color: '#ffd740', dur: 14, desc: '追上并击败它,掉落装备和一堆道具' },
-    elite:     { name: '精英来袭', icon: '♛', color: '#ffc400', dur: 20, desc: '击败金框精英怪获得额外奖励' },
+    elite:     { name: '精英来袭', icon: '👑', color: '#ffc400', dur: 20, desc: '击败金框精英怪获得额外奖励' },
     horde:     { name: '怪潮',     icon: '🌊', color: '#40c4ff', dur: 12, desc: '敌人大量涌来,击杀经验和分数翻倍' },
     altar:     { name: '祝福祭坛', icon: '✨', color: '#b388ff', dur: 18, desc: '站进光圈为祭坛充能,充满后全队获得祝福' },
     void_rift: { name: '虚空裂隙', icon: '🌀', color: '#ba68c8', dur: 22, desc: '靠近石碑引导开启挑战,击破虚空怪潮夺取史诗宝藏' },
@@ -466,6 +466,37 @@ const SKILL_NAMES = {
     archer:   { q: '穿透箭',   e: '箭雨' },
     paladin:  { q: '圣光打击', e: '神圣光环' }
 };
+const CLASS_ORDER = ['warrior', 'mage', 'assassin', 'archer', 'paladin']; // 职业卡 choice 1~5 的顺序
+// 技能图标(art.js IconSVG):职业默认 Q/E,专精改了技能形态的用专精自己的图;R 为觉醒奥义
+const SKILL_ART = {
+    warrior:  { q: 'skill_whirl',      e: 'skill_bash',    r: 'ult_warrior' },
+    mage:     { q: 'skill_surge',      e: 'skill_repulse', r: 'ult_mage' },
+    assassin: { q: 'skill_blink',      e: 'skill_stab',    r: 'ult_assassin' },
+    archer:   { q: 'skill_pierce',     e: 'skill_rain',    r: 'ult_archer' },
+    paladin:  { q: 'skill_holystrike', e: 'skill_aura',    r: 'ult_paladin' }
+};
+const SPEC_SKILL_ART = {
+    guardian: { e: 'skill_charge' }, pyro: { e: 'skill_flamenova' }, frost: { e: 'skill_frostnova' },
+    sniper: { q: 'skill_snipe' }, crusader: { q: 'skill_judge' }, protector: { e: 'skill_guard' }
+};
+function skillArtKey(cls, spec, slot) {
+    return (SPEC_SKILL_ART[spec] && SPEC_SKILL_ART[spec][slot]) || (SKILL_ART[cls] && SKILL_ART[cls][slot]) || null;
+}
+// 画技能图标;图片还没解码(或 node 环境)返回 false,调用方画原来的文字
+function drawSkillArt(ctx, key, cx, cy, size, dim) {
+    if (!key || typeof Art === 'undefined') return false;
+    ctx.save();
+    ctx.shadowBlur = 0;
+    if (dim) ctx.globalAlpha *= 0.45;
+    const ok = Art.pic(ctx, key, cx, cy, size);
+    ctx.restore();
+    return ok;
+}
+// 网页里的图标:art.js 有图就输出 <img>,否则原样输出文字
+function iconHTML(icon, cls = 'emo') {
+    const u = icon && typeof Art !== 'undefined' ? Art.url(icon) : '';
+    return u ? `<img class="${cls}" src="${u}" alt="" draggable="false">` : (icon || '');
+}
 // 能否镶进该位置。法师的 Q「魔力涌注」是开关:它的孔放普攻宝石,开启时作用于普攻
 function gemCanPlace(id, slot, cls) {
     const g = GEMS[id];
@@ -9764,12 +9795,20 @@ class Game {
             let oy = by + 10;
 
             // 图标 + 名称
-            ctx.shadowBlur = 12; ctx.shadowColor = cls.color;
-            ctx.fillStyle = cls.color;
-            ctx.font = `bold ${Math.min(22, cardW * 0.18)}px Arial`;
+            const clsId = CLASS_ORDER[cls.choice - 1];
+            const badgeS = Math.round(Math.min(34 * fk, cardW * 0.3));
             ctx.textAlign = 'center'; ctx.textBaseline = 'top';
-            ctx.fillText(cls.icon, bx + cardW / 2, oy);
-            oy += Math.min(22, cardW * 0.18) + 4;
+            if (typeof Art !== 'undefined' && Art.badge(ctx, 'cls_' + clsId, cls.color, bx + cardW / 2, oy + badgeS / 2, badgeS, 8)) {
+                oy += badgeS + 3;
+                ctx.shadowBlur = 12; ctx.shadowColor = cls.color;
+                ctx.fillStyle = cls.color;
+            } else {
+                ctx.shadowBlur = 12; ctx.shadowColor = cls.color;
+                ctx.fillStyle = cls.color;
+                ctx.font = `bold ${Math.min(22, cardW * 0.18)}px Arial`;
+                ctx.fillText(cls.icon, bx + cardW / 2, oy);
+                oy += Math.min(22, cardW * 0.18) + 4;
+            }
 
             ctx.shadowBlur = 8;
             ctx.font = `bold ${nameFS}px Arial`;
@@ -9810,7 +9849,9 @@ class Game {
                 ctx.fillStyle = key === 'Q' ? cls.color : 'rgba(200,200,255,0.9)';
                 ctx.font = `bold ${skillFS}px Arial`;
                 ctx.textAlign = 'left'; ctx.textBaseline = 'top';
-                ctx.fillText(`[${key}] ${sk.name}`, bx + 8, oy);
+                const icS = Math.round(skillFS * 1.5);
+                const hasIc = drawSkillArt(ctx, SKILL_ART[clsId] && SKILL_ART[clsId][key.toLowerCase()], bx + 8 + icS / 2, oy + skillFS / 2, icS, false);
+                ctx.fillText(`[${key}] ${sk.name}`, bx + 8 + (hasIc ? icS + 2 : 0), oy);
                 ctx.fillStyle = 'rgba(180,180,180,0.6)';
                 ctx.font = `${skillFS * 0.85}px Arial`;
                 ctx.fillText(`CD:${sk.cd}`, bx + cardW - 8 - ctx.measureText(`CD:${sk.cd}`).width, oy);
@@ -9972,7 +10013,8 @@ class Game {
                 ctx.textAlign = 'center';
                 ctx.fillStyle = color;
                 ctx.font = `${iconFS}px Arial`;
-                ctx.fillText(sp.icon, bx + pad + iconFS / 2, oy);
+                if (!(typeof Art !== 'undefined' && Art.badge(ctx, sp.icon, color, bx + pad + iconFS / 2, oy + iconFS / 2, Math.round(iconFS * 1.15), 6)))
+                    ctx.fillText(sp.icon, bx + pad + iconFS / 2, oy);
                 ctx.textAlign = 'left';
                 ctx.fillStyle = color;
                 ctx.font = `bold ${nameFS}px Arial`;
@@ -9982,7 +10024,8 @@ class Game {
                 ctx.textAlign = 'center';
                 ctx.fillStyle = color;
                 ctx.font = `${iconFS}px Arial`;
-                ctx.fillText(sp.icon, bx + cardW / 2, oy);
+                if (!(typeof Art !== 'undefined' && Art.badge(ctx, sp.icon, color, bx + cardW / 2, oy + iconFS / 2, Math.round(iconFS * 1.15), 6)))
+                    ctx.fillText(sp.icon, bx + cardW / 2, oy);
                 oy += iconFS + 8;
                 ctx.fillStyle = color;
                 ctx.font = `bold ${nameFS}px Arial`;
@@ -10259,7 +10302,8 @@ class Game {
                 ctx.font = `bold ${cardIconSize}px Arial`;
                 ctx.textAlign = 'center';
                 ctx.textBaseline = 'middle';
-                ctx.fillText(t.icon, cx + iconBoxW / 2, cy + cardH / 2);
+                if (!(typeof Art !== 'undefined' && Art.badge(ctx, t.icon, t.color, cx + iconBoxW / 2, cy + cardH / 2, Math.round(Math.min(cardIconSize * 1.6, cardH * 0.62)), 8)))
+                    ctx.fillText(t.icon, cx + iconBoxW / 2, cy + cardH / 2);
                 ctx.shadowBlur = 0;
 
                 ctx.fillStyle = '#ffffff';
@@ -10287,7 +10331,8 @@ class Game {
                 ctx.font = `bold ${cardIconSize}px Arial`;
                 ctx.textAlign = 'center';
                 ctx.textBaseline = 'middle';
-                ctx.fillText(t.icon, cx + cardW / 2, cy + cardH * 0.25);
+                if (!(typeof Art !== 'undefined' && Art.badge(ctx, t.icon, t.color, cx + cardW / 2, cy + cardH * 0.25, Math.round(Math.min(cardIconSize * 1.7, cardH * 0.3)), 8)))
+                    ctx.fillText(t.icon, cx + cardW / 2, cy + cardH * 0.25);
                 ctx.shadowBlur = 0;
 
                 ctx.fillStyle = '#ffffff';
@@ -11964,8 +12009,15 @@ class Game {
             if (n.kind === 'socket') mk('rect', { class: 'body', x: -R.socket, y: -R.socket, width: R.socket * 2, height: R.socket * 2, rx: 7 }, g);
             else mk('circle', { class: 'body', r: R[n.kind] }, g);
             if (n.icon || n.kind === 'start') {
-                const t = mk('text', { class: 'icon', 'font-size': n.kind === 'keystone' ? 24 : 18 }, g);
-                t.textContent = n.icon || '✦';
+                const icon = n.icon || '✦';
+                const u = typeof Art !== 'undefined' ? Art.url(icon) : '';
+                if (u) {
+                    const sz = n.kind === 'keystone' ? 36 : n.kind === 'small' ? 20 : 28;
+                    mk('image', { class: 'icon-img', href: u, x: -sz / 2, y: -sz / 2, width: sz, height: sz }, g);
+                } else {
+                    const t = mk('text', { class: 'icon', 'font-size': n.kind === 'keystone' ? 24 : 18 }, g);
+                    t.textContent = icon;
+                }
             }
             if (n.kind !== 'small' && n.kind !== 'start') {
                 const t = mk('text', { class: 'lbl', y: R[n.kind] + (n.kind === 'keystone' ? 24 : 17) }, g);
@@ -12155,13 +12207,14 @@ class Game {
                 if (i >= n) { socks.push(`<button class="sock locked" title="天赋树连接孔节点解锁">🔒<small>天赋树</small></button>`); continue; }
                 if (id && counts[id]) {
                     const bad = gemMisfit(id, slot, p.class);
-                    socks.push(`<button class="sock filled${bad ? ' bad' : ''}" style="--c:${GEMS[id].color}" data-slot="${slot}" data-i="${i}" title="${GEMS[id].name}">${GEMS[id].icon}<small>Lv${counts[id]}</small></button>`);
+                    socks.push(`<button class="sock filled${bad ? ' bad' : ''}" style="--c:${GEMS[id].color}" data-slot="${slot}" data-i="${i}" title="${GEMS[id].name}">${iconHTML(GEMS[id].icon, 'gem-ic')}<small>Lv${counts[id]}</small></button>`);
                 } else {
                     const fit = sel && gemCanPlace(sel, slot, p.class) && !gemMisfit(sel, slot, p.class);
                     socks.push(`<button class="sock${fit ? ' target' : ''}" data-slot="${slot}" data-i="${i}">+</button>`);
                 }
             }
-            return `<div class="gem-row"><div class="gem-row-title">${title}${resBadge}<small>${sub}</small></div><div class="gem-socks">${socks.join('')}</div></div>`;
+            const slotIc = p.class ? iconHTML(slot === 'a' ? 'cls_' + p.class : skillArtKey(p.class, p.spec, slot), 'slot-ic') : '';
+            return `<div class="gem-row"><div class="gem-row-title">${slotIc}${title}${resBadge}<small>${sub}</small></div><div class="gem-socks">${socks.join('')}</div></div>`;
         });
         document.getElementById('gemSlots').innerHTML = rows.join('');
 
@@ -12171,7 +12224,7 @@ class Game {
             const w = where(id);
             const tag = w ? `已镶:${w === 'a' ? '普攻' : w.toUpperCase()}` : '未镶嵌';
             return `<button class="gem-card${sel === id ? ' sel' : ''}" style="--c:${GEMS[id].color}" data-gem="${id}">
-                <span class="gc-icon">${GEMS[id].icon}</span><span><b>${GEMS[id].name} Lv${counts[id]}</b><small>${tag}</small></span></button>`;
+                <span class="gc-icon">${iconHTML(GEMS[id].icon, 'gem-ic')}</span><span><b>${GEMS[id].name} Lv${counts[id]}</b><small>${tag}</small></span></button>`;
         }).join('') : '<div class="gem-empty">还没有技能石。地上发光的宝石就是技能石:定时掉落,精英、宝藏方块和魔王也会掉。</div>';
 
         const info = document.getElementById('gemInfo');
@@ -12180,7 +12233,7 @@ class Game {
             const g = GEMS[sel], lv = counts[sel];
             const next = lv < 3 ? `<span class="gi-hint">(Lv${lv + 1}:${g.desc(g.val[lv])})</span>` : '<span class="gi-hint">(已满级)</span>';
             const slots = g.slots.split('').map(s => s === 'a' ? '普攻' : s.toUpperCase()).join(' / ');
-            info.innerHTML = `<div class="gi-name" style="color:${g.color}">${g.icon} ${g.name} Lv${lv}</div>
+            info.innerHTML = `<div class="gi-name" style="color:${g.color}">${iconHTML(g.icon)} ${g.name} Lv${lv}</div>
                 <div>${g.desc(g.val[lv - 1])} ${next}</div>
                 <div class="gi-hint">可镶嵌:${slots} · 点击上方空孔镶嵌,已镶在别处会移过来</div>${msg}`;
         } else {
@@ -12331,8 +12384,8 @@ class Game {
 
         const sp = specDef(this.player);
         const slots = [
-            { skill: this.player.skillQ, key: 'q', label: 'Q', icon: (sp && sp.q) || qNames[cls] || 'Q', color: qColors[cls] || '#fff', x: baseX },
-            { skill: this.player.skillE, key: 'e', label: 'E', icon: (sp && sp.e) || eNames[cls] || 'E', color: eColors[cls] || '#fff', x: baseX + slotW + margin }
+            { skill: this.player.skillQ, key: 'q', label: 'Q', icon: (sp && sp.q) || qNames[cls] || 'Q', art: skillArtKey(cls, this.player.spec, 'q'), color: qColors[cls] || '#fff', x: baseX },
+            { skill: this.player.skillE, key: 'e', label: 'E', icon: (sp && sp.e) || eNames[cls] || 'E', art: skillArtKey(cls, this.player.spec, 'e'), color: eColors[cls] || '#fff', x: baseX + slotW + margin }
         ];
         // 职业 / 专精名牌:放在「构筑 / 冲」按钮行上方(技能槽正上方是冲刺键,放那里会和按钮、法师「-N/发」叠字)
         {
@@ -12376,18 +12429,29 @@ class Game {
             roundRect(ctx, s.x, baseY, slotW, slotH, slotR);
             ctx.stroke();
 
-            ctx.shadowBlur = ready ? 10 : 0;
-            ctx.shadowColor = s.color;
-            ctx.fillStyle = ready ? s.color : '#888888';
-            ctx.font = `bold 22px Arial`;
             ctx.textAlign = 'center';
             ctx.textBaseline = 'middle';
-            ctx.fillText(s.icon, s.x + slotW / 2, baseY + slotH / 2 - 4);
+            if (drawSkillArt(ctx, s.art, s.x + slotW / 2, baseY + slotH / 2 - 1, 42, !ready)) {
+                // 有图标时按键名缩到右下角的小角标
+                ctx.shadowBlur = 0;
+                ctx.fillStyle = 'rgba(0,0,0,0.6)';
+                roundRect(ctx, s.x + slotW - 15, baseY + slotH - 15, 13, 13, 3);
+                ctx.fill();
+                ctx.fillStyle = ready ? '#ffffff' : '#aaaaaa';
+                ctx.font = 'bold 10px Arial';
+                ctx.fillText(s.label, s.x + slotW - 8.5, baseY + slotH - 8);
+            } else {
+                ctx.shadowBlur = ready ? 10 : 0;
+                ctx.shadowColor = s.color;
+                ctx.fillStyle = ready ? s.color : '#888888';
+                ctx.font = `bold 22px Arial`;
+                ctx.fillText(s.icon, s.x + slotW / 2, baseY + slotH / 2 - 4);
 
-            ctx.shadowBlur = 0;
-            ctx.fillStyle = '#cccccc';
-            ctx.font = `11px Arial`;
-            ctx.fillText(s.label, s.x + slotW / 2, baseY + slotH / 2 + 14);
+                ctx.shadowBlur = 0;
+                ctx.fillStyle = '#cccccc';
+                ctx.font = `11px Arial`;
+                ctx.fillText(s.label, s.x + slotW / 2, baseY + slotH / 2 + 14);
+            }
 
             // 已镶嵌且生效的技能石:槽顶一排小宝石点
             const gems = Object.keys(this._gemMap(this.player)[s.key]);
@@ -12541,10 +12605,12 @@ class Game {
             }
 
             // 图标与快捷键
-            ctx.font = '20px Arial';
             ctx.textAlign = 'center';
             ctx.textBaseline = 'middle';
-            ctx.fillText(ultIcon, ultX + slotW / 2, ultY + slotH / 2 - 5);
+            if (!drawSkillArt(ctx, SKILL_ART[cls] && SKILL_ART[cls].r, ultX + slotW / 2, ultY + slotH / 2 - 6, 32, !ready)) {
+                ctx.font = '20px Arial';
+                ctx.fillText(ultIcon, ultX + slotW / 2, ultY + slotH / 2 - 5);
+            }
 
             ctx.font = 'bold 11px Arial';
             ctx.fillStyle = ready ? '#fffde7' : '#cccccc';
