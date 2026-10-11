@@ -14478,6 +14478,10 @@ class Game {
             this._treeReset();
             this._buildRefresh();
         });
+        document.getElementById('treeSearch').addEventListener('input', (e) => {
+            this._treeQuery = e.target.value;
+            this._treeRefresh();
+        });
         document.getElementById('treeInfo').addEventListener('click', (e) => {
             if (!e.target.closest('.ti-act') || !this._treeSel) return;
             const id = this._treeSel;
@@ -14539,6 +14543,19 @@ class Game {
         this._buildRefresh();
     }
 
+    // 搜索:空格分隔的每个词都要在节点的名称 / 类型 / 系别 / 效果文字里出现(不区分大小写),返回命中的节点 id 集合
+    _treeSearchHits(query) {
+        const tokens = String(query || '').trim().toLowerCase().split(/\s+/).filter(Boolean);
+        if (!tokens.length) return null;
+        const kindName = { start: '起点', small: '小天赋', notable: '大天赋', socket: '连接孔', keystone: '基石', mastery: '专精' };
+        const hits = new Set();
+        for (const n of TREE_NODES) {
+            const text = [n.name, kindName[n.kind], TREE_BRANCH_NAMES[n.br], n.desc || '', ...treeModLines(n.mods)].join(' ').toLowerCase();
+            if (tokens.every(t => text.includes(t))) hits.add(n.id);
+        }
+        return hits;
+    }
+
     _treeRefresh() {
         const p = this.player;
         const pts = this._treePoints();
@@ -14546,18 +14563,25 @@ class Game {
         // 选中了还没连上的节点:高亮从已点亮区走过去的最短路径
         const path = this._treeSel && !p.treeNodes.has(this._treeSel) ? (this._treePath(p, this._treeSel) || []) : [];
         const onPath = new Set(path);
+        // 搜索命中:命中的节点高亮,其余变暗;没有搜索词时不做任何处理
+        const hits = this._treeSearchHits(this._treeQuery);
+        const searchEl = document.getElementById('treeSearchCount');
+        if (searchEl) searchEl.textContent = hits ? (hits.size ? `匹配 ${hits.size} 个` : '没有匹配') : '';
         for (const n of TREE_NODES) {
             const g = this._treeNodeEls[n.id];
             g.classList.toggle('on', p.treeNodes.has(n.id));
             g.classList.toggle('can', can(n.id));
             g.classList.toggle('sel', this._treeSel === n.id);
             g.classList.toggle('path', onPath.has(n.id));
+            g.classList.toggle('hit', !!hits && hits.has(n.id));
+            g.classList.toggle('dim', !!hits && !hits.has(n.id));
         }
         for (const l of this._treeLinkEls) {
             const ia = p.treeNodes.has(l.a), ib = p.treeNodes.has(l.b);
             l.el.classList.toggle('on', ia && ib);
             l.el.classList.toggle('can', (ia && can(l.b)) || (ib && can(l.a)));
             l.el.classList.toggle('path', (onPath.has(l.a) || ia) && (onPath.has(l.b) || ib) && (onPath.has(l.a) || onPath.has(l.b)));
+            l.el.classList.toggle('dim', !!hits && !(hits.has(l.a) && hits.has(l.b)));
         }
         // 选中节点详情
         const info = document.getElementById('treeInfo');

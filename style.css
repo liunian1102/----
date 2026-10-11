@@ -856,6 +856,13 @@ kbd {
 #treeSvg .tn.k-mastery .body { stroke-width: 4; }
 #treeSvg .tn.k-mastery .ring { stroke-dasharray: 6 5; }
 #treeSvg .tn.path .body { stroke: #ffd740; stroke-dasharray: 5 4; stroke-width: 4; }
+#treeSvg .tn.hit .body { stroke: #ffd740; stroke-width: 6; }
+#treeSvg .tn.hit .ring { stroke: #ffd740; }
+#treeSvg .tn.dim, #treeSvg .tl.dim { opacity: 0.18; }
+.tree-search-row { display: flex; align-items: center; gap: 8px; }
+.tree-search { flex: 1; min-width: 0; padding: 6px 10px; border-radius: 8px; border: 1px solid rgba(0, 200, 255, 0.35); background: #0b1624; color: #e6f4ff; font-size: 14px; }
+.tree-search:focus { outline: none; border-color: #ffd740; }
+.tree-search-count { flex: none; font-size: 12px; color: #9fb3c8; white-space: nowrap; }
 #treeSvg .tl.path { stroke: rgba(255, 215, 64, 0.75); stroke-dasharray: 10 8; stroke-width: 6; }
 @keyframes treePulse { 50% { stroke-opacity: 0.35; } }
 
