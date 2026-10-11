@@ -1,10 +1,12 @@
 const { chromium } = require('playwright');
+const launchBrowser = require('./launch-browser');
+const path = require('path');
 const fs = require('fs');
 
 (async () => {
     console.log('=== 启动真实 Edge 浏览器深度挖掘 (第 28 轮：联机选卡状态机、死角冲刺与装备属性回退) ===\n');
 
-    const browser = await chromium.launch({ channel: 'msedge', headless: true });
+    const browser = await launchBrowser(chromium);
     
     const bugs = [];
     const reportBug = (id, title, desc, severity = '高', field = '核心机制') => {
@@ -189,5 +191,5 @@ const fs = require('fs');
     console.log(`第 28 轮深度挖掘完成，新增捕获缺陷数: ${bugs.length}`);
     console.log('=============================================\n');
 
-    fs.writeFileSync('tests/audit-findings-r28.json', JSON.stringify(bugs, null, 2), 'utf8');
+    fs.writeFileSync(path.join(launchBrowser.outDir(), 'audit-findings-r28.json'), JSON.stringify(bugs, null, 2), 'utf8');
 })();

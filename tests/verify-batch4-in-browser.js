@@ -1,10 +1,11 @@
 const { chromium } = require('playwright');
+const launchBrowser = require('./launch-browser');
 const assert = require('assert');
 
 (async () => {
     console.log('=== 启动真实 Edge 浏览器第四批缺陷实机联调验证 (Batch 4) ===\n');
 
-    const browser = await chromium.launch({ channel: 'msedge', headless: true });
+    const browser = await launchBrowser(chromium);
     const context = await browser.newContext({
         viewport: { width: 844, height: 390 },
         deviceScaleFactor: 2,

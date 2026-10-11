@@ -1,10 +1,11 @@
 const { chromium } = require('playwright');
+const launchBrowser = require('./launch-browser');
 const assert = require('assert');
 
 (async () => {
     console.log('=== 启动真实 Edge 浏览器全场景最终端到端联调验证 (Final E2E) ===\n');
 
-    const browser = await chromium.launch({ channel: 'msedge', headless: true });
+    const browser = await launchBrowser(chromium);
     // 模拟移动端横屏视口 (844 x 390, touchEnabled)
     const context = await browser.newContext({
         viewport: { width: 844, height: 390 },

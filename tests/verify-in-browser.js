@@ -1,10 +1,11 @@
 const { chromium } = require('playwright');
+const launchBrowser = require('./launch-browser');
 const path = require('path');
 
 (async () => {
     console.log('=== 启动真实浏览器独立联调验证 ===');
     // 使用系统自带 Microsoft Edge (headless) 运行真实浏览器联调
-    const browser = await chromium.launch({ channel: 'msedge', headless: true });
+    const browser = await launchBrowser(chromium);
     const context = await browser.newContext({
         viewport: { width: 844, height: 390 },
         deviceScaleFactor: 2,
@@ -42,7 +43,7 @@ const path = require('path');
         window.game.render();
     });
     await page.waitForTimeout(100);
-    const shotWarningPath = path.join(__dirname, 'screenshot-boss-warning.png');
+    const shotWarningPath = path.join(launchBrowser.outDir(), 'screenshot-boss-warning.png');
     await page.screenshot({ path: shotWarningPath });
     console.log('   已截取 Warning 阶段屏幕截图:', shotWarningPath);
 
@@ -58,7 +59,7 @@ const path = require('path');
         window.game.render();
     });
     await page.waitForTimeout(100);
-    const shotActivePath = path.join(__dirname, 'screenshot-boss-active.png');
+    const shotActivePath = path.join(launchBrowser.outDir(), 'screenshot-boss-active.png');
     await page.screenshot({ path: shotActivePath });
     console.log('   已截取 Active 阶段屏幕截图:', shotActivePath);
 

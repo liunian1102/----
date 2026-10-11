@@ -1,4 +1,5 @@
 // test-bug20-abyss-guest-portal.js
+// 回归测试:缺陷已修复,修复仍有效时退出码为 0(原为「捕获缺陷」脚本,缺陷存在时才返回 0)
 require('./setup-env.js');
 
 const hostGame = new Game();
@@ -20,6 +21,6 @@ console.log("深渊当前层数:", hostGame.abyssFloor);
 hostGame._updateAbyssMode();
 
 console.log("客机玩家站在传送门中心时, 深渊层数是否跨入下一层:", hostGame.abyssFloor);
-console.log("Bug 20 验证结果 (客机踏入传送门被完全无视):", hostGame.abyssFloor === 1 ? "PASS (成功捕获缺陷)" : "FAIL");
+console.log("Bug 20 回归 (客机踏入传送门能进入下一层):", hostGame.abyssFloor > 1 ? "PASS" : "FAIL");
 
-process.exit(hostGame.abyssFloor === 1 ? 0 : 1);
+process.exit(hostGame.abyssFloor > 1 ? 0 : 1);

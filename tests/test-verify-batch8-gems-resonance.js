@@ -1,9 +1,10 @@
 const { chromium } = require('playwright');
+const launchBrowser = require('./launch-browser');
 const path = require('path');
 
 (async () => {
     console.log('=== 启动真实浏览器自动化验证: 扩充宝石与符文共鸣 ===');
-    const browser = await chromium.launch({ channel: 'msedge', headless: true });
+    const browser = await launchBrowser(chromium);
     const context = await browser.newContext({
         viewport: { width: 1024, height: 768 }
     });
@@ -158,7 +159,7 @@ const path = require('path');
         if (tabGems) tabGems.click();
     });
     await page.waitForTimeout(300);
-    const screenshotPath = path.join(__dirname, 'screenshot-batch8-gems-resonance.png');
+    const screenshotPath = path.join(launchBrowser.outDir(), 'screenshot-batch8-gems-resonance.png');
     await page.screenshot({ path: screenshotPath });
     console.log('已保存共鸣面板渲染截图:', screenshotPath);
 

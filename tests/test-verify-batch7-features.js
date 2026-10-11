@@ -1,9 +1,10 @@
 const { chromium } = require('playwright');
+const launchBrowser = require('./launch-browser');
 const path = require('path');
 
 (async () => {
     console.log('=== 启动真实浏览器自动化验证 ===');
-    const browser = await chromium.launch({ channel: 'msedge', headless: true });
+    const browser = await launchBrowser(chromium);
     const context = await browser.newContext({
         viewport: { width: 1024, height: 768 }
     });
@@ -163,7 +164,7 @@ const path = require('path');
         g.render();
     });
     await page.waitForTimeout(200);
-    const screenshotPath = path.join(__dirname, 'screenshot-batch7-visual-contrast.png');
+    const screenshotPath = path.join(launchBrowser.outDir(), 'screenshot-batch7-visual-contrast.png');
     await page.screenshot({ path: screenshotPath });
     console.log('已保存道具与怪物对比渲染截图:', screenshotPath);
 

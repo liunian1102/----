@@ -4,7 +4,7 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 
 ## Overview
 
-方块快跑 ("Block Run") is a browser survival game built with vanilla JavaScript and the HTML5 Canvas API. There is **no build system, no bundler and no test suite**. The game itself lives in `index.html`, `style.css`, `game.js` (all logic) and `art.js` (character art, loaded before `game.js`). Optional online co-op uses a small Node WebSocket relay, `server.js` (its only dependency is `ws`, declared in `package.json`).
+方块快跑 ("Block Run") is a browser survival game built with vanilla JavaScript and the HTML5 Canvas API. There is **no build system and no bundler**; regression tests live in `tests/` (see "Running the game"). The game itself lives in `index.html`, `style.css`, `game.js` (all logic) and `art.js` (character art, loaded before `game.js`). Optional online co-op uses a small Node WebSocket relay, `server.js` (its only dependency is `ws`, declared in `package.json`).
 
 UI strings and code comments are in Chinese.
 
@@ -14,7 +14,7 @@ Open `index.html` directly in a browser, or serve the directory statically (e.g.
 
 The page opens on a DOM lobby (`#mpOverlay`): **单人游戏** starts a local run; **创建房间 / 加入** need the relay. For co-op, run `npm install && npm start` (listens on port 8080), serve the directory over HTTP, and open the page in two browsers. The client connects to `ws://<page hostname>:8080`, or to a URL given in the hash (`index.html#ws://host:port`).
 
-There is no lint or test command (`node --check game.js` catches syntax errors). Verify changes by playing the game in a browser, including mobile/portrait emulation (see "Responsive & touch" below), and a host+guest pair when touching multiplayer.
+There is no lint command (`node --check game.js` catches syntax errors). **Tests:** `npm test` runs every `tests/test-*.js` (node scripts that load the game through `tests/setup-env.js`, a DOM/canvas mock, plus a few Playwright browser tests that open `index.html` via `file://`); each script exits 0 on pass. `npm run test:e2e` also starts a static server on :3000 and the relay `server.js` on :8080 and runs the `verify-*` / `audit-*` end-to-end scripts. Browser tests launch through `tests/launch-browser.js` (`BROWSER_PATH` env → Edge → Playwright's Chromium → any Chromium under `PLAYWRIGHT_BROWSERS_PATH`), are skipped when `playwright` isn't installed, and write screenshots to the git-ignored `tests/output/`. New regression tests should exit 0 when the behaviour is correct (the old "bug capture" scripts that exited 0 while a bug existed were inverted). Still verify changes by playing the game in a browser, including mobile/portrait emulation (see "Responsive & touch" below), and a host+guest pair when touching multiplayer.
 
 The `.trae/documents/` file about NPM global directory config is unrelated to this game.
 
