@@ -640,6 +640,326 @@ const EmojiSVG = (() => {
     return S;
 })();
 
+// ══════════════════════════════════════════════════════════════════
+//  技能图标 / 职业徽记 / 天赋符文(viewBox 0 0 100 100)
+//  · 技能图(skill_*、ult_*、cls_*):彩色插画,画在技能槽、职业卡、构筑面板里
+//  · 符文(✦ ◎ ⟳ Q …):白色浮雕符号,配合 Art.badge 的彩色圆章用在天赋卡 / 天赋树节点
+// ══════════════════════════════════════════════════════════════════
+const IconSVG = (() => {
+    const OUT = '#120d22';
+    const svg = (defs, body) =>
+        `<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 100 100" width="128" height="128"><defs>${defs}</defs>${body}</svg>`;
+    const lg = (id, c1, c2, x2 = 0.5, y2 = 1) =>
+        `<linearGradient id="${id}" x1="0" y1="0" x2="${x2}" y2="${y2}"><stop offset="0" stop-color="${c1}"/><stop offset="1" stop-color="${c2}"/></linearGradient>`;
+    const rg = (id, c1, c2, o2 = 1) =>
+        `<radialGradient id="${id}" cx="0.5" cy="0.5" r="0.5"><stop offset="0" stop-color="${c1}"/><stop offset="1" stop-color="${c2}" stop-opacity="${o2}"/></radialGradient>`;
+    const P = (d, fill, w = 5) => `<path d="${d}" fill="${fill}" stroke="${OUT}" stroke-width="${w}" stroke-linejoin="round" stroke-linecap="round"/>`;
+    const C = (cx, cy, r, fill, w = 5) => `<circle cx="${cx}" cy="${cy}" r="${r}" fill="${fill}" stroke="${OUT}" stroke-width="${w}"/>`;
+    const L = (d, w, c = OUT, extra = '') => `<path d="${d}" fill="none" stroke="${c}" stroke-width="${w}" stroke-linecap="round" stroke-linejoin="round"${extra}/>`;
+    const LL = (d, w, c) => L(d, w + 5) + L(d, w, c); // 描边 + 彩色内芯
+    const hi = (cx, cy, rx, ry, rot = -35) => `<ellipse cx="${cx}" cy="${cy}" rx="${rx}" ry="${ry}" transform="rotate(${rot} ${cx} ${cy})" fill="#fff" opacity="0.55"/>`;
+    const glow = (cx, cy, r, c, o = 0.75) => `<circle cx="${cx}" cy="${cy}" r="${r}" fill="url(#gw)" opacity="${o}"/>`;
+    const gw = c => rg('gw', c, c, 0);
+    const star = (cx, cy, R, r, n = 5, rot = -Math.PI / 2) => {
+        let d = '';
+        for (let i = 0; i < n * 2; i++) {
+            const a = rot + i * Math.PI / n, rr = i % 2 ? r : R;
+            d += (i ? 'L' : 'M') + (cx + Math.cos(a) * rr).toFixed(1) + ' ' + (cy + Math.sin(a) * rr).toFixed(1);
+        }
+        return d + 'Z';
+    };
+    const rot = (deg, cx, cy, body) => `<g transform="rotate(${deg} ${cx} ${cy})">${body}</g>`;
+    const at = (x, y, s, body) => `<g transform="translate(${x} ${y}) scale(${s})">${body}</g>`;
+    // 剑 / 匕首 / 锤 / 箭 / 盾:竖直朝上、以 (50,50) 为中心的零件,外面再旋转摆放
+    const sword = (blade = 'url(#bl)') =>
+        P('M50 4 L58 16 V60 H42 V16 Z', blade, 4.5) + L('M50 14 V56', 2.5, 'rgba(255,255,255,0.7)') +
+        P('M28 58 H72 V68 H28 Z', '#ffb300', 4.5) + P('M45 68 H55 V86 H45 Z', '#6d4c41', 4) + C(50, 91, 6, '#ffd54f', 4);
+    const dagger = (blade = 'url(#bl)') =>
+        P('M50 10 L58 26 V58 H42 V26 Z', blade, 4.5) + P('M34 58 H66 V66 H34 Z', '#7e57c2', 4) + P('M45 66 H55 V84 H45 Z', '#311b92', 4) + C(50, 88, 5, '#b388ff', 3.5);
+    const hammer = (head = 'url(#hm)') =>
+        P('M45 40 H55 V94 H45 Z', '#8d6e63', 4) + P('M20 14 H80 Q84 14 84 18 V40 Q84 44 80 44 H20 Q16 44 16 40 V18 Q16 14 20 14 Z', head) +
+        P('M44 14 H56 V44 H44 Z', '#fff8e1', 3.5) + hi(30, 22, 7, 3, 0);
+    // 任意方向的箭:箭尾 (x1,y1) → 箭头 (x2,y2),线宽不随缩放变细
+    const darrow = (x1, y1, x2, y2, hs = 15) => {
+        const a = Math.atan2(y2 - y1, x2 - x1), c = Math.cos(a), s = Math.sin(a);
+        const f = (v) => v.toFixed(1);
+        const bx = x2 - c * hs, by = y2 - s * hs;
+        const t1x = x1 + c * 12, t1y = y1 + s * 12;
+        return LL(`M${f(x1)} ${f(y1)} L${f(bx)} ${f(by)}`, 4, '#a1887f') +
+            P(`M${x2} ${y2} L${f(bx - s * hs * 0.55)} ${f(by + c * hs * 0.55)} L${f(bx + s * hs * 0.55)} ${f(by - c * hs * 0.55)} Z`, 'url(#ah)', 3.5) +
+            P(`M${f(t1x)} ${f(t1y)} L${f(x1 - s * 7)} ${f(y1 + c * 7)} L${f(x1 - c * 4)} ${f(y1 - s * 4)} L${f(x1 + s * 7)} ${f(y1 - c * 7)} Z`, '#ef5350', 3);
+    };
+    const SHIELD = 'M50 6 L86 18 V46 C86 72 70 86 50 94 C30 86 14 72 14 46 V18 Z';
+    const shield = (fill, inner) => P(SHIELD, fill) + (inner || '') + hi(30, 26, 8, 4);
+    const flame = (x, y, s, fill = 'url(#fl)') => at(x, y, s,
+        P('M0 -40 C8 -22 22 -14 22 6 C22 24 12 34 0 34 C-12 34 -22 24 -22 6 C-22 -8 -12 -14 -8 -26 C-4 -16 -2 -14 0 -12 C2 -22 1 -30 0 -40 Z', fill, 6) +
+        P('M0 0 C6 8 10 14 9 22 C8 28 5 30 0 30 C-5 30 -8 28 -9 22 C-10 14 -4 8 0 0 Z', '#fff59d', 4));
+    const cloud = (fill = 'url(#cl)') => P('M22 52 Q8 52 8 40 Q8 28 22 28 Q24 12 42 12 Q56 12 62 24 Q66 18 74 18 Q90 18 90 34 Q96 38 96 44 Q96 52 86 52 Z', fill, 4.5);
+    const wing = (flip) => `<g transform="${flip ? 'translate(100 0) scale(-1 1)' : ''}">` +
+        P('M40 46 Q22 26 4 30 Q10 38 8 44 Q16 46 14 54 Q22 54 22 62 Q32 60 40 58 Z', 'url(#wg)', 4) +
+        L('M36 50 Q22 40 10 38 M36 54 Q24 50 16 50', 2.5, 'rgba(120,144,156,0.7)') + `</g>`;
+
+    const S = {
+        // ════════ 技能 ════════
+        // 战士 Q 旋风斩:剑 + 两道回旋刃风
+        skill_whirl: () => svg(lg('bl', '#ffffff', '#90a4ae', 1, 0) + lg('a', '#ffe0b2', '#ff5722', 1, 1),
+            LL('M16 46 A34 34 0 0 1 74 20', 8, 'url(#a)') + P('M66 8 L88 22 L64 32 Z', '#ff7043', 4) +
+            LL('M84 54 A34 34 0 0 1 26 80', 8, 'url(#a)') + P('M34 92 L12 78 L36 68 Z', '#ff7043', 4) +
+            rot(-45, 50, 50, at(50, 50, 0.78, `<g transform="translate(-50 -50)">${sword()}</g>`))),
+        // 战士 E 盾击:盾 + 撞击星
+        skill_bash: () => svg(lg('a', '#bbdefb', '#1565c0'),
+            P(star(78, 30, 20, 9, 8), '#ffeb3b', 4) +
+            at(-4, 6, 0.88, shield('url(#a)', P('M50 20 L72 28 V46 C72 62 63 72 50 78 C37 72 28 62 28 46 V28 Z', '#e3f2fd', 3.5) + L('M50 32 V68 M36 46 H64', 5)))),
+        // 铁卫 E 盾冲:盾 + 速度线
+        skill_charge: () => svg(lg('a', '#bbdefb', '#1565c0'),
+            LL('M4 34 H30 M2 54 H24 M6 74 H30', 5, '#e3f2fd') +
+            at(22, 4, 0.86, shield('url(#a)', P('M50 20 L72 28 V46 C72 62 63 72 50 78 C37 72 28 62 28 46 V28 Z', '#e3f2fd', 3.5) + P('M38 40 L58 50 L38 60 Z', '#1565c0', 3)))),
+        // 法师 Q 魔力涌注:法球 + 奥术环 + 上涌光点
+        skill_surge: () => svg(rg('a', '#e0f7fa', '#00838f') + gw('#4dd0e1'),
+            glow(50, 54, 46, '#4dd0e1') +
+            `<ellipse cx="50" cy="56" rx="42" ry="14" fill="none" stroke="${OUT}" stroke-width="9"/><ellipse cx="50" cy="56" rx="42" ry="14" fill="none" stroke="#80deea" stroke-width="4"/>` +
+            C(50, 50, 24, 'url(#a)') + hi(42, 42, 8, 5) +
+            `<path d="M8 56 A42 14 0 0 0 92 56" fill="none" stroke="${OUT}" stroke-width="9"/><path d="M8 56 A42 14 0 0 0 92 56" fill="none" stroke="#80deea" stroke-width="4"/>` +
+            P(star(22, 22, 9, 3, 4, 0), '#e0f7fa', 3) + P(star(80, 18, 7, 2.5, 4, 0), '#e0f7fa', 3) + P(star(76, 86, 6, 2, 4, 0), '#e0f7fa', 3)),
+        // 法师 E 斥力波:中心核 + 向外扩散的波纹与箭头
+        skill_repulse: () => svg(rg('a', '#ffffff', '#00acc1'),
+            [0, 90, 180, 270].map(d => rot(d + 45, 50, 50, LL('M30 22 A30 30 0 0 1 70 22', 6, '#b2ebf2') + LL('M22 8 A44 44 0 0 1 78 8', 5, '#4dd0e1'))).join('') +
+            [0, 90, 180, 270].map(d => rot(d, 50, 50, P('M50 2 L58 14 H42 Z', '#e0f7fa', 3.5))).join('') +
+            C(50, 50, 14, 'url(#a)') + hi(46, 45, 4, 3)),
+        // 炎术师 E 烈焰新星:一圈火焰 + 爆裂核心
+        skill_flamenova: () => svg(lg('fl', '#ffca28', '#e64a19') + rg('a', '#fffde7', '#ff6d00'),
+            [0, 60, 120, 180, 240, 300].map(d => rot(d, 50, 50, flame(50, 18, 0.4))).join('') +
+            P(star(50, 50, 22, 12, 10), 'url(#a)', 4)),
+        // 冰霜法师 E 冰霜新星:冰晶核心 + 放射冰刺
+        skill_frostnova: () => svg(lg('a', '#ffffff', '#4fc3f7', 1, 1) + rg('b', '#ffffff', '#81d4fa'),
+            [0, 45, 90, 135, 180, 225, 270, 315].map((d, i) => rot(d, 50, 50, P(i % 2 ? 'M50 4 L56 18 L50 30 L44 18 Z' : 'M50 2 L58 20 L50 34 L42 20 Z', 'url(#a)', 3.5))).join('') +
+            C(50, 50, 16, 'url(#b)', 4) + L('M50 38 V62 M40 44 L60 56 M60 44 L40 56', 3, '#0277bd')),
+        // 刺客 Q 闪现斩:匕首 + 残影 + 斩痕
+        skill_blink: () => svg(lg('bl', '#ffffff', '#b39ddb', 1, 0),
+            `<g opacity="0.3">${rot(40, 50, 50, at(-30, 18, 0.8, dagger()))}</g><g opacity="0.55">${rot(40, 50, 50, at(-14, 9, 0.8, dagger()))}</g>` +
+            rot(40, 50, 50, at(4, 2, 0.8, dagger())) + LL('M14 86 Q54 70 88 22', 3.5, '#e1bee7')),
+        // 刺客 E 连刺:三把匕首依次刺出
+        skill_stab: () => svg(lg('bl', '#ffffff', '#b39ddb', 1, 0),
+            [[30, 30], [56, 44], [70, 70]].map(([cx, cy]) => rot(45, cx, cy, at(cx - 32, cy - 32, 0.64, dagger()))).join('') +
+            LL('M62 6 L72 2 M84 22 L96 18 M92 46 L98 38', 3.5, '#e1bee7')),
+        // 弓手 Q 穿透箭:箭贯穿两个方块
+        skill_pierce: () => svg(lg('ah', '#f1f8e9', '#7cb342') + lg('b', '#ff8a80', '#c62828'),
+            P('M26 34 H44 V66 H26 Z', 'url(#b)', 4) + P('M58 30 H78 V70 H58 Z', 'url(#b)', 4) +
+            L('M28 48 L36 54 L32 60 M62 42 L70 50 L64 58', 2.5, '#4e0000') +
+            darrow(4, 50, 96, 50, 18)),
+        // 神射手 Q 狙击:准星 + 斜穿的箭
+        skill_snipe: () => svg(lg('ah', '#f1f8e9', '#7cb342'),
+            `<circle cx="50" cy="50" r="34" fill="none" stroke="${OUT}" stroke-width="10"/><circle cx="50" cy="50" r="34" fill="none" stroke="#ff5252" stroke-width="5"/>` +
+            LL('M50 4 V24 M50 76 V96 M4 50 H24 M76 50 H96', 4, '#ff5252') + C(50, 50, 6, '#ff1744', 3.5) +
+            darrow(12, 88, 82, 18, 18)),
+        // 弓手 E 箭雨:多支箭斜落
+        skill_rain: () => svg(lg('ah', '#f1f8e9', '#7cb342'),
+            [[30, 4, 16, 50], [62, 2, 48, 48], [90, 16, 76, 62], [42, 46, 28, 92], [74, 52, 60, 96]].map(([a, b, c, d]) => darrow(a, b, c, d, 15)).join('')),
+        // 圣骑士 Q 圣光打击:金锤 + 光芒
+        skill_holystrike: () => svg(lg('hm', '#fff8e1', '#ffb300') + rg('a', '#fffde7', '#ffd54f', 0),
+            `<circle cx="34" cy="32" r="32" fill="url(#a)"/>` + P(star(34, 32, 28, 9, 8), '#fff59d', 3) +
+            rot(-40, 54, 54, at(54 - 37, 54 - 37, 0.74, hammer()))),
+        // 审判者 Q 审判之锤:重锤砸地 + 冲击波 + 眩晕星
+        skill_judge: () => svg(lg('hm', '#fff8e1', '#ff8f00') + lg('a', '#fff59d', '#ffb300'),
+            LL('M30 94 Q66 78 98 92', 5, '#ffe082') + LL('M54 76 L44 66 M90 74 L98 64', 4, '#ffe082') +
+            rot(140, 46, 46, at(46 - 36, 46 - 36, 0.72, hammer())) +
+            P(star(14, 26, 10, 4), 'url(#a)', 3) + P(star(86, 30, 9, 3.5), 'url(#a)', 3) + P(star(80, 8, 6, 2.5), 'url(#a)', 2.5)),
+        // 圣骑士 E 神圣光环:光环 + 十字
+        skill_aura: () => svg(lg('a', '#fff8e1', '#ffb300') + gw('#ffe082'),
+            glow(50, 52, 46, '#ffe082', 0.8) +
+            `<ellipse cx="50" cy="66" rx="42" ry="16" fill="none" stroke="${OUT}" stroke-width="11"/><ellipse cx="50" cy="66" rx="42" ry="16" fill="none" stroke="#ffd54f" stroke-width="6"/>` +
+            P('M42 10 H58 V30 H76 V46 H58 V76 H42 V46 H24 V30 H42 Z', 'url(#a)') + hi(48, 18, 3, 6, 0)),
+        // 守护者 E 守护光环:光环中的盾
+        skill_guard: () => svg(lg('a', '#fff8e1', '#ffb300') + gw('#ffe082'),
+            glow(50, 50, 48, '#ffe082', 0.8) +
+            `<circle cx="50" cy="52" r="42" fill="none" stroke="${OUT}" stroke-width="10"/><circle cx="50" cy="52" r="42" fill="none" stroke="#ffd54f" stroke-width="5" stroke-dasharray="14 8"/>` +
+            at(20, 20, 0.6, shield('url(#a)', P('M42 30 H58 V44 H72 V58 H58 V80 H42 V58 H28 V44 H42 Z', '#fffde7', 3.5)))),
+
+        // ════════ 觉醒奥义 ════════
+        // 战士 诸神黄昏:燃烧巨剑下劈
+        ult_warrior: () => svg(lg('fl', '#ffca28', '#e64a19') + lg('bl', '#fff3e0', '#ff7043', 1, 0),
+            flame(24, 62, 0.62) + flame(76, 62, 0.62) + flame(50, 54, 0.82) +
+            rot(180, 50, 50, at(12, 8, 0.76, sword())) + LL('M10 92 L30 84 L44 94 L56 84 L70 94 L90 86', 4, '#ffab40')),
+        // 法师 时空坍缩:黑洞 + 吸积盘
+        ult_mage: () => {
+            let d = 'M50 50';
+            for (let t = 0; t <= 3.6 * Math.PI; t += 0.25) d += ` L${(50 + Math.cos(t) * (4 + t * 3.4)).toFixed(1)} ${(50 + Math.sin(t) * (4 + t * 3.4) * 0.55).toFixed(1)}`;
+            return svg(lg('a', '#ea80fc', '#651fff', 1, 1) + rg('b', '#000000', '#4a148c'),
+                `<ellipse cx="50" cy="50" rx="46" ry="22" fill="none" stroke="${OUT}" stroke-width="12"/><ellipse cx="50" cy="50" rx="46" ry="22" fill="none" stroke="url(#a)" stroke-width="7"/>` +
+                C(50, 50, 18, 'url(#b)', 4) + L(d, 3, '#ea80fc', ' opacity="0.9"') +
+                P(star(16, 16, 8, 3, 4, 0), '#fff', 2.5) + P(star(86, 82, 7, 2.5, 4, 0), '#fff', 2.5) + P(star(84, 14, 5, 2, 4, 0), '#fff', 2));
+        },
+        // 刺客 万刃影杀:六把匕首环刺中心
+        ult_assassin: () => svg(lg('bl', '#ffffff', '#b39ddb', 1, 0) + rg('a', '#ea80fc', '#4a148c'),
+            C(50, 50, 13, 'url(#a)', 4) +
+            [0, 60, 120, 180, 240, 300].map(d => rot(d, 50, 50, at(50 - 25, 24 - 25, 0.5, rot(180, 50, 50, dagger())))).join('')),
+        // 弓手 箭雨风暴:雷云 + 闪电 + 落箭
+        ult_archer: () => svg(lg('cl', '#90a4ae', '#37474f') + lg('ah', '#f1f8e9', '#7cb342') + lg('z', '#fff9c4', '#ffb300'),
+            [[22, 50, 14, 94], [80, 50, 72, 94], [40, 58, 34, 96]].map(([a, b, c, d]) => darrow(a, b, c, d, 13)).join('') +
+            cloud() + P('M58 46 L46 66 H56 L48 86 L70 60 H60 L68 46 Z', 'url(#z)', 3.5)),
+        // 圣骑士 圣光降临:光柱 + 双翼
+        ult_paladin: () => svg(lg('wg', '#ffffff', '#cfd8dc') + lg('a', '#fffde7', '#ffd54f', 0, 1) + lg('b', '#fff8e1', '#ffb300'),
+            `<rect x="40" y="0" width="20" height="100" fill="url(#a)" opacity="0.85"/>` +
+            wing(false) + wing(true) +
+            P('M44 30 H56 V44 H68 V56 H56 V82 H44 V56 H32 V44 H44 Z', 'url(#b)', 4) +
+            `<ellipse cx="50" cy="14" rx="16" ry="5" fill="none" stroke="${OUT}" stroke-width="7"/><ellipse cx="50" cy="14" rx="16" ry="5" fill="none" stroke="#fff59d" stroke-width="3"/>`),
+
+        // ════════ 职业徽记 ════════
+        cls_warrior: () => svg(lg('bl', '#ffffff', '#90a4ae', 1, 0) + lg('a', '#ff8a65', '#bf360c'),
+            rot(-40, 50, 50, at(5, 0, 0.9, sword())) + rot(40, 50, 50, at(5, 0, 0.9, sword())) +
+            at(29, 40, 0.42, shield('url(#a)', L('M50 26 V74 M32 46 H68', 6, '#ffccbc')))),
+        cls_mage: () => svg(rg('a', '#e0f7fa', '#00838f') + gw('#4dd0e1'),
+            LL('M30 94 L62 34', 7, '#8d6e63') + P('M56 40 Q46 30 52 16 L60 28 L68 14 Q78 30 68 42 Z', '#ffb300', 4) +
+            glow(64, 26, 30, '#4dd0e1') + C(64, 24, 14, 'url(#a)', 4) + hi(60, 20, 4, 3) +
+            P(star(22, 30, 9, 3, 4, 0), '#e0f7fa', 3) + P(star(84, 62, 7, 2.5, 4, 0), '#e0f7fa', 3)),
+        cls_assassin: () => svg(lg('bl', '#ffffff', '#b39ddb', 1, 0) + lg('a', '#fff9c4', '#ffb300'),
+            P('M58 6 A42 42 0 1 0 94 62 A32 32 0 1 1 58 6 Z', 'url(#a)', 4.5) +
+            rot(35, 50, 50, at(8, 6, 0.86, dagger()))),
+        cls_archer: () => svg(lg('ah', '#f1f8e9', '#7cb342') + lg('b', '#a1887f', '#4e342e'),
+            P('M26 6 Q92 50 26 94 Q74 50 26 6 Z', 'url(#b)', 4.5) + L('M26 8 L26 92', 2.5, '#eceff1') +
+            darrow(10, 50, 94, 50, 18)),
+        cls_paladin: () => svg(lg('a', '#fff8e1', '#ffb300') + lg('hm', '#eceff1', '#78909c'),
+            rot(-30, 50, 50, at(20, -4, 0.75, hammer())) +
+            at(18, 22, 0.64, shield('url(#a)', P('M42 24 H58 V42 H74 V58 H58 V82 H42 V58 H26 V42 H42 Z', '#fffde7', 3.5))))
+    };
+
+    // ════════ 天赋符文:白色浮雕符号(放在 Art.badge 的彩色圆章里) ════════
+    const RW = lg('rw', '#ffffff', '#cfdbe6');
+    const rs = body => svg(RW, body);
+    const F = 'url(#rw)';
+    const p = (d, w = 5) => P(d, F, w);
+    const ln = (d, w) => L(d, w + 5) + L(d, w, '#ffffff');
+    const ring = (cx, cy, r, w) => `<circle cx="${cx}" cy="${cy}" r="${r}" fill="none" stroke="${OUT}" stroke-width="${w + 5}"/><circle cx="${cx}" cy="${cy}" r="${r}" fill="none" stroke="#ffffff" stroke-width="${w}"/>`;
+    const txt = ch => `<text x="50" y="76" text-anchor="middle" font-family="Arial Black, Arial, Helvetica, sans-serif" font-weight="900" font-size="72" fill="#ffffff" stroke="${OUT}" stroke-width="8" stroke-linejoin="round" paint-order="stroke">${ch}</text>`;
+    const arw = (x1, y1, x2, y2, w = 6, hs = 16) => {
+        const a = Math.atan2(y2 - y1, x2 - x1), c = Math.cos(a), s = Math.sin(a);
+        const bx = x2 - c * hs, by = y2 - s * hs;
+        return ln(`M${x1} ${y1} L${bx.toFixed(1)} ${by.toFixed(1)}`, w) +
+            p(`M${x2} ${y2} L${(bx - s * hs * 0.6).toFixed(1)} ${(by + c * hs * 0.6).toFixed(1)} L${(bx + s * hs * 0.6).toFixed(1)} ${(by - c * hs * 0.6).toFixed(1)} Z`, 4);
+    };
+    const R = {
+        '✦': () => rs(p(star(50, 50, 44, 11, 4))),
+        '★': () => rs(p(star(50, 54, 46, 19))),
+        '✸': () => rs(p(star(50, 50, 46, 19, 8))),
+        '✷': () => rs(p(star(50, 50, 46, 11, 8, -Math.PI / 2 + Math.PI / 8))),
+        '✺': () => rs(p(star(50, 50, 46, 27, 12)) + C(50, 50, 13, '#90caf9', 4)),
+        '◆': () => rs(p('M50 6 L90 50 L50 94 L10 50 Z') + `<path d="M50 6 L50 94 M10 50 H90" stroke="#90a4ae" stroke-width="2.5"/>` + L('M50 6 L90 50 L50 94 L10 50 Z', 5)),
+        '◈': () => rs(p('M24 18 H76 L94 40 L50 92 L6 40 Z') + L('M6 40 H94 M24 18 L38 40 L50 92 L62 40 L76 18 M38 40 L50 18 L62 40', 3)),
+        '✚': () => rs(p('M38 8 H62 V38 H92 V62 H62 V92 H38 V62 H8 V38 H38 Z')),
+        '✟': () => rs(p('M42 6 H58 V28 H80 V44 H58 V94 H42 V44 H20 V28 H42 Z')),
+        '✜': () => rs(p('M50 8 C60 30 82 44 82 64 A32 32 0 0 1 18 64 C18 44 40 30 50 8 Z') + L('M50 52 V80 M36 66 H64', 6)),
+        '❣': () => rs(p('M50 54 C26 38 10 26 18 12 C24 2 40 4 50 18 C60 4 76 2 82 12 C90 26 74 38 50 54 Z') + p('M50 66 C56 76 60 82 60 88 A10 10 0 0 1 40 88 C40 82 44 76 50 66 Z', 4)),
+        '✕': () => rs(ln('M20 20 L80 80 M80 20 L20 80', 13)),
+        '◎': () => rs(ring(50, 50, 36, 9) + C(50, 50, 13, F)),
+        '◉': () => rs(p('M4 50 Q50 6 96 50 Q50 94 4 50 Z') + C(50, 50, 18, '#37474f', 4) + C(56, 44, 5, '#ffffff', 0)),
+        '◐': () => rs(C(50, 50, 40, F) + `<path d="M50 10 A40 40 0 0 0 50 90 Z" fill="${OUT}"/>` + `<circle cx="50" cy="50" r="40" fill="none" stroke="${OUT}" stroke-width="5"/>`),
+        '◌': () => rs([0, 1, 2, 3, 4, 5, 6, 7].map(i => C(50 + Math.cos(i * Math.PI / 4) * 36, 50 + Math.sin(i * Math.PI / 4) * 36, i % 2 ? 7 : 9, F, 4)).join('') +
+            ln('M50 50 m-12 0 a12 12 0 1 1 12 12', 5)),
+        '◫': () => rs(p('M10 92 V34 H22 V18 H38 V34 H44 V18 H56 V34 H62 V18 H78 V34 H90 V92 Z') + P('M40 92 V70 A10 10 0 0 1 60 70 V92 Z', '#455a64', 4)),
+        '⛨': () => rs(p(SHIELD) + L('M50 24 V78 M30 44 H70', 7)),
+        '⛊': () => rs(p(SHIELD) + `<path d="M50 6 V94 C70 86 86 72 86 46 V18 Z" fill="${OUT}" opacity="0.85"/>` + L(SHIELD, 5)),
+        '⧗': () => rs(p('M20 8 H80 V18 L58 50 L80 82 V92 H20 V82 L42 50 L20 18 Z') + P('M30 82 L50 64 L70 82 Z', '#ffcc80', 3) + P('M34 22 H66 L50 42 Z', '#ffcc80', 3)),
+        '♛': () => rs(p('M8 32 L28 58 L40 18 L50 48 L60 18 L72 58 L92 32 L82 82 H18 Z') + L('M20 72 H80', 4) + C(50, 10, 6, F, 4)),
+        '↔': () => rs(arw(50, 50, 94, 50, 8, 22) + arw(50, 50, 6, 50, 8, 22)),
+        '➤': () => rs(p('M10 16 L92 50 L10 84 L28 50 Z')),
+        '➝': () => rs(ring(80, 50, 14, 5) + arw(6, 50, 84, 50, 8, 22)),
+        '⟶': () => rs(ln('M28 8 Q76 50 28 92', 8) + L('M28 10 V90', 3, '#cfd8dc') + arw(12, 50, 94, 50, 6, 20)),
+        '➳': () => rs(arw(10, 64, 90, 22, 6, 20) + arw(10, 92, 90, 50, 6, 20) + L('M10 64 L20 52 M10 92 L20 80', 4)),
+        '➹': () => rs(arw(16, 84, 88, 12, 7, 24) + ln('M8 60 L30 38 M36 92 L58 70', 4)),
+        '⇶': () => rs(arw(8, 22, 92, 22, 6, 18) + arw(8, 50, 92, 50, 6, 18) + arw(8, 78, 92, 78, 6, 18)),
+        '✂': () => rs(arw(50, 92, 50, 8, 6, 18) + arw(46, 92, 10, 22, 6, 18) + arw(54, 92, 90, 22, 6, 18)),
+        '⫷': () => rs(ln('M48 14 L18 50 L48 86', 8) + ln('M68 14 L38 50 L68 86', 8) + ln('M88 14 L58 50 L88 86', 8)),
+        '⟳': () => rs(ln('M74 30 A32 32 0 1 0 82 56', 9) + p('M60 30 L88 14 L86 44 Z', 4)),
+        '〜': () => rs(ln('M8 58 Q22 28 36 50 T64 50 T92 42', 9) + ln('M8 82 Q22 60 36 76 T64 76 T92 68', 5)),
+        '❅': () => rs(ln('M50 8 V92 M14 29 L86 71 M86 29 L14 71', 7) +
+            [0, 60, 120, 180, 240, 300].map(d => rot(d, 50, 50, ln('M40 14 L50 24 L60 14', 4))).join('') + C(50, 50, 8, F, 4)),
+        'Q': () => rs(txt('Q')),
+        'E': () => rs(txt('E')),
+        'A': () => rs(txt('A'))
+    };
+    return Object.assign(S, R);
+})();
+
+// ── 统一图标入口:emoji / 技能图 / 天赋符文都按同一个 key 取 ──
+Object.assign(Art, {
+    _urls: new Map(),
+    svgOf(k) {
+        if (!k) return null;
+        const e = String(k).replace(/️/g, '');
+        return (typeof EmojiSVG !== 'undefined' && EmojiSVG[e]) || IconSVG[e] || null;
+    },
+    has(k) { return !!this.svgOf(k); },
+    _hex(c) {
+        if (/^#[0-9a-f]{6}$/i.test(c)) return c;
+        if (/^#[0-9a-f]{3}$/i.test(c)) return '#' + c.slice(1).split('').map(h => h + h).join('');
+        return '#4fc3f7';
+    },
+    // 彩色圆章:外圈金属边(主色渐变)+ 深色内盘 + 中间的符号/图标
+    badgeSVG(k, color) {
+        const make = this.svgOf(k);
+        const inner = make ? make().replace(/<svg([^>]*?)\swidth="[^"]*"\s+height="[^"]*"/, '<svg$1 x="21" y="21" width="58" height="58"') : '';
+        const c = this._hex(color);
+        const lt = this.mix(c, 'white', 0.5), dk = this.mix(c, 'black', 0.5);
+        return `<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 100 100" width="160" height="160"><defs>` +
+            `<linearGradient id="bdgR" x1="0" y1="0" x2="0.35" y2="1"><stop offset="0" stop-color="${lt}"/><stop offset="0.45" stop-color="${c}"/><stop offset="1" stop-color="${dk}"/></linearGradient>` +
+            `<radialGradient id="bdgD" cx="0.5" cy="0.35" r="0.7"><stop offset="0" stop-color="${this.mix(c, 'black', 0.35)}"/><stop offset="1" stop-color="${this.mix(c, 'black', 0.78)}"/></radialGradient></defs>` +
+            `<circle cx="50" cy="50" r="46" fill="url(#bdgR)" stroke="#120d22" stroke-width="4"/>` +
+            `<circle cx="50" cy="50" r="36" fill="url(#bdgD)" stroke="#120d22" stroke-width="3"/>` +
+            `<circle cx="50" cy="51.5" r="37.5" fill="none" stroke="${lt}" stroke-opacity="0.45" stroke-width="1.5"/>` +
+            inner +
+            `<path d="M18 40 A33 33 0 0 1 82 40 Q50 30 18 40 Z" fill="#ffffff" opacity="0.16"/></svg>`;
+    },
+    // 图标原样画在 (cx, cy),size 为边长(逻辑像素);未就绪返回 false,调用方用原来的文字画法
+    pic(ctx, k, cx, cy, size) {
+        const make = this.svgOf(k);
+        if (!make) return false;
+        const key = String(k).replace(/️/g, '');
+        const img = this.get('ic|' + key, make);
+        if (!img) return false;
+        const sz = Math.max(4, Math.round(size));
+        const spr = SpriteCache.get(`art|ic|${key}|${sz}`, sz, sz, 1, g => g.drawImage(img, 0, 0, sz, sz));
+        this._blit(ctx, spr, cx - sz / 2, cy - sz / 2, sz);
+        return true;
+    },
+    // 圆章画在 (cx, cy);glow 为主色外发光(CSS px)
+    badge(ctx, k, color, cx, cy, size, glow = 0) {
+        if (!this.svgOf(k)) return false;
+        const key = String(k).replace(/️/g, '') + '|' + color;
+        const img = this.get('bdg|' + key, () => this.badgeSVG(k, color));
+        if (!img) return false;
+        const sz = Math.max(6, Math.round(size));
+        const pad = glow ? SpriteCache.padFor(glow) : 1;
+        const spr = SpriteCache.get(`art|bdg|${key}|${sz}|${glow}`, sz, sz, pad, g => {
+            if (glow) { g.shadowBlur = SpriteCache.blur(glow); g.shadowColor = this._hex(color); }
+            g.drawImage(img, 0, 0, sz, sz);
+        });
+        this._blit(ctx, spr, cx - sz / 2, cy - sz / 2, sz);
+        return true;
+    },
+    // 精灵自带光晕,画的时候关掉画布当前的 shadowBlur(否则会再叠一层逐帧模糊)
+    _blit(ctx, spr, x, y, sz) {
+        const sb = ctx.shadowBlur;
+        if (sb) ctx.shadowBlur = 0;
+        SpriteCache.draw(ctx, spr, x, y, sz, sz);
+        if (sb) ctx.shadowBlur = sb;
+    },
+    // 网页里用的 data URL(<img src> / SVG <image href>)
+    url(k) {
+        const make = this.svgOf(k);
+        if (!make) return '';
+        let u = this._urls.get(k);
+        if (!u) { u = 'data:image/svg+xml;charset=utf-8,' + encodeURIComponent(make()); this._urls.set(k, u); }
+        return u;
+    },
+    badgeURL(k, color) {
+        if (!this.svgOf(k)) return '';
+        const key = 'bdg|' + k + '|' + color;
+        let u = this._urls.get(key);
+        if (!u) { u = 'data:image/svg+xml;charset=utf-8,' + encodeURIComponent(this.badgeSVG(k, color)); this._urls.set(key, u); }
+        return u;
+    }
+});
+
 const EmojiArt = {
     // emoji 后面可能跟 FE0F(彩色呈现选择符),一并吃掉
     re: null,
