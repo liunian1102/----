@@ -884,6 +884,9 @@ kbd {
 .st-item.relic { background: linear-gradient(90deg, color-mix(in srgb, var(--c) 12%, transparent), rgba(255, 255, 255, 0.02)); }
 .st-item b { display: block; color: var(--c); font-size: 0.9em; }
 .st-item small { color: rgba(200, 232, 255, 0.7); font-size: 0.8em; line-height: 1.4; }
+.st-item small.pro, .st-item small.con { display: block; }
+.st-item small.pro { color: #9cf5b0; }
+.st-item small.con { color: #ff8a80; }
 .st-item-ic { width: 34px; height: 34px; flex: none; }
 .st-time { margin-left: auto; color: var(--c); font-weight: 700; font-size: 0.85em; }
 .st-empty { color: rgba(200, 232, 255, 0.45); font-size: 0.82em; padding: 2px 0 6px; }
