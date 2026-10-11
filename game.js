@@ -11561,46 +11561,25 @@ class Game {
         });
     }
 
-    // '#rgb' / '#rrggbb' → 'r,g,b';其它格式返回 null(调用方退回 shadowBlur)
-    _fxRgb(color) {
-        const cache = this._fxRgbCache || (this._fxRgbCache = new Map());
-        let v = cache.get(color);
-        if (v === undefined) {
-            v = null;
-            const m = /^#([0-9a-f]{3}|[0-9a-f]{6})$/i.exec(color || '');
-            if (m) {
-                let h = m[1];
-                if (h.length === 3) h = h[0] + h[0] + h[1] + h[1] + h[2] + h[2];
-                const n = parseInt(h, 16);
-                v = `${(n >> 16) & 255},${(n >> 8) & 255},${n & 255}`;
-            }
-            cache.set(color, v);
-        }
-        return v;
-    }
-
-    // 半径 r、线宽 w 的圆弧描边在 shadowBlur=blur 下的光晕:截面是 σ=blur/2 的高斯,
-    // 用径向渐变的圆环(或扇环)直接填出来,省掉逐帧模糊。返回 false 表示颜色无法解析
+    // 半径 r、线宽 w 的圆弧描边在 shadowBlur=blur 下的光晕:截面是 σ=blur/2 的高斯,峰值 ≈ w / (σ·√2π)。
+    // 用两层宽窄不同的半透明描边叠出近似的截面,省掉逐帧模糊。原先用径向渐变填圆环,渐变逐像素算色,
+    // 手机上一个冲击波要 0.2ms,而光晕本身很淡(手机上 σ 换算成逻辑像素很大,峰值只有百分之几),两层描边看不出差别。
+    // 调用方之前设好的 strokeStyle / lineWidth / globalAlpha 原样保留
     _fillArcGlow(ctx, x, y, r, w, blur, color, a0 = 0, a1 = Math.PI * 2) {
-        const rgb = this._fxRgb(color);
-        if (!rgb) return false;
         const sigma = (blur / 2) * SpriteCache.dpr / SpriteCache.scale; // CSS 像素 → 逻辑像素
         const peak = Math.min(1, w / (sigma * 2.5066));
-        const r0 = Math.max(0, r - 2.25 * sigma), r1 = r + 2.25 * sigma;
-        const grad = ctx.createRadialGradient(x, y, r0, x, y, r1);
-        const prof = [0, 0.325, 0.755, 1, 0.755, 0.325, 0]; // e^(-d²/2σ²),d 每步 0.75σ,±2.25σ 外忽略(<8% 峰值)
-        for (let k = 0; k < prof.length; k++) {
-            const rr = r + (k - 3) * 0.75 * sigma;
-            if (rr < r0) continue;
-            grad.addColorStop(Math.min(1, (rr - r0) / (r1 - r0)), `rgba(${rgb},${(prof[k] * peak).toFixed(4)})`);
+        const ga = ctx.globalAlpha, ss = ctx.strokeStyle, lw = ctx.lineWidth;
+        ctx.strokeStyle = color;
+        ctx.globalAlpha = ga * peak * 0.5;
+        for (const k of [2.2, 1.1]) {
+            ctx.lineWidth = sigma * k;
+            ctx.beginPath();
+            ctx.arc(x, y, r, a0, a1);
+            ctx.stroke();
         }
-        ctx.fillStyle = grad;
-        ctx.beginPath();
-        ctx.arc(x, y, r1, a0, a1);
-        if (r0 > 0) ctx.arc(x, y, r0, a1, a0, true);
-        else ctx.lineTo(x, y);
-        ctx.closePath();
-        ctx.fill();
+        ctx.globalAlpha = ga;
+        ctx.strokeStyle = ss;
+        ctx.lineWidth = lw;
         return true;
     }
 
@@ -12335,13 +12314,11 @@ class Game {
         const ready = ratio <= 0;
         const col = '#80d8ff';
         ctx.save();
+        if (ready) this._hudGlow(ctx, cx - r, cy - r, r * 2, r * 2, r, 14, col, 1, 0.18);
         ctx.beginPath();
         ctx.arc(cx, cy, r, 0, Math.PI * 2);
         ctx.fillStyle = ready ? 'rgba(128,216,255,0.18)' : 'rgba(0,0,0,0.6)';
-        ctx.shadowBlur = ready ? 14 : 0;
-        ctx.shadowColor = col;
         ctx.fill();
-        ctx.shadowBlur = 0;
         ctx.lineWidth = 2;
         ctx.strokeStyle = ready ? 'rgba(128,216,255,0.85)' : '#555555';
         ctx.stroke();
@@ -12373,6 +12350,46 @@ class Game {
             ctx.stroke();
         }
         ctx.restore();
+    }
+
+    // HUD 上固定形状的外发光:按当前 HUD 缩放预渲染成「只有光晕」的精灵再贴图。
+    // HUD 每帧都画,实时 shadowBlur 在手机上要 1~2ms(触屏 HUD 是按固定 CSS 尺寸放大的,模糊面积大);
+    // 精灵按 HUD 的实际缩放单独缓存(不用 SpriteCache:那里按世界缩放,放大贴到 HUD 上会糊)
+    // 阴影强度跟着被画内容的透明度走:fillA = 原来半透明填充的不透明度,strokeW = 原来同时带阴影的描边线宽
+    _hudGlow(ctx, x, y, w, h, r, blur, color, alpha = 1, fillA = 1, strokeW = 0) {
+        const s = ctx.getTransform().a;
+        const key = `${w}|${h}|${r}|${blur}|${color}|${fillA}|${strokeW}|${s.toFixed(3)}`;
+        const cache = this._hudGlowCache || (this._hudGlowCache = new Map());
+        let c = cache.get(key);
+        if (!c) {
+            if (cache.size > 40) cache.clear();
+            const pad = Math.ceil(blur * 1.6 * this.dpr / s) + 2;
+            c = document.createElement('canvas');
+            c.width = Math.max(1, Math.ceil((w + pad * 2) * s));
+            c.height = Math.max(1, Math.ceil((h + pad * 2) * s));
+            const g = c.getContext('2d');
+            g.scale(c.width / (w + pad * 2), c.height / (h + pad * 2));
+            g.translate(pad, pad);
+            g.save();
+            g.shadowColor = color;
+            g.shadowBlur = blur * this.dpr;
+            g.shadowOffsetX = 10000 * g.getTransform().a;
+            g.translate(-10000, 0);
+            g.fillStyle = color;
+            g.strokeStyle = color;
+            roundRect(g, 0, 0, w, h, r);
+            if (fillA > 0) { g.globalAlpha = fillA; g.fill(); }
+            if (strokeW > 0) { g.globalAlpha = 1; g.lineWidth = strokeW; g.stroke(); }
+            g.restore();
+            c.pad = pad;
+            cache.set(key, c);
+        }
+        const a0 = ctx.globalAlpha, sb = ctx.shadowBlur;
+        if (sb) ctx.shadowBlur = 0;
+        ctx.globalAlpha = a0 * alpha;
+        ctx.drawImage(c, x - c.pad, y - c.pad, w + c.pad * 2, h + c.pad * 2);
+        ctx.globalAlpha = a0;
+        if (sb) ctx.shadowBlur = sb;
     }
 
     _renderSkillHUD() {
@@ -12431,8 +12448,8 @@ class Game {
                 ctx.restore();
             }
 
-            ctx.shadowBlur = ready ? 16 : 4;
-            ctx.shadowColor = ready ? s.color : '#333333';
+            if (ready) this._hudGlow(ctx, s.x, baseY, slotW, slotH, slotR, 16, s.color, 1, 0.2, 2);
+            ctx.shadowBlur = 0;
             ctx.fillStyle = ready ? `${s.color}33` : 'rgba(0,0,0,0.6)';
             roundRect(ctx, s.x, baseY, slotW, slotH, slotR);
             ctx.fill();
@@ -12503,18 +12520,13 @@ class Game {
             ctx.fill();
             if (cdRatio > 0) {
                 ctx.fillStyle = s.color;
-                ctx.shadowBlur = 4;
-                ctx.shadowColor = s.color;
                 roundRect(ctx, s.x, barY2, barW * (1 - cdRatio), barH, 2);
                 ctx.fill();
-                ctx.shadowBlur = 0;
             } else {
+                this._hudGlow(ctx, s.x, barY2, barW, barH, 2, 6, s.color);
                 ctx.fillStyle = s.color;
-                ctx.shadowBlur = 6;
-                ctx.shadowColor = s.color;
                 roundRect(ctx, s.x, barY2, barW, barH, 2);
                 ctx.fill();
-                ctx.shadowBlur = 0;
             }
 
             const pulse = s.key === 'q' ? this._qPulse : this._ePulse;
@@ -12550,13 +12562,11 @@ class Game {
         if (cls === 'mage' && this.player.qToggleActive) {
             const qSlotX = slots[0].x;
             ctx.save();
+            this._hudGlow(ctx, qSlotX - 3, baseY - 3, slotW + 6, slotH + 6, slotR + 2, 18, '#4dd0e1', 1, 0, 3);
             ctx.strokeStyle = '#4dd0e1';
             ctx.lineWidth = 3;
-            ctx.shadowBlur = 18;
-            ctx.shadowColor = '#4dd0e1';
             roundRect(ctx, qSlotX - 3, baseY - 3, slotW + 6, slotH + 6, slotR + 2);
             ctx.stroke();
-            ctx.shadowBlur = 0;
             const cost = Math.max(1, Math.ceil(this.player.maxMana * 0.10 * (this.player.mageQCostMult || 1)));
             ctx.fillStyle = '#4dd0e1';
             ctx.font = 'bold 10px Arial';
@@ -12596,8 +12606,8 @@ class Game {
             const pulse = ready ? 0.6 + 0.4 * Math.sin(this.bgTime * 6) : 0;
 
             ctx.save();
-            ctx.shadowBlur = ready ? 18 + 8 * pulse : 4;
-            ctx.shadowColor = ready ? '#ffd700' : '#333333';
+            if (ready) this._hudGlow(ctx, ultX, ultY, slotW, slotH, slotR, 24, '#ffd700', 0.55 + 0.45 * pulse, 0.28, 2.5);
+            ctx.shadowBlur = 0;
             ctx.fillStyle = ready ? 'rgba(255, 215, 0, 0.28)' : 'rgba(0,0,0,0.65)';
             roundRect(ctx, ultX, ultY, slotW, slotH, slotR);
             ctx.fill();
@@ -12632,7 +12642,7 @@ class Game {
             // 槽顶上方大招名牌
             ctx.font = 'bold 10px Arial';
             ctx.fillStyle = ready ? '#ffe082' : '#b0bec5';
-            ctx.fillText(ultName, ultX + slotW / 2, ultY - 6);
+            ctx.fillText(ultName, ultX + slotW / 2, ultY - 13); // 充能环半径超出槽位,名字放到环上方
 
             ctx.restore();
         }
@@ -12657,13 +12667,17 @@ class Game {
         const slotH = (h - gap * (max + 1)) / max;
         // 已装填的箭槽合并成一条路径,只做一次带光晕的 fill
         if (cur > 0) {
+            const top = y + h - gap - Math.min(cur, max) * (slotH + gap);
+            ctx.save();
+            ctx.beginPath();
+            ctx.rect(x - 30, top - 4, w + 60, y + h - top + 34);
+            ctx.clip();
+            this._hudGlow(ctx, x + 2, y + gap, w - 4, h - gap * 2, 2, 6, '#aaff44');
+            ctx.restore();
             ctx.fillStyle = '#aaff44';
-            ctx.shadowBlur = 6;
-            ctx.shadowColor = '#aaff44';
             ctx.beginPath();
             for (let i = 0; i < Math.min(cur, max); i++) addRoundRect(ctx, x + 2, y + h - gap - (i + 1) * slotH - i * gap, w - 4, slotH, 2);
             ctx.fill();
-            ctx.shadowBlur = 0;
         }
         for (let i = 0; i < max; i++) {
             const slotY = y + h - gap - (i + 1) * slotH - i * gap;
@@ -12717,12 +12731,18 @@ class Game {
         const grad = ctx.createLinearGradient(x, y + h - fillH, x, y + h);
         grad.addColorStop(0, colorA);
         grad.addColorStop(1, colorB);
+        // 光晕:整根条的光晕精灵,裁到已充满的部分(高度每帧在变,直接按高度缓存会不停重建)
+        if (fillH > 0.5) {
+            ctx.save();
+            ctx.beginPath();
+            ctx.rect(x - 30, y + h - fillH - 4, w + 60, fillH + 34);
+            ctx.clip();
+            this._hudGlow(ctx, x, y, w, h, 4, 8, colorA);
+            ctx.restore();
+        }
         ctx.fillStyle = grad;
-        ctx.shadowBlur = 8;
-        ctx.shadowColor = colorA;
         roundRect(ctx, x, y + h - fillH, w, fillH, 4);
         ctx.fill();
-        ctx.shadowBlur = 0;
 
         ctx.strokeStyle = `${colorA}99`;
         ctx.lineWidth = 1.5;
