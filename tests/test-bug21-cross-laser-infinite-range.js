@@ -1,4 +1,5 @@
 // test-bug21-cross-laser-infinite-range.js
+// 回归测试:缺陷已修复,修复仍有效时退出码为 0(原为「捕获缺陷」脚本,缺陷存在时才返回 0)
 require('./setup-env.js');
 
 const game = new Game();
@@ -21,6 +22,6 @@ game._bossCrossLaserTick(game.boss, game.boss.x + 40, game.boss.y + 40);
 
 console.log("5000px 距离外玩家是否被命中扣血:", game.player.currentHealth < hpBefore);
 const infiniteRange = game.player.currentHealth < hpBefore;
-console.log("Bug 21 验证结果 (十字死光具有无限长攻击距离判定):", infiniteRange ? "PASS (成功捕获缺陷)" : "FAIL");
+console.log("Bug 21 回归 (十字死光有攻击距离上限):", !infiniteRange ? "PASS" : "FAIL");
 
-process.exit(infiniteRange ? 0 : 1);
+process.exit(!infiniteRange ? 0 : 1);

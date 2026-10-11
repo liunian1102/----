@@ -1,4 +1,5 @@
 // test-bug43-orb-evo-five-rings.js
+// 回归测试:缺陷已修复,修复仍有效时退出码为 0(原为「捕获缺陷」脚本,缺陷存在时才返回 0)
 require('./setup-env.js');
 
 const game = new Game();
@@ -28,6 +29,6 @@ for (const e of enemies) {
     if (e.currentHealth < e.maxHealth) hits++;
 }
 console.log("日冕星环 5 重火球在 1 帧内同时命中的怪物数:", hits);
-console.log("Bug 43 验证结果 (5重火环未实现,仅有单火球):", hits <= 1 ? "PASS (缺陷存在)" : "FAIL");
+console.log("Bug 43 回归 (日冕星环多重火球同时命中四个方向):", hits >= 4 ? "PASS" : "FAIL");
 
-process.exit(hits <= 1 ? 0 : 1);
+process.exit(hits >= 4 ? 0 : 1);

@@ -1,9 +1,10 @@
 const { chromium } = require('playwright');
+const launchBrowser = require('./launch-browser');
 const path = require('path');
 
 (async () => {
     console.log('=== 启动真实移动端模拟自动化验证: 触控摇杆与技能瞄准灵敏度 ===');
-    const browser = await chromium.launch({ channel: 'msedge', headless: true });
+    const browser = await launchBrowser(chromium);
     // 模拟移动端 iPhone / Android 触屏视口
     const context = await browser.newContext({
         viewport: { width: 844, height: 390 },

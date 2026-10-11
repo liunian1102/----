@@ -4,7 +4,9 @@
   "description": "方块快跑 联机服务器",
   "main": "server.js",
   "scripts": {
-    "start": "node server.js"
+    "start": "node server.js",
+    "test": "node tests/run-all.js",
+    "test:e2e": "node tests/run-all.js --e2e"
   },
   "dependencies": {
     "ws": "^8.18.0"

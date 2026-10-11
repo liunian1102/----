@@ -1,9 +1,10 @@
 const { chromium } = require('playwright');
+const launchBrowser = require('./launch-browser');
 const path = require('path');
 
 (async () => {
     console.log('=== 启动真实浏览器自动化验证: 魔王前摇调优与连杀强化反馈 ===');
-    const browser = await chromium.launch({ channel: 'msedge', headless: true });
+    const browser = await launchBrowser(chromium);
     const context = await browser.newContext({
         viewport: { width: 1024, height: 768 }
     });
