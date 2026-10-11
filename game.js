@@ -1664,6 +1664,7 @@ class Game {
     // 同时在场的炮手上限:难度 1 时 3 个,难度每 +1 多 1 个,最多 6 个
     static gunnerCap(difficulty) { return Math.min(6, 2 + Math.floor(difficulty)); }
     static TALENT_REROLLS = 2; // 每局天赋「换一批」基础次数
+    static TREE_START_POINTS = 2; // 天赋树开局赠送的点数(独立于天赋卡货币)
     // 自动画质档位:持续掉帧时逐级降低画布分辨率上限与粒子数量(本次打开页面内不再回升,避免来回切换)
     static PERF_FRAME_MS = 22;  // 平滑后的帧间隔超过它(约 45 帧以下)视为掉帧
     static STAR_LEVELS = 5;  // 星星闪烁亮度档位数
@@ -6026,9 +6027,10 @@ class Game {
     }
 
     // ── 天赋树:点数 / 点亮 / 取消 / 属性汇总 ──
-    // 天赋点 = (等级 - 1) + 本局击退魔王次数 + 潜能点;起点不占点
+    // 天赋点 = 开局 2 点 + (等级 - 1) + 2 × 本局击退魔王次数;起点不占点。
+    // 与天赋卡货币(p.potentialPoints)完全独立:选天赋卡、跳过、死誓契额外潜能都不影响天赋点
     _treePoints(p = this.player) {
-        const total = Math.max(0, this.level - 1) + (this.runBossRepels || 0) + (p.potentialPoints || 0);
+        const total = Game.TREE_START_POINTS + Math.max(0, this.level - 1) + 2 * (this.runBossRepels || 0);
         const used = p.treeNodes.size - 1;
         return { total, used, free: total - used };
     }
@@ -7063,7 +7065,7 @@ class Game {
         this.spawnParticles(this.boss.x + 40, this.boss.y + 40, '#ffffff', 25, 3, 8, 2, 5, 0.04);
         const title = perfect ? '👑 完美击退魔王 (K.O.)!' : '魔王遁走…';
         const color = perfect ? '#ffd700' : '#ffeb3b';
-        this._showFloatingText(`${title}  +1命 +1潜能 +1天赋  爆出暗金遗物!`, this.width / 2, this.height * 0.4, color);
+        this._showFloatingText(`${title}  +1命 +1潜能 +2天赋  爆出暗金遗物!`, this.width / 2, this.height * 0.4, color);
         // 立即弹天赋菜单(奖励的潜能点)
         this.showPotentialMenu();
     }
@@ -13358,7 +13360,7 @@ class Game {
         if (!n) {
             info.style.removeProperty('--c');
             info.innerHTML = `<div class="ti-name">天赋点 ${pts.free} / ${pts.total}</div>
-                <div class="ti-hint">每升 1 级、每击退 1 次魔王获得 1 点。共 ${TREE_NODES.length - 1} 个节点:三系各分三路星团,尽头的「基石」改变玩法但有代价,中路的「专精」要该系点够节点才能点;三系之间是混合区,最外圈的星座连成一环。点选节点查看效果,再点一次点亮;选中远处节点会显示最短路径,可一次点亮整条路。拖动平移,双指或滚轮缩放,「⤢」看全景。</div>`;
+                <div class="ti-hint">开局 2 点,每升 1 级 +1 点,每击退 1 次魔王 +2 点(与天赋卡互不影响)。共 ${TREE_NODES.length - 1} 个节点:三系各分三路星团,尽头的「基石」改变玩法但有代价,中路的「专精」要该系点够节点才能点;三系之间是混合区,最外圈的星座连成一环。点选节点查看效果,再点一次点亮;选中远处节点会显示最短路径,可一次点亮整条路。拖动平移,双指或滚轮缩放,「⤢」看全景。</div>`;
         } else {
             const kindName = { start: '起点', small: '小天赋', notable: '大天赋', socket: '连接孔', keystone: '基石', mastery: '专精' }[n.kind];
             const brName = TREE_BRANCH_NAMES[n.br] || (n.br === 'mix' ? '混合' : '');
