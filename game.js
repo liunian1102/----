@@ -296,18 +296,57 @@ const GAME_EVENTS = {
 const EVENT_TYPES = Object.keys(GAME_EVENTS);
 const MP_ITEM_TYPES = ['potion', 'exp_book', 'snowflake', 'bomb', 'heart', 'potion_invicible',
     'gear_blade', 'gear_orb', 'gear_armor', 'gear_bow', 'gear_thorns',
-    'relic_thunder_ring', 'relic_vampire_fang', 'relic_chrono_watch', 'relic_reaper_cloak', 'relic_alchemist_stone', 'relic_warmog_vest'];
+    'relic_thunder_ring', 'relic_vampire_fang', 'relic_chrono_watch', 'relic_reaper_cloak', 'relic_alchemist_stone', 'relic_warmog_vest',
+    'relic_glass_crown', 'relic_berserk_mask', 'relic_frost_heart', 'relic_gold_idol', 'relic_storm_boots', 'relic_blood_chalice'];
 
 // 永久战利品暗金遗物系统 (Relic Loot System)
-//   玩家最多同时装备 3 件遗物,整局常驻生效并带来流派质变
+//   玩家最多同时装备 3 件遗物,整局常驻。每件都是一笔交易:pros 增益 + cons 代价(至少一条)
+//   mods 是数值修正,各使用点统一用 relicMod(p, key) 读取已装备遗物的合计值:
+//     dmg / autoDmg / skillDmg 伤害   atkSpd 普攻速度   crit 暴击率   cdr 技能冷却缩减   dashCdr 冲刺冷却缩减
+//     speed 移速   maxHp 最大生命(固定)   maxHpPct 最大生命(百分比)   defPct 防御   flatRed 每次受伤固定减免
+//     dmgTaken 受到伤害   lowLifeDmg / lowLifeEvade 生命 <35% 时的伤害 / 闪避   healOnKill 击杀回血(溢出转护盾)
+//     oocRegen 脱战每秒回血   regenPct 每秒回复最大生命百分比   itemDur 道具停留时长   pickup 磁吸范围
+//     scoreMult / expMult 击杀分数 / 经验   freeze 命中冻结几率   thunder 每第 3 次命中召唤天雷
 const RELICS = {
-    thunder_ring:    { name: '雷神指环', icon: '💍', color: '#ffe14d', desc: '每第3次普攻/技能召唤天雷轰顶' },
-    vampire_fang:    { name: '吸血鬼獠牙', icon: '🧛', color: '#ff5252', desc: '每次击杀回复 2 点生命,溢出转为护盾' },
-    chrono_watch:    { name: '时空怀表', icon: '⌚', color: '#80d8ff', desc: '全技能与冲刺冷却缩减 18%' },
-    reaper_cloak:    { name: '死神斗篷', icon: '🧥', color: '#ea80fc', desc: '生命<35%时伤害+50%,闪避率+25%' },
-    alchemist_stone: { name: '炼金魔石', icon: '🧪', color: '#b9f6ca', desc: '道具持续时间+50%,拾取磁吸范围+80px' },
-    warmog_vest:     { name: '狂徒铠甲', icon: '🦺', color: '#ffd54f', desc: '最大生命+40,受到的所有伤害强制减免5点' }
+    thunder_ring:    { name: '雷神指环', icon: '💍', color: '#ffe14d',
+        pros: ['每第 3 次命中召唤天雷,范围造成 120% 攻击伤害'], cons: ['普攻速度 -13%'], mods: { thunder: 1, atkSpd: -0.13 } },
+    vampire_fang:    { name: '吸血鬼獠牙', icon: '🧛', color: '#ff5252',
+        pros: ['每次击杀回复 4 点生命,溢出转为护盾'], cons: ['受到伤害 +10%'], mods: { healOnKill: 4, dmgTaken: 0.10 } },
+    chrono_watch:    { name: '时空怀表', icon: '⌚', color: '#80d8ff',
+        pros: ['技能冷却 -18%', '冲刺冷却 -18%'], cons: ['移动速度 -10%'], mods: { cdr: 0.18, dashCdr: 0.18, speed: -0.10 } },
+    reaper_cloak:    { name: '死神斗篷', icon: '🧥', color: '#ea80fc',
+        pros: ['生命 <35% 时伤害 +50%、闪避 +25%'], cons: ['最大生命 -15%'], mods: { lowLifeDmg: 0.5, lowLifeEvade: 0.25, maxHpPct: -0.15 } },
+    alchemist_stone: { name: '炼金魔石', icon: '🧪', color: '#b9f6ca',
+        pros: ['道具停留时间 +50%', '拾取磁吸范围 +80'], cons: ['技能伤害 -10%'], mods: { itemDur: 0.5, pickup: 80, skillDmg: -0.10 } },
+    warmog_vest:     { name: '狂徒铠甲', icon: '🦺', color: '#ffd54f',
+        pros: ['最大生命 +40', '每次受伤固定减免 5', '脱战 3 秒后每秒回复 1.5 生命'], cons: ['移动速度 -10%'], mods: { maxHp: 40, flatRed: 5, oocRegen: 1.5, speed: -0.10 } },
+    glass_crown:     { name: '玻璃王冠', icon: '👑', color: '#84ffff',
+        pros: ['全部伤害 +35%'], cons: ['最大生命 -30%'], mods: { dmg: 0.35, maxHpPct: -0.30 } },
+    berserk_mask:    { name: '狂战面具', icon: '😈', color: '#ff1744',
+        pros: ['普攻速度 +30%'], cons: ['受到伤害 +20%'], mods: { atkSpd: 0.30, dmgTaken: 0.20 } },
+    frost_heart:     { name: '寒冰之心', icon: '❄', color: '#80d8ff',
+        pros: ['命中有 12% 几率冻结敌人 0.8 秒(魔王除外)'], cons: ['暴击率 -10%'], mods: { freeze: 0.12, crit: -0.10 } },
+    gold_idol:       { name: '贪婪金像', icon: '💰', color: '#ffd740',
+        pros: ['击杀分数 +40%', '击杀经验 +25%'], cons: ['防御 -40%'], mods: { scoreMult: 0.4, expMult: 0.25, defPct: -0.40 } },
+    storm_boots:     { name: '风暴之靴', icon: '💨', color: '#18ffff',
+        pros: ['移动速度 +20%', '冲刺冷却 -25%'], cons: ['普攻伤害 -15%'], mods: { speed: 0.20, dashCdr: 0.25, autoDmg: -0.15 } },
+    blood_chalice:   { name: '鲜血圣杯', icon: '🩸', color: '#ff5252',
+        pros: ['每秒回复 1.5% 最大生命'], cons: ['技能冷却 +20%'], mods: { regenPct: 0.015, cdr: -0.20 } }
 };
+for (const k in RELICS) {
+    const r = RELICS[k];
+    r.desc = r.pros.join(',') + ';代价:' + r.cons.join(',');
+}
+// 已装备遗物某项修正的合计值
+function relicMod(p, key) {
+    const list = p && p.relics;
+    if (!list || !list.length) return 0;
+    let v = 0;
+    for (const rk of list) { const r = RELICS[rk]; if (r && r.mods[key]) v += r.mods[key]; }
+    return v;
+}
+// 遗物掉率:魔王击退 / 完美击退 / 深渊层 / 深渊层(仙女座 Lv3) / 虚空裂隙 / 词缀精英
+const RELIC_DROP = { boss: 0.35, bossPerfect: 0.6, abyss: 0.2, abyssBoost: 0.4, rift: 0.5, elite: 0.08 };
 const RELIC_TYPES = Object.keys(RELICS);
 
 // 限时装备:捡起后一段时间内强化属性,并附带一种独立于职业的特殊攻击(Game._tickGear 驱动)
@@ -1226,6 +1265,7 @@ const Music = {
 
 class Game {
     static MAGNET_RADIUS = 85; // 道具拾取磁吸半径
+    static RELIC_MAX = 3;      // 暗金遗物同时最多装备几件
     static JOY_RADIUS = 56;   // 摇杆半径(CSS px)
     static ORB_SPIN = 4.2;    // 烈焰法球转速(弧度/秒)
     static ORB_RADIUS = 58;   // 烈焰法球环绕半径
@@ -2662,8 +2702,9 @@ class Game {
         if (myData) {
             this._mpSetTarget(this.player, myData.x, myData.y, !this._mpHasOwnPos);
             this._mpHasOwnPos = true;
-            this.player.currentHealth = myData.currentHealth;
-            this.player.maxHealth = myData.maxHealth;
+            // maxHealth 以客机自己为准:它随 input.stats 上报、主机照抄,快照里只是回声。
+            // 采用回声会在遗物生命修正(_syncRelicStats,只在本机对账)刚生效时被旧值盖掉
+            this.player.currentHealth = Math.min(myData.currentHealth, this.player.maxHealth);
             this.player.hurtCooldown = myData.hurtCooldown || 0;
             this.player.invincibleTimer = myData.invincibleTimer || 0;
             this.player.killCount = myData.kc || 0;
@@ -4112,6 +4153,7 @@ class Game {
                 }
                 // 位置以 host 为准:覆盖本地移动,在快照间平滑插值
                 this._mpInterpolate();
+                this._syncRelicStats(this.player);
                 this._sfxTick();
                 this._tickHitFeedback();
                 this._progressTick();
@@ -4194,6 +4236,7 @@ class Game {
                     this._uiTimer = 0;
                 }
             }
+            this._syncRelicStats(this.player);
             this._sfxTick();
             this._tickHitFeedback();
             this._progressTick();
@@ -4716,9 +4759,11 @@ class Game {
         }
         // 天赋「嗜血回春」与暗金遗物【狂徒铠甲】(脱战缓回):每秒回复生命(死誓契禁用回血)
         const regen = this.player.tree && this.player.tree.regen;
-        const warmogRegen = (this.player.relics && this.player.relics.includes('warmog_vest') && this.player.outOfCombat(3) && this.player.currentHealth < this.player.maxHealth) ? 1.5 : 0;
-        if ((regen || warmogRegen) && this.player.currentHealth > 0 && this.player.greedContract !== 'death') {
-            const healAmt = (this.player.maxHealth * (regen || 0) + warmogRegen) * DT;
+        const ooc = relicMod(this.player, 'oocRegen');
+        const warmogRegen = (ooc && this.player.outOfCombat(3) && this.player.currentHealth < this.player.maxHealth) ? ooc : 0;
+        const pctRegen = (regen || 0) + relicMod(this.player, 'regenPct'); // 暗金遗物【鲜血圣杯】
+        if ((pctRegen || warmogRegen) && this.player.currentHealth > 0 && this.player.greedContract !== 'death') {
+            const healAmt = (this.player.maxHealth * pctRegen + warmogRegen) * DT;
             this.player.heal(healAmt);
         }
         const cdDt = DT * (1 + (this.player.frenzyTier || 0) * 0.04);
@@ -4983,7 +5028,7 @@ class Game {
     // 雷霆之刃:闪电打向最近目标,再向附近弹跳(Lv1: 3次, Lv2 天怒神剑: 6次 + 天雷冲击波)
     _gearChainLightning(pcx, pcy, isEvo = false) {
         const targets = this._gearTargets();
-        const reaperMult = (this.player.relics && this.player.relics.includes('reaper_cloak') && this.player.currentHealth < this.player.maxHealth * 0.35) ? 1.5 : 1.0;
+        const reaperMult = this.player.currentHealth < this.player.maxHealth * 0.35 ? 1 + relicMod(this.player, 'lowLifeDmg') : 1.0;
         const baseDmg = this._computeAttackDamage(this.player.attack) * (isEvo ? 0.95 : 0.7) * reaperMult;
         const hit = new Set();
         let x = pcx, y = pcy, range = isEvo ? 280 : 230;
@@ -5228,6 +5273,7 @@ class Game {
     _buildDmgMult(p, slot) {
         const t = p.tree || {};
         let m = 1 + (t.dmg || 0) + (slot === 'a' ? (t.autoDmg || 0) : slot ? (t.skillDmg || 0) : 0);
+        m += relicMod(p, 'dmg') + (slot === 'a' ? relicMod(p, 'autoDmg') : slot ? relicMod(p, 'skillDmg') : 0);
         if (t.lowLifeDmg && p.currentHealth < p.maxHealth * 0.5) m += t.lowLifeDmg;
         const res = this._gemResonance(p, slot);
         if (res && res.id === 'trinity') m *= 1.25;
@@ -5245,7 +5291,7 @@ class Game {
 
     // 普攻速度倍率:天赋攻速 + 普攻位「快速冷却」
     _atkSpeedMult(p) {
-        return 1 + ((p.tree && p.tree.atkSpd) || 0) + this._gv(p, 'a', 'faster');
+        return Math.max(0.3, 1 + ((p.tree && p.tree.atkSpd) || 0) + this._gv(p, 'a', 'faster') + relicMod(p, 'atkSpd'));
     }
 
     // 命中之后:生命偷取 + 当前技能位宝石的命中效果。在 takeDamage 之后、死亡判定之前调用
@@ -6417,10 +6463,11 @@ class Game {
         const baseScore = Math.round(100 * (this.scoreMult || 1) * diffDef(this.diffMode).score);
         this.score += perfect ? baseScore * 2 : baseScore;
         // 击退动画
-        // 击退必掉一件限时装备、一颗技能石与一件永久暗金遗物(落在魔王原位)
+        // 击退必掉一件限时装备、一颗技能石,并有几率掉落永久暗金遗物(完美击退几率更高;落在魔王原位)
         this._dropGear(this.boss.x + this.boss.size / 2 - 12, this.boss.y + this.boss.size / 2 - 12);
         this._dropGem(this.boss.x + this.boss.size / 2 + 24, this.boss.y + this.boss.size / 2 - 12);
-        this._dropRelic(this.boss.x + this.boss.size / 2, this.boss.y + this.boss.size / 2 + 24);
+        if (Math.random() < (perfect ? RELIC_DROP.bossPerfect : RELIC_DROP.boss))
+            this._dropRelic(this.boss.x + this.boss.size / 2, this.boss.y + this.boss.size / 2 + 24);
         if (perfect) {
             // perfect 时额外掉落一颗技能石(位置错开)
             this._dropGem(this.boss.x + this.boss.size / 2 - 48, this.boss.y + this.boss.size / 2 - 12);
@@ -6577,7 +6624,7 @@ class Game {
             this._showFloatingText(`🌀 进入深渊 第 ${this.abyssFloor} 层!`, this.width / 2, this.height * 0.35, '#e1bee7');
             // 掉落补给与概率掉落暗金遗物(仙女座 Lv3 遗物几率翻倍)
             this._dropGear(cx - 30, cy);
-            const relicChance = (this.player.metagrowth && this.player.metagrowth.andromeda >= 3) ? 0.8 : 0.4;
+            const relicChance = (this.player.metagrowth && this.player.metagrowth.andromeda >= 3) ? RELIC_DROP.abyssBoost : RELIC_DROP.abyss;
             if (Math.random() < relicChance) this._dropRelic(cx + 30, cy);
         }
     }
@@ -6951,10 +6998,10 @@ class Game {
             e.takeDamage(120);
         }
 
-        // 爆仓掉落: 高阶技能石 + 史诗限时装备 + 永久暗金遗物 + 经验之书 + 生命药水
+        // 爆仓掉落: 高阶技能石 + 史诗限时装备 + 经验之书 + 生命药水,半数几率再爆出永久暗金遗物
         this._dropGem(cx - 30, cy);
         this._dropGear(cx + 30, cy);
-        this._dropRelic(cx, cy);
+        if (Math.random() < RELIC_DROP.rift) this._dropRelic(cx, cy);
         this.items.push(new Item(cx, cy - 35, 'exp_book', 'epic'));
         this.items.push(new Item(cx, cy + 35, 'potion', 'rare'));
         this.score += 800 * (this.scoreMult || 1);
@@ -7550,7 +7597,7 @@ class Game {
             let best = null, bd = Infinity;
             for (const p of players) {
                 if (it.type === 'potion_invicible' && p !== this.player) continue;
-                const magBonus = (p.relics && p.relics.includes('alchemist_stone')) ? 80 : 0;
+                const magBonus = relicMod(p, 'pickup');
                 // 🌟 星图天赋【仙女座】:基础磁吸范围 +40px ~ +80px
                 const andromedaBonus = (p.metagrowth && p.metagrowth.andromeda > 0) ? (p.metagrowth.andromeda >= 2 ? 80 : 40) : 0;
                 const R = Game.MAGNET_RADIUS + magBonus + andromedaBonus;
@@ -7558,7 +7605,7 @@ class Game {
                 if (d <= R && d < bd) { bd = d; best = p; }
             }
             if (!best || bd < 1) continue;
-            const magBonus = (best.relics && best.relics.includes('alchemist_stone')) ? 80 : 0;
+            const magBonus = relicMod(best, 'pickup');
             const andromedaBonus = (best.metagrowth && best.metagrowth.andromeda > 0) ? (best.metagrowth.andromeda >= 2 ? 80 : 40) : 0;
             const R = Game.MAGNET_RADIUS + magBonus + andromedaBonus;
             const step = Math.min(bd, 1.5 + 7 * (1 - bd / R));
@@ -7937,9 +7984,31 @@ class Game {
         this.items.push(new Item(x, y, 'gear_' + kind));
     }
 
+    // 遗物的生命修正以「追踪增量」方式叠在 maxHealth 上(p._relicHp),每帧按当前遗物重新对账:
+    //   换掉 / 丢失遗物会自动撤销,百分比修正跟着其他来源的成长一起缩放。只在本机玩家身上跑
+    //   (主机上客机的 maxHealth 由客机上报,已包含它自己的修正)
+    _syncRelicStats(p) {
+        if (!p) return;
+        const cur = p._relicHp || 0;
+        const base = p.maxHealth - cur;
+        const want = Math.round(relicMod(p, 'maxHp') + base * relicMod(p, 'maxHpPct'));
+        if (want === cur) return;
+        const delta = want - cur;
+        p._relicHp = want;
+        p.maxHealth = Math.max(1, p.maxHealth + delta);
+        if (delta > 0) p.currentHealth += delta;
+        p.currentHealth = Math.min(p.currentHealth, p.maxHealth);
+    }
+
     // 在 (x,y) 掉落一件永久暗金遗物
     _dropRelic(x, y, kind) {
-        kind = kind || RELIC_TYPES[Math.floor(Math.random() * RELIC_TYPES.length)];
+        if (!kind) {
+            // 优先掉本机玩家还没有的遗物
+            const own = this.player.relics || [];
+            const pool = RELIC_TYPES.filter(k => !own.includes(k));
+            const from = pool.length ? pool : RELIC_TYPES;
+            kind = from[Math.floor(Math.random() * from.length)];
+        }
         x = Math.max(15, Math.min(this.width - 45, x));
         y = Math.max(40, Math.min(this.height - 45, y));
         const item = new Item(x, y, 'relic_' + kind);
@@ -8071,15 +8140,20 @@ class Game {
                         if (!this.player.relics) this.player.relics = [];
                         const existingIdx = this.player.relics.indexOf(item.relic);
                         if (existingIdx >= 0) {
-                            label = `🌟 强化遗物【${rdef.name}】!`;
+                            // 重复遗物不叠加,熔成分数
+                            const pts = Math.round(300 * (this.scoreMult || 1));
+                            this.score += pts;
+                            label = `👑 重复的【${rdef.name}】熔成 ${pts} 分`;
                         } else {
-                            if (this.player.relics.length >= 3) this.player.relics.shift(); // 满 3 件替换最早的
-                            this.player.relics.push(item.relic);
-                            if (item.relic === 'warmog_vest') {
-                                this.player.maxHealth += 40;
-                                this.player.currentHealth = Math.min(this.player.maxHealth, this.player.currentHealth + 40);
+                            let lost = '';
+                            if (this.player.relics.length >= Game.RELIC_MAX) { // 满 3 件替换最早的
+                                const old = this.player.relics.shift();
+                                lost = RELICS[old] ? `(替换【${RELICS[old].name}】)` : '';
                             }
-                            label = `👑 获得暗金遗物【${rdef.name}】! ${rdef.desc}`;
+                            this.player.relics.push(item.relic);
+                            // 生命修正(狂徒铠甲 / 玻璃王冠 / 死神斗篷)由 _syncRelicStats 每帧对账,这里先结算一次
+                            if (!this._actingAs) this._syncRelicStats(this.player);
+                            label = `👑 获得【${rdef.name}】${lost} ${rdef.pros.join(',')} · 代价:${rdef.cons.join(',')}`;
                         }
                         Sound.play('levelUp');
                         this.effects.push({ type: 'shockwave', x: cx, y: cy, radius: 10, maxRadius: 100, color: '#ffd700', ttl: 0.5, maxTtl: 0.5 });
@@ -8366,10 +8440,10 @@ class Game {
         const base = (CLASS_BASE_CD[p.class] || { q: 3, e: 5 })[key];
         const sk = key === 'q' ? p.skillQ : p.skillE;
         const flat = key === 'q' ? (p.qCdFlat || 0) : 0;
-        // 冷却缩减:天赋 + 该技能位的「快速冷却」,合计最多 -60%;暗金遗物【时空怀表】额外 -18%;每日突变【虚空狂涌】额外 -35%
-        const relicCdr = (p.relics && p.relics.includes('chrono_watch')) ? 0.18 : 0;
+        // 冷却缩减:天赋 + 该技能位的「快速冷却」+ 暗金遗物(怀表 -18% / 圣杯 +20%)+ 每日突变【虚空狂涌】-35%,合计最多 -75%
+        const relicCdr = relicMod(p, 'cdr'); // 可为负:鲜血圣杯的代价
         const mutCdr = (this.mutations && this.mutations.includes('void_surge')) ? 0.35 : 0;
-        const red = Math.min(0.75, ((p.tree && p.tree.cdr) || 0) + this._gv(p, key, 'faster') + relicCdr + mutCdr);
+        const red = Math.max(-0.5, Math.min(0.75, ((p.tree && p.tree.cdr) || 0) + this._gv(p, key, 'faster') + relicCdr + mutCdr));
         const cd = base * this._getCDMultiplier(sk.level) * (1 - red);
         return flat ? Math.max(1, cd - flat) : cd;
     }
@@ -8466,13 +8540,13 @@ class Game {
     // 暴击率(某个技能位):天赋树 + 技能石 + 刺客被动 + 契约 + 星图;角色面板与战斗结算共用
     _critChance(p, slot) {
         const t = p.tree || {};
-        let crit = (t.crit || 0) + this._gv(p, slot, 'crit');
+        let crit = (t.crit || 0) + this._gv(p, slot, 'crit') + relicMod(p, 'crit');
         if (p.class === 'assassin') crit += 0.2 + (p.spec === 'shadow' ? 0.15 : 0);
         // 贪婪诅咒【狂风契】:暴击率额外 +20%,暴击伤害额外 +60%
         if (p.greedContract === 'gale') crit += 0.20;
         // 🌟 星图天赋【天箭座】:暴击率额外 +5%~15%
         if (p.metagrowth && p.metagrowth.sagitta > 0) crit += p.metagrowth.sagitta * 0.05;
-        return crit;
+        return Math.max(0, crit); // 寒冰之心的代价可能让它为负
     }
 
     // 暴击额外伤害(暴击倍率 = 2 + 它)
@@ -8563,11 +8637,20 @@ class Game {
         if (p.spec === 'venom') this._applyPoison(target, p, 1);
         if (t.poisonHit) this._applyPoison(target, p, 1);
         // 暗金遗物【死神斗篷】:生命低于 35% 时伤害提升 50%
-        if (p.relics && p.relics.includes('reaper_cloak') && p.currentHealth < p.maxHealth * 0.35) {
-            dmg *= 1.5;
+        const lowLifeDmg = relicMod(p, 'lowLifeDmg');
+        if (lowLifeDmg && p.currentHealth < p.maxHealth * 0.35) {
+            dmg *= 1 + lowLifeDmg;
+        }
+        // 暗金遗物【寒冰之心】:命中几率冻结(魔王免疫)
+        const frz = relicMod(p, 'freeze');
+        if (frz && target !== this.boss && !(target.stunTimer > 0.8) && Math.random() < frz) {
+            target.stunTimer = 0.8;
+            const fx = target.x + target.size / 2, fy = target.y + target.size / 2;
+            this.effects.push({ type: 'ring', x: fx, y: fy, radius: target.size * 0.7, color: '#80d8ff', ttl: 0.3, maxTtl: 0.3 });
+            this.spawnParticles(fx, fy, '#e1f5fe', 6, 1, 3, 2, 4, 0.03);
         }
         // 暗金遗物【雷神指环】:每第 3 次攻击/技能召唤天雷轰顶(自身天雷不再递归自触发)
-        if (p.relics && p.relics.includes('thunder_ring') && !p._relicThunderActive) {
+        if (relicMod(p, 'thunder') && !p._relicThunderActive) {
             p._relicThunderCount = ((p._relicThunderCount || 0) + 1) % 3;
             if (p._relicThunderCount === 0) {
                 const tx = target.x + target.size / 2, ty = target.y + target.size / 2;
@@ -9779,9 +9862,10 @@ class Game {
         const horde = (this.event && this.event.type === 'horde') || (e && e._horde) ? 2 : 1;
         const greedBlood = (this.player.greedContract === 'blood') ? 2 : 1;
         const comboMult = this._registerCombo(e);
-        this.score += Math.round(10 * (this.scoreMult || 1) * horde * greedBlood * comboMult * diffDef(this.diffMode).score);
+        const idol = 1 + relicMod(this.player, 'scoreMult'); // 暗金遗物【贪婪金像】
+        this.score += Math.round(10 * (this.scoreMult || 1) * horde * greedBlood * comboMult * idol * diffDef(this.diffMode).score);
         // 开局刷怪被 _spawnRamp 压低,击杀经验按倒数补回,前期升级(3 级选职业)节奏不被拖慢
-        this.exp += 5 * horde * greedBlood / this._spawnRamp();
+        this.exp += 5 * horde * greedBlood * (1 + relicMod(this.player, 'expMult')) / this._spawnRamp();
         if (e && e.type === 'treasure') this._treasureReward(e);
         else if (e && !e.elite && Math.random() < 0.006) this._dropGem(e.x, e.y);
         // 毒刃觉醒:中毒的敌人死亡时毒雾爆发
@@ -9796,8 +9880,8 @@ class Game {
         if (e && e.elite) {
             this._eliteReward(e);
             this.affixEliteKills = (this.affixEliteKills || 0) + 1;
-            // 词缀精英被击破: 18% 概率爆出永久暗金遗物
-            if (Math.random() < 0.18) {
+            // 词缀精英被击破: 小概率爆出永久暗金遗物
+            if (Math.random() < RELIC_DROP.elite) {
                 this._dropRelic(e.x + e.size / 2, e.y + e.size / 2);
             }
             // 剧毒词缀:死亡时原地留下一滩持续 4 秒的腐蚀毒雾洼地
@@ -9830,12 +9914,13 @@ class Game {
         if (this.player.lifeStealPerKill) {
             this.player.heal(this.player.lifeStealPerKill);
         }
-        // 暗金遗物【吸血鬼獠牙】:每次击杀回复 2 点生命,溢出转为护盾
-        if (this.player.relics && this.player.relics.includes('vampire_fang')) {
+        // 暗金遗物【吸血鬼獠牙】:每次击杀回复生命,溢出转为护盾
+        const killHeal = relicMod(this.player, 'healOnKill');
+        if (killHeal > 0) {
             const missingHp = Math.max(0, this.player.maxHealth - this.player.currentHealth);
-            const overflow = Math.max(0, 2 - missingHp);
+            const overflow = Math.max(0, killHeal - missingHp);
             if (this.player.greedContract !== 'death') {
-                this.player.heal(2);
+                this.player.heal(killHeal);
             }
             if (overflow > 0) {
                 const baseCap = this.player.maxHealth * (this.player.shieldCapRatio || 0.15);
@@ -12280,12 +12365,12 @@ class Game {
             ['防御', `${Math.round(armor.def)}`, armor.flat ? `每次受伤另减 ${Math.round(armor.flat)}` : '最多抵消 80% 伤害'],
             ['受到伤害', pct(p.damageTakenMult()), '防御结算之后的倍率'],
             ['闪避', pct(Math.min(1, p.evadeChance())), p.projEvade ? `子弹偏折 ${pct(p.projEvade)}` : ''],
-            ['移动速度', `${p.speed.toFixed(1)}`, ''],
+            ['移动速度', `${p.moveSpeed().toFixed(1)}`, relicMod(p, 'speed') ? `基础 ${p.speed.toFixed(1)},含遗物修正` : ''],
             ['攻击间隔', `${(p.autoAttackInterval / this._atkSpeedMult(p)).toFixed(2)} 秒`, p.class === 'archer' ? '站定专注时更快' : ''],
             ['作用范围', pct(1 + (t.aoe || 0)), ''],
             ['冲刺冷却', `${p.dashCdTotal().toFixed(1)} 秒`, ''],
             ['击杀回血', `${p.lifeStealPerKill || 0}`, ''],
-            ['分数倍率', `×${(this.scoreMult || 1).toFixed(2)}`, '全队共享']
+            ['分数倍率', `×${(this.scoreMult || 1).toFixed(2)}`, relicMod(p, 'scoreMult') ? `全队共享;击杀另 +${Math.round(relicMod(p, 'scoreMult') * 100)}%(遗物)` : '全队共享']
         ];
         const res = { mage: ['法力', p.mana, p.maxMana], warrior: ['怒气', p.rage, p.maxRage], paladin: ['信念', p.faith, p.maxFaith],
             assassin: ['蓄力', p.assassinCharge, p.maxAssassinCharge], archer: ['箭矢', p.arrows, p.maxArrows] }[p.class];
@@ -12336,8 +12421,9 @@ class Game {
             const r = RELICS[rk];
             if (!r) return '';
             return `<div class="st-item relic" style="--c:${r.color}">${A ? img(A.itemURL('relic_' + rk), 'st-item-ic') : ''}
-                <div><b>${r.name}</b><small>${r.desc}</small></div></div>`;
-        }).join('') : '<div class="st-empty">还没有暗金遗物。击败词缀精英有几率掉落。</div>';
+                <div><b>${r.name}</b>${r.pros.map(t => `<small class="pro">+ ${esc(t)}</small>`).join('')}${r.cons.map(t => `<small class="con">− ${esc(t)}</small>`).join('')}</div></div>`;
+        }).join('') + `<div class="st-empty">最多 ${Game.RELIC_MAX} 件,拾取新遗物会替换最早的一件。</div>`
+            : '<div class="st-empty">还没有暗金遗物。击退魔王、虚空裂隙、深渊和词缀精英有几率掉落。每件都有增益,也都有代价。</div>';
         const equip = `<div class="st-card"><div class="st-title">限时装备</div>${gear}<div class="st-title">暗金遗物</div>${relics}</div>`;
         // 天赋
         const tal = (p.acquiredTalents || []).map(a => {
@@ -13149,6 +13235,8 @@ class Player {
         this.x = x;
         this.y = y;
         this.size = 30;
+        this.relics = [];   // 暗金遗物(RELICS 的 key,最多 Game.RELIC_MAX 件)
+        this._relicHp = 0;  // 遗物叠加在 maxHealth 上的生命增量(_syncRelicStats 对账)
         this.speed = 5;
         // 动态运动学手感引擎:真实物理速度矢量与惯性平滑阻尼
         this.vx = 0;
@@ -13299,14 +13387,14 @@ class Player {
         this.bodyScaleChoice = null;    // 'titan'(泰坦之躯) | 'mini'(灵巧微缩)
     }
 
-    // 冲刺实际冷却(天赋「疾风连击」减免;暗金遗物【时空怀表】额外缩减 18%;每日突变【狂暴极速】额外减半)
+    // 冲刺实际冷却(天赋「疾风连击」减免;暗金遗物【时空怀表】/【风暴之靴】额外缩减;每日突变【狂暴极速】额外减半)
     // 距上次挨打是否已超过 sec 秒(从没挨过打也算)
     outOfCombat(sec) {
         return this.lastHitAt === undefined || !this.game || this.game.gameTime - this.lastHitAt >= sec;
     }
 
     dashCdTotal() {
-        const relicCdr = (this.relics && this.relics.includes('chrono_watch')) ? 0.18 : 0;
+        const relicCdr = relicMod(this, 'dashCdr');
         const mutCdr = (this.game && this.game.mutations && this.game.mutations.includes('hyper_frenzy')) ? 0.5 : 0;
         // 弓手被动「灵巧」:冲刺冷却 -30%(没有位移技能,靠冲刺拉开距离)
         const classCdr = this.class === 'archer' ? Player.ARCHER_DASH_CDR : 0;
@@ -13382,7 +13470,7 @@ class Player {
         const ultSpd = (this.ultActiveTimer > 0 && this.class === 'warrior') ? 1.4 : 1.0;
         // 🌌 每日突变【狂暴极速】:移速提升 35%
         const mutSpd = (this.game && this.game.mutations && this.game.mutations.includes('hyper_frenzy')) ? 1.35 : 1.0;
-        const targetSpeed = this.speed * gearSpd * frenzyMult * frostSlow * windWalkSpd * ultSpd * mutSpd * (this.blessTimer > 0 ? Game.BLESS.speed : 1);
+        const targetSpeed = this.moveSpeed() * gearSpd * frenzyMult * frostSlow * windWalkSpd * ultSpd * mutSpd * (this.blessTimer > 0 ? Game.BLESS.speed : 1);
 
         // 目标期望输入方向 (归一化矢量)
         let inX = 0, inY = 0;
@@ -13476,10 +13564,15 @@ class Player {
     }
 
     // pct:额外按最大生命百分比的真实伤害(无视防御/减伤值,护盾只能挡一半)
+    // 基础移速 × 暗金遗物修正(怀表 / 狂徒 -10%,风暴之靴 +20%)
+    moveSpeed() {
+        return this.speed * Math.max(0.5, 1 + relicMod(this, 'speed'));
+    }
+
     // 闪避率:天赋「疾风之舞」+ 暗金遗物【死神斗篷】(低血量)+ 弓手被动「灵巧」;角色面板与受伤结算共用
     evadeChance() {
         const t = this.tree || {};
-        const reaperEvade = (this.relics && this.relics.includes('reaper_cloak') && this.currentHealth < this.maxHealth * 0.35) ? 0.25 : 0;
+        const reaperEvade = this.currentHealth < this.maxHealth * 0.35 ? relicMod(this, 'lowLifeEvade') : 0;
         const classEvade = this.class === 'archer' ? Player.ARCHER_EVADE : 0;
         return (t.evade || 0) + reaperEvade + classEvade;
     }
@@ -13487,10 +13580,10 @@ class Player {
     // 护甲:def = 按天赋百分比放大的防御 + 限时装备防御;flat = 每次受伤固定减免
     armorValue() {
         const t = this.tree || {};
-        const relicFlatRed = (this.relics && this.relics.includes('warmog_vest')) ? 5 : 0; // 暗金遗物【狂徒铠甲】
+        const relicFlatRed = relicMod(this, 'flatRed'); // 暗金遗物【狂徒铠甲】
         const gear = this.gear && GEARS[this.gear.type];
         const gearDef = gear ? ((this.gear.level === 2 && gear.evoDefBonus) ? gear.evoDefBonus : (gear.defBonus || 0)) : 0;
-        return { def: this.defense * Math.max(0, 1 + (t.defPct || 0)) + gearDef, flat: (this.flatDamageReduction || 0) + relicFlatRed };
+        return { def: this.defense * Math.max(0, 1 + (t.defPct || 0) + relicMod(this, 'defPct')) + gearDef, flat: (this.flatDamageReduction || 0) + relicFlatRed };
     }
 
     // 受伤倍率(防御结算之后):天赋、战士战意 / 奥义、契约、突变、守护者光环
@@ -13508,6 +13601,9 @@ class Player {
         if (this.game && this.game.mutations && this.game.mutations.includes('glass_canon')) mult *= 1.4;
         // 守护者觉醒:神圣光环内减伤 50%
         if (this.auraGuard > 0) mult *= 0.5;
+        // 暗金遗物的代价(獠牙 / 狂战面具)
+        const rt = relicMod(this, 'dmgTaken');
+        if (rt) mult *= 1 + rt;
         return mult;
     }
 
@@ -15049,7 +15145,7 @@ class Item {
             : gm ? { color: gm.color, icon: gm.icon, rarity: 'rare', duration: 15 }
             : (cfg[type] || cfg.potion);
         const curGame = Game.instance;
-        const alchemistMult = (curGame && curGame.player && curGame.player.relics && curGame.player.relics.includes('alchemist_stone')) ? 1.5 : 1.0;
+        const alchemistMult = 1 + (curGame ? relicMod(curGame.player, 'itemDur') : 0);
         this.color = (customRarity === 'epic' ? '#ffd700' : customRarity === 'rare' ? '#00e5ff' : c.color);
         this.icon = c.icon;
         this.rarity = customRarity || c.rarity;

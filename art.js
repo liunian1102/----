@@ -479,7 +479,55 @@ const ArtSVG = (() => {
             line('M40 8 Q50 22 60 8', 4) + line('M28 70 Q50 78 72 70', 3) +
             `<circle cx="27" cy="44" r="3" fill="#fff8e1" stroke="${OUT}" stroke-width="2"/><circle cx="73" cy="44" r="3" fill="#fff8e1" stroke="${OUT}" stroke-width="2"/>` +
             `<path d="M50 62 C40 55 35 49 36 43 C37 37 45 35 50 41 C55 35 63 37 64 43 C65 49 60 55 50 62 Z" fill="#e53935" stroke="${OUT}" stroke-width="3"/>` +
-            `<ellipse cx="44" cy="42" rx="3" ry="2" fill="#fff" opacity="0.7"/>`)
+            `<ellipse cx="44" cy="42" rx="3" ry="2" fill="#fff" opacity="0.7"/>`),
+        // 玻璃王冠:半透明青色水晶冠,带裂纹
+        relic_glass_crown: () => isvg(lg('gc', [[0, '#e0f7fa'], [0.55, '#4dd0e1'], [1, '#006064']], 0.4, 1),
+            glowDot(50, 56, 34, '#84ffff', 0.4) +
+            `<path d="M12 78 L8 30 L30 50 L50 14 L70 50 L92 30 L88 78 Z" fill="url(#gc)" fill-opacity="0.85" stroke="${OUT}" stroke-width="5" stroke-linejoin="round"/>` +
+            `<rect x="10" y="74" width="80" height="14" rx="4" fill="url(#gc)" stroke="${OUT}" stroke-width="4.5"/>` +
+            `<path d="M26 40 L34 60 L28 74" fill="none" stroke="#fff" stroke-opacity="0.8" stroke-width="2"/>` +
+            line('M58 30 L52 46 L60 56 L54 72', 2.2, '#ff5252') +
+            `<circle cx="50" cy="14" r="5" fill="#fff" stroke="${OUT}" stroke-width="2.5"/><circle cx="8" cy="30" r="4" fill="#fff" stroke="${OUT}" stroke-width="2"/><circle cx="92" cy="30" r="4" fill="#fff" stroke="${OUT}" stroke-width="2"/>`),
+        // 狂战面具:赤红兽面,獠牙与弯角
+        relic_berserk_mask: () => isvg(lg('bm2', [[0, '#ff8a80'], [0.5, '#e53935'], [1, '#5d0000']], 0.4, 1),
+            glowDot(50, 52, 34, '#ff1744', 0.4) +
+            `<path d="M20 30 Q4 12 12 2 Q20 18 32 22 Z" fill="#efebe9" stroke="${OUT}" stroke-width="4" stroke-linejoin="round"/>` +
+            `<path d="M80 30 Q96 12 88 2 Q80 18 68 22 Z" fill="#efebe9" stroke="${OUT}" stroke-width="4" stroke-linejoin="round"/>` +
+            `<path d="M18 26 Q50 8 82 26 Q90 58 70 84 Q50 96 30 84 Q10 58 18 26 Z" fill="url(#bm2)" stroke="${OUT}" stroke-width="5" stroke-linejoin="round"/>` +
+            `<path d="M26 42 L44 50 L40 58 L24 52 Z" fill="#ffea00" stroke="${OUT}" stroke-width="3"/><path d="M74 42 L56 50 L60 58 L76 52 Z" fill="#ffea00" stroke="${OUT}" stroke-width="3"/>` +
+            `<path d="M34 70 Q50 64 66 70 L62 80 L56 72 L50 82 L44 72 L38 80 Z" fill="#fff" stroke="${OUT}" stroke-width="3" stroke-linejoin="round"/>`),
+        // 寒冰之心:冰晶心形,内部雪花
+        relic_frost_heart: () => isvg(lg('fh', [[0, '#ffffff'], [0.5, '#81d4fa'], [1, '#0277bd']], 0.6, 1),
+            glowDot(50, 52, 34, '#80d8ff', 0.45) +
+            `<path d="M50 88 L14 50 Q4 36 12 24 Q22 10 38 14 Q46 17 50 26 Q54 17 62 14 Q78 10 88 24 Q96 36 86 50 Z" fill="url(#fh)" stroke="${OUT}" stroke-width="5" stroke-linejoin="round"/>` +
+            `<path d="M50 26 L50 88 M14 50 L50 54 L86 50" fill="none" stroke="#e1f5fe" stroke-opacity="0.7" stroke-width="2"/>` +
+            line('M50 40 V66 M39 46 L61 60 M61 46 L39 60', 2.6, '#ffffff') +
+            `<ellipse cx="30" cy="28" rx="8" ry="4" transform="rotate(-30 30 28)" fill="#fff" opacity="0.75"/>`),
+        // 贪婪金像:台座上的金色小人像 + 金币
+        relic_gold_idol: () => isvg(lg('gi', [[0, '#fff59d'], [0.5, '#ffca28'], [1, '#a15c00']], 0.5, 1),
+            glowDot(50, 50, 34, '#ffd740', 0.45) +
+            `<rect x="22" y="76" width="56" height="14" rx="3" fill="#6d4c41" stroke="${OUT}" stroke-width="4"/>` +
+            `<path d="M36 76 L40 50 Q34 44 36 34 Q38 22 50 22 Q62 22 64 34 Q66 44 60 50 L64 76 Z" fill="url(#gi)" stroke="${OUT}" stroke-width="5" stroke-linejoin="round"/>` +
+            `<circle cx="50" cy="16" r="9" fill="url(#gi)" stroke="${OUT}" stroke-width="4"/>` +
+            `<circle cx="45" cy="34" r="2.6" fill="#e53935"/><circle cx="55" cy="34" r="2.6" fill="#e53935"/>` +
+            `<ellipse cx="16" cy="84" rx="9" ry="5" fill="url(#gi)" stroke="${OUT}" stroke-width="3"/><ellipse cx="84" cy="80" rx="9" ry="5" fill="url(#gi)" stroke="${OUT}" stroke-width="3"/>` +
+            `<ellipse cx="43" cy="28" rx="4" ry="7" fill="#fff" opacity="0.5"/>`),
+        // 风暴之靴:带羽翼的青色长靴 + 风痕
+        relic_storm_boots: () => isvg(lg('sb2', [[0, '#b2ebf2'], [0.5, '#26c6da'], [1, '#00606a']], 0.5, 1),
+            glowDot(50, 54, 34, '#18ffff', 0.35) +
+            dl('M4 48 H22 M2 62 H18 M6 76 H20', 3, '#e0f7fa') +
+            `<path d="M58 22 Q74 10 92 16 Q80 22 74 30 Q86 30 92 36 Q78 40 66 38 Z" fill="#fff" stroke="${OUT}" stroke-width="3.5" stroke-linejoin="round"/>` +
+            `<path d="M36 10 H62 V58 Q62 62 66 64 L86 72 Q92 76 90 84 V90 H30 Q26 90 26 84 V60 Q36 52 36 40 Z" fill="url(#sb2)" stroke="${OUT}" stroke-width="5" stroke-linejoin="round"/>` +
+            line('M36 18 H62 M28 82 H90', 3) + `<path d="M40 14 L44 50" stroke="#fff" stroke-opacity="0.55" stroke-width="3" stroke-linecap="round"/>`),
+        // 鲜血圣杯:金色圣杯盛满鲜血
+        relic_blood_chalice: () => isvg(lg('bc', [[0, '#fff59d'], [0.5, '#ffb300'], [1, '#8d5300']], 0.5, 1),
+            glowDot(50, 40, 32, '#ff5252', 0.4) +
+            `<path d="M18 16 H82 Q82 48 58 58 V72 Q58 78 70 82 V90 H30 V82 Q42 78 42 72 V58 Q18 48 18 16 Z" fill="url(#bc)" stroke="${OUT}" stroke-width="5" stroke-linejoin="round"/>` +
+            `<path d="M22 20 H78 Q76 36 64 42 Q50 48 36 42 Q24 36 22 20 Z" fill="#c62828" stroke="${OUT}" stroke-width="2.5"/>` +
+            `<ellipse cx="50" cy="20" rx="28" ry="5" fill="#ff5252" stroke="${OUT}" stroke-width="2.5"/>` +
+            `<path d="M60 22 Q64 30 60 34 Q56 30 60 22 Z" fill="#ff8a80"/>` +
+            `<circle cx="50" cy="66" r="4" fill="#e53935" stroke="${OUT}" stroke-width="2"/>` +
+            `<path d="M26 24 Q30 38 38 44" fill="none" stroke="#fff" stroke-opacity="0.5" stroke-width="2.5" stroke-linecap="round"/>`)
     };
 
     return { enemies, player, boss, items };
