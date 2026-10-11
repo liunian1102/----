@@ -856,6 +856,7 @@ const Sound = {
         this.filterNode.frequency.setValueAtTime(20000, this.ctx.currentTime);
         this.master.connect(this.filterNode);
         this.filterNode.connect(this.ctx.destination);
+        if (typeof Music !== 'undefined') Music.start();
     },
 
     setMuffle(active) {
@@ -888,16 +889,21 @@ const Sound = {
         o.start(t); o.stop(t + dur + 0.02);
     },
 
-    _noise(dur, vol = 0.2, filterType = 'lowpass', freq = 1000, delay = 0) {
-        const c = this.ctx, t = c.currentTime + delay;
+    // 1 秒白噪声,音效和背景音乐的鼓共用
+    _noiseBuffer() {
         if (!this._noiseBuf) {
-            const len = c.sampleRate; // 1 秒白噪声,复用
+            const c = this.ctx, len = c.sampleRate;
             this._noiseBuf = c.createBuffer(1, len, c.sampleRate);
             const d = this._noiseBuf.getChannelData(0);
             for (let i = 0; i < len; i++) d[i] = Math.random() * 2 - 1;
         }
+        return this._noiseBuf;
+    },
+
+    _noise(dur, vol = 0.2, filterType = 'lowpass', freq = 1000, delay = 0) {
+        const c = this.ctx, t = c.currentTime + delay;
         const src = c.createBufferSource(), f = c.createBiquadFilter(), g = c.createGain();
-        src.buffer = this._noiseBuf;
+        src.buffer = this._noiseBuffer();
         f.type = filterType; f.frequency.value = freq;
         g.gain.setValueAtTime(vol, t);
         g.gain.exponentialRampToValueAtTime(0.0001, t + dur);
@@ -1079,6 +1085,144 @@ const Sound = {
         }
     }
 };
+
+// ══════════════════════════════════════════════════════════════════
+//  背景音乐:WebAudio 实时合成(无音频文件),接在 Sound.master 上(静音、低血量闷音同样生效)。
+//  三种情绪:lobby 大厅 / run 战斗 / boss 魔王,在小节边界切换。以十六分音符为一步,
+//  用一个短间隔定时器提前 0.2s 排程(音频时钟排程,不受帧率影响);暂停或切到后台时压低音量。
+//  moodFn 由 Game 提供:返回 { mood, duck }。
+// ══════════════════════════════════════════════════════════════════
+const Music = {
+    enabled: Store.get('blockrun.music', true),
+    VOL: 0.5,
+    gain: null,
+    padFilter: null,
+    mood: null,
+    moodFn: null,
+    _timer: null,
+    _next: 0,
+    _step: 0,
+    _bar: 0,
+    // 和弦用 MIDI 音高;小调 i-VI-III-VII,魔王段落换成带 V 级大三和弦的和声小调进行
+    MOODS: {
+        lobby: { bpm: 84,  prog: [[57, 60, 64], [53, 57, 60], [48, 52, 55], [55, 59, 62]], pad: 0.045, arp: 'slow' },
+        run:   { bpm: 116, prog: [[57, 60, 64], [53, 57, 60], [48, 52, 55], [55, 59, 62]], pad: 0.022, arp: 'fast', bass: 'drive', kick: 1, snare: 1, hat: 1 },
+        boss:  { bpm: 140, prog: [[57, 60, 64], [50, 53, 57], [52, 56, 59], [57, 60, 64]], pad: 0.02, arp: 'fast', bass: 'gallop', kick: 2, snare: 1, hat: 2 }
+    },
+    ARP: [0, 1, 2, 3, 2, 1, 3, 1], // 和弦音下标,3 = 根音高八度
+
+    // Sound.init 之后调用(需要用户手势创建 AudioContext)
+    start() {
+        const c = Sound.ctx;
+        if (!c || this.gain) return;
+        this.gain = c.createGain();
+        this.gain.gain.value = 0;
+        this.gain.connect(Sound.master);
+        this.padFilter = c.createBiquadFilter();
+        this.padFilter.type = 'lowpass';
+        this.padFilter.frequency.value = 1400;
+        this.padFilter.connect(this.gain);
+        this._next = c.currentTime + 0.1;
+        this._timer = setInterval(() => this._tick(), 40);
+    },
+
+    toggle() {
+        this.enabled = !this.enabled;
+        Store.set('blockrun.music', this.enabled);
+    },
+
+    _freq(m) { return 440 * Math.pow(2, (m - 69) / 12); },
+
+    _tick() {
+        const c = Sound.ctx;
+        if (!c || c.state !== 'running') return;
+        const want = this.moodFn ? this.moodFn() : { mood: 'lobby', duck: false };
+        const audible = this.enabled && !Sound.muted;
+        const target = !audible ? 0 : want.duck ? this.VOL * 0.3 : this.VOL;
+        this.gain.gain.setTargetAtTime(target, c.currentTime, 0.25);
+        // 落后太多(后台被节流)就跳到现在,不补排一堆音符
+        if (this._next < c.currentTime - 0.3) { this._next = c.currentTime + 0.05; this._step = 0; }
+        while (this._next < c.currentTime + 0.2) {
+            if (this._step === 0) {
+                if (want.mood !== this.mood) { this.mood = want.mood; this._bar = 0; }
+            }
+            const m = this.MOODS[this.mood] || this.MOODS.lobby;
+            if (audible) this._playStep(m, this._step, this._next);
+            this._next += 60 / m.bpm / 4;
+            this._step = (this._step + 1) % 16;
+            if (this._step === 0) this._bar++;
+        }
+    },
+
+    _osc(type, freq, t, dur, vol, attack, dest, detune = 0) {
+        const c = Sound.ctx;
+        const o = c.createOscillator(), g = c.createGain();
+        o.type = type;
+        o.frequency.setValueAtTime(freq, t);
+        if (detune) o.detune.setValueAtTime(detune, t);
+        g.gain.setValueAtTime(0.0001, t);
+        g.gain.exponentialRampToValueAtTime(vol, t + attack);
+        g.gain.exponentialRampToValueAtTime(0.0001, t + dur);
+        o.connect(g); g.connect(dest || this.gain);
+        o.start(t); o.stop(t + dur + 0.05);
+        return o;
+    },
+
+    _noise(t, dur, vol, type, freq) {
+        const c = Sound.ctx;
+        const src = c.createBufferSource(), f = c.createBiquadFilter(), g = c.createGain();
+        src.buffer = Sound._noiseBuffer();
+        f.type = type; f.frequency.value = freq;
+        g.gain.setValueAtTime(vol, t);
+        g.gain.exponentialRampToValueAtTime(0.0001, t + dur);
+        src.connect(f); f.connect(g); g.connect(this.gain);
+        src.start(t, Math.random() * 0.5); src.stop(t + dur + 0.02);
+    },
+
+    _playStep(m, s, t) {
+        const chord = m.prog[this._bar % m.prog.length];
+        const stepDur = 60 / m.bpm / 4;
+        const tones = [chord[0], chord[1], chord[2], chord[0] + 12];
+        // 铺底和弦:每小节起拍,两只略微失谐的三角波
+        if (s === 0) {
+            const len = stepDur * 16;
+            for (const n of chord) {
+                this._osc('triangle', this._freq(n), t, len, m.pad, 0.35, this.padFilter, -6);
+                this._osc('sine', this._freq(n + 12), t, len, m.pad * 0.6, 0.5, this.padFilter, 5);
+            }
+        }
+        // 琶音
+        if (m.arp === 'fast') {
+            this._osc('square', this._freq(tones[this.ARP[s % 8]] + 12), t, stepDur * 0.9, 0.018, 0.005);
+        } else if (m.arp === 'slow' && s % 2 === 0) {
+            this._osc('sine', this._freq(tones[this.ARP[(s / 2) % 8]] + 12), t, stepDur * 3, 0.07, 0.01);
+        }
+        // 低音
+        const root = chord[0] - 24;
+        if (m.bass === 'drive' && s % 2 === 0) {
+            this._osc('sawtooth', this._freq(s % 4 === 2 ? root + 12 : root), t, stepDur * 1.6, 0.05, 0.005, this.padFilter);
+        } else if (m.bass === 'gallop' && (s % 4 !== 1)) {
+            this._osc('sawtooth', this._freq(s % 8 === 6 ? root + 12 : root), t, stepDur * 0.9, 0.055, 0.004, this.padFilter);
+        }
+        // 鼓
+        if (m.kick && (m.kick === 2 ? s % 4 === 0 : s % 8 === 0)) {
+            const c = Sound.ctx, o = c.createOscillator(), g = c.createGain();
+            o.type = 'sine';
+            o.frequency.setValueAtTime(150, t);
+            o.frequency.exponentialRampToValueAtTime(42, t + 0.16);
+            g.gain.setValueAtTime(0.22, t);
+            g.gain.exponentialRampToValueAtTime(0.0001, t + 0.2);
+            o.connect(g); g.connect(this.gain);
+            o.start(t); o.stop(t + 0.22);
+        }
+        if (m.snare && s % 8 === 4) {
+            this._noise(t, 0.13, 0.07, 'bandpass', 1800);
+            this._osc('triangle', 190, t, 0.08, 0.04, 0.002);
+        }
+        if (m.hat && (m.hat === 2 ? s % 2 === 0 : s % 4 === 2)) this._noise(t, 0.035, 0.025, 'highpass', 7000);
+    }
+};
+
 
 class Game {
     static MAGNET_RADIUS = 85; // 道具拾取磁吸半径
@@ -1566,6 +1710,7 @@ class Game {
 
     init() {
         Enemy.onDamage = v => this._creditDmg(v);
+        Music.moodFn = () => this._musicMood();
         this.bindEvents();
         this.updateUI();
         this.showingPotentialMenu = false;
@@ -3807,6 +3952,14 @@ class Game {
         }
     }
 
+    // 背景音乐情绪:大厅 / 战斗 / 魔王(预警起就切);暂停、切到后台时压低
+    _musicMood() {
+        const mood = !this.isRunning ? 'lobby'
+            : (this.bossState === 'warning' || this.bossState === 'active') ? 'boss' : 'run';
+        const hidden = typeof document !== 'undefined' && document.hidden;
+        return { mood, duck: !!(this.isPaused || hidden) };
+    }
+
     // 暂停面板:本局概况 + 继续 / 静音 / 结束本局(联机客机为离开房间,需再点一次确认)
     _renderPauseOverlay() {
         const ctx = this.ctx;
@@ -3866,7 +4019,9 @@ class Game {
         let by = py + fixedH;
         this.drawButton(bx, by, bw, bh, '#00b0ff', '继续游戏', 'resume');
         by += bh + gap;
-        this.drawButton(bx, by, bw, bh, '#546e7a', Sound.muted ? '🔇 声音:关' : '🔊 声音:开', 'mute');
+        const hw = (bw - gap) / 2;
+        this.drawButton(bx, by, hw, bh, '#546e7a', Sound.muted ? '🔇 声音:关' : '🔊 声音:开', 'mute');
+        this.drawButton(bx + hw + gap, by, hw, bh, '#546e7a', Music.enabled ? '🎵 音乐:开' : '🎵 音乐:关', 'music');
         by += bh + gap;
         this.drawButton(bx, by, bw, bh, '#546e7a', this.showDmgNums ? '伤害数字:开' : '伤害数字:关', 'dmgNums');
         by += bh + gap;
@@ -3886,6 +4041,7 @@ class Game {
         if (btn) {
             if (btn.choice === 'resume') this.togglePause();
             else if (btn.choice === 'mute') Sound.toggleMute();
+            else if (btn.choice === 'music') Music.toggle();
             else if (btn.choice === 'dmgNums') this.toggleDmgNums();
             else if (btn.choice === 'quit') {
                 if (!this._pauseQuitArmed) { this._pauseQuitArmed = true; return; }
