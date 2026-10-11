@@ -18,8 +18,8 @@ const CLASS_BASE_CD = {
 // 远程职业(法师/弓手)原先没有任何生存加成,模拟里死亡次数是战士的 3~4 倍,各给 +15 生命,弓手去掉防御惩罚
 const CLASS_BASE_ADJUST = {
     warrior:  { attack:  10, defense: -5, maxHealth: 20 },
-    mage:     { manaRegen: 2, maxMana: 10, maxHealth: 15 },
-    archer:   { attack:   8, maxHealth: 15, autoAttackDmgMult: 1.3 },
+    mage:     { manaRegen: 5, maxMana: 10, maxHealth: 30 },
+    archer:   { attack:   8, maxHealth: 30, autoAttackDmgMult: 1.3 },
     assassin: { speed:  1.5 },
     paladin:  { defense: 10, attack:  -5, maxHealth: 30 }
 };
@@ -6367,6 +6367,7 @@ class Game {
         }
     }
 
+    static FIRST_BOSS_DMG = 0.7;
     static bossTierMult(tier) { return 1 + 0.3 * Math.max(0, (tier || 1) - 1); }
     _bossDmgGoal() { return this.bossDamageRequired * this.difficulty * Game.bossTierMult(this.boss && this.boss.tier); }
 
@@ -6387,6 +6388,8 @@ class Game {
         if (this.bossWave >= 3 && this.bossWave % 2 === 1) this.boss.form = 'void';
         // 每多一只魔王,血量与击退所需伤害 +30%(后期魔王不再一碰就退)
         this.boss.maxHealth *= Game.bossTierMult(this.boss.tier);
+        // 第一只魔王在 1 分钟左右出现,玩家才 3 级左右:各招伤害打七折,别成为开局的死亡门槛
+        if (this.boss.tier === 1) this.boss.attack *= Game.FIRST_BOSS_DMG;
         this.boss.currentHealth = this.boss.maxHealth;
         this.bossState = 'active';
         this.bossActiveTimer = 0;
@@ -9963,8 +9966,8 @@ class Game {
                 choice: 2, name: '法师', icon: '✦', color: '#4ecdc4',
                 tag: '远程  法力  爆发',
                 tagColor: '#80deea',
-                flavor: '被动·奥术充能：第 4 发普攻会爆炸；法力护盾：受伤的 20% 由法力抵扣',
-                stats: ['法力 +10  回复 +2/s  生命 +15', '远程自动攻击，Q开关附魔'],
+                flavor: '被动·奥术充能：第 4 发普攻会爆炸；法力护盾：受伤的 30% 由法力抵扣',
+                stats: ['法力 +10  回复 +5/s  生命 +30', '远程自动攻击，Q开关附魔'],
                 q: { name: '魔力涌注', cd: '切换', desc: '开启后每发普攻附加法术伤害，消耗法力' },
                 e: { name: '斥力波',   cd: '8s',  desc: '消耗3法力，将周围敌人向四周强力推开并造成伤害' }
             },
@@ -9981,8 +9984,8 @@ class Game {
                 choice: 4, name: '弓手', icon: '◎', color: '#aaff44',
                 tag: '远程  高投射  箭矢',
                 tagColor: '#c6ef6b',
-                flavor: '被动·专注：站定时普攻 +43%；灵巧：12% 闪避、冲刺冷却 -30%',
-                stats: ['攻击 +8  生命 +15', '普攻伤害×1.3，可多重射击'],
+                flavor: '被动·专注：站定时普攻 +43%；灵巧：18% 闪避、冲刺冷却 -30%',
+                stats: ['攻击 +8  生命 +30', '普攻伤害×1.3，可多重射击'],
                 q: { name: '穿透箭', cd: '3s', desc: '消耗1箭，发射穿透敌阵的强力箭矢' },
                 e: { name: '箭雨',   cd: '8s', desc: '消耗3箭，在大范围内降下密集箭雨' }
             },
@@ -13032,8 +13035,8 @@ class Game {
 }
 
 class Player {
-    static MANA_SHIELD = 0.2; // 法师被动「法力护盾」:受到伤害中由法力抵扣的比例
-    static ARCHER_EVADE = 0.12; // 弓手被动「灵巧」:天生闪避率
+    static MANA_SHIELD = 0.3; // 法师被动「法力护盾」:受到伤害中由法力抵扣的比例
+    static ARCHER_EVADE = 0.18; // 弓手被动「灵巧」:天生闪避率
     static ARCHER_DASH_CDR = 0.3; // 弓手被动「灵巧」:冲刺冷却缩减
     static PALADIN_SHIELD_DELAY = 1.5; // 圣骑士挨打后多少秒才开始回护盾
 
@@ -13439,7 +13442,7 @@ class Player {
             actualDamage -= absorbed;
             if (this.shield <= 0.01) { this.shield = 0; this._shieldBroke = true; }
         }
-        // 法师被动「法力护盾」:剩余伤害的 20% 改由法力 1:1 抵扣(和魔力涌注抢法力,开着 Q 输出高但护盾薄)
+        // 法师被动「法力护盾」:剩余伤害的 30%(Player.MANA_SHIELD)改由法力 1:1 抵扣(和魔力涌注抢法力,开着 Q 输出高但护盾薄)
         if (this.class === 'mage' && this.mana > 0 && actualDamage > 0) {
             const manaAbsorb = Math.min(this.mana, actualDamage * Player.MANA_SHIELD);
             this.mana -= manaAbsorb;
