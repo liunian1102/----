@@ -33,12 +33,12 @@ const take = (g, id, n = 1) => { const d = g.talentDefs.find(t => t.id === id); 
     take(g, 'blade', 1);
     check('3 层共鸣 1', schoolState(p).tiers.atk === 1 && Math.abs(g._buildDmgMult(p, 'a') - d0 - 0.05) < 1e-9, `${g._buildDmgMult(p, 'a')}`);
     take(g, 'precision', 3);
-    check('6 层共鸣 2', schoolState(p).tiers.atk === 2 && Math.abs(g._critChance(p, 'a') - (0.15 + 0.05)) < 1e-9 && Math.abs(g._buildDmgMult(p, 'a') - d0 - 0.12) < 1e-9,
+    check('6 层共鸣 2', schoolState(p).tiers.atk === 2 && Math.abs(g._critChance(p, 'a') - (0.30 + 0.05)) < 1e-9 && Math.abs(g._buildDmgMult(p, 'a') - d0 - 0.12) < 1e-9,
         `暴击 ${g._critChance(p, 'a')}, 伤害 ${g._buildDmgMult(p, 'a')}`);
     // 坚守共鸣 + 坚韧
     take(g, 'toughness', 3);
-    // 坚韧 3 层 -12% + 坚守 3 层共鸣 -5%(同一个 key,相加)
-    check('坚守共鸣与坚韧', Math.abs(p.damageTakenMult() - (1 - 0.12 - 0.05)) < 1e-9, `受伤倍率 ${p.damageTakenMult()}`);
+    // 坚韧 3 层 -24% + 坚守 3 层共鸣 -5%(同一个 key,相加)
+    check('坚守共鸣与坚韧', Math.abs(p.damageTakenMult() - (1 - 0.24 - 0.05)) < 1e-9, `受伤倍率 ${p.damageTakenMult()}`);
 }
 {   // 不灭意志
     const g = fresh(), p = g.player;
