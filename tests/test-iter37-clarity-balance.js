@@ -1,7 +1,8 @@
 // test-iter37-clarity-balance.js
 // 1) 炮手同时在场有上限(难度 1 时 3 个),超出改刷追击者
 // 2) 法师被动「法力护盾」:受伤 20% 由法力抵扣
-// 3) 弓手被动「灵巧」:冲刺冷却 -30%,天生 12% 闪避;法师/弓手 +15 生命
+// 3) 弓手被动「灵巧」:冲刺冷却 -30%,天生闪避(Player.ARCHER_EVADE);法师/弓手额外生命(CLASS_BASE_ADJUST)
+//    数值以常量为准,调平衡时不用改测试
 // 4) 成就提示排在顶部横幅(事件 / 玩法说明 / 魔王将至)下方
 require('./setup-env.js');
 const results = [];
@@ -22,10 +23,11 @@ const check = (name, ok, msg) => results.push([name, ok, msg]);
     const game = new Game(); game.init(); game.startGame();
     const p = game.player;
     game._applyClassToPlayer(p, 'mage');
-    check('法师 +15 生命', p.maxHealth === 115, `maxHealth ${p.maxHealth}`);
+    check('法师额外生命', p.maxHealth === 100 + CLASS_BASE_ADJUST.mage.maxHealth, `maxHealth ${p.maxHealth}`);
     p.defense = 0; p.mana = 100; p.currentHealth = p.maxHealth;
     p.takeDamage(50, '测试');
-    check('法力护盾', Math.abs(p.mana - 90) < 1e-6 && Math.abs(p.currentHealth - (p.maxHealth - 40)) < 1e-6, `法力 100→${p.mana}, 生命 ${p.maxHealth}→${p.currentHealth}`);
+    const ms = Player.MANA_SHIELD;
+    check('法力护盾', Math.abs(p.mana - (100 - 50 * ms)) < 1e-6 && Math.abs(p.currentHealth - (p.maxHealth - 50 * (1 - ms))) < 1e-6, `法力 100→${p.mana}, 生命 ${p.maxHealth}→${p.currentHealth}`);
     p.mana = 0; const hp0 = p.currentHealth; p.takeDamage(50, '测试');
     check('没有法力时全额掉血', Math.abs(hp0 - p.currentHealth - 50) < 1e-6, `掉血 ${hp0 - p.currentHealth}`);
 }
@@ -36,11 +38,11 @@ const check = (name, ok, msg) => results.push([name, ok, msg]);
     const before = p.dashCdTotal(), def0 = p.defense, hp0 = p.maxHealth;
     game._applyClassToPlayer(p, 'archer');
     check('弓手冲刺冷却 -30%', Math.abs(p.dashCdTotal() - before * 0.7) < 1e-6, `${before.toFixed(2)}s → ${p.dashCdTotal().toFixed(2)}s`);
-    check('弓手 +15 生命且无防御惩罚', p.maxHealth === hp0 + 15 && p.defense === def0, `生命 ${hp0}→${p.maxHealth}, 防御 ${def0}→${p.defense}`);
+    check('弓手额外生命且无防御惩罚', p.maxHealth === hp0 + CLASS_BASE_ADJUST.archer.maxHealth && p.defense === def0, `生命 ${hp0}→${p.maxHealth}, 防御 ${def0}→${p.defense}`);
     let evaded = 0; const N = 4000;
     for (let k = 0; k < N; k++) { p.currentHealth = p.maxHealth; p.invincibleTimer = 0; p.dashTimer = 0; if (p.takeDamage(10, '测试') === 0) evaded++; }
     const rate = evaded / N;
-    check('弓手 12% 闪避', Math.abs(rate - Player.ARCHER_EVADE) < 0.03, `闪避率 ${(rate * 100).toFixed(1)}%`);
+    check('弓手天生闪避', Math.abs(rate - Player.ARCHER_EVADE) < 0.03, `闪避率 ${(rate * 100).toFixed(1)}%`);
 }
 
 {
