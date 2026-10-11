@@ -352,11 +352,11 @@ const RELIC_DROP = { boss: 0.35, bossPerfect: 0.6, abyss: 0.2, abyssBoost: 0.4, 
 //   共鸣的数值修正与遗物、天赋修正(p.tmods)共用 key,统一从 statMod(p, key) 读出
 const SCHOOL_TIERS = [3, 6, 9];
 const TALENT_SCHOOLS = {
-    atk:  { name: '攻势', icon: '⚔', color: '#ff7043', tiers: [{ dmg: 0.05 }, { dmg: 0.12, crit: 0.05 }, { dmg: 0.20, crit: 0.10, critDmg: 0.3 }] },
-    def:  { name: '坚守', icon: '🛡', color: '#42a5f5', tiers: [{ dmgTaken: -0.05 }, { dmgTaken: -0.10, regenPct: 0.005 }, { dmgTaken: -0.15, regenPct: 0.01 }] },
-    spd:  { name: '迅捷', icon: '💨', color: '#66bb6a', tiers: [{ speed: 0.05 }, { speed: 0.10, dashCdr: 0.10 }, { speed: 0.15, dashCdr: 0.20, atkSpd: 0.12 }] },
-    arc:  { name: '秘法', icon: '✨', color: '#b388ff', tiers: [{ cdr: 0.05 }, { cdr: 0.10, skillDmg: 0.10 }, { cdr: 0.15, skillDmg: 0.20, aoe: 0.10 }] },
-    luck: { name: '机缘', icon: '🎲', color: '#ffd740', tiers: [{ expMult: 0.10 }, { expMult: 0.20, pickup: 40 }, { expMult: 0.30, pickup: 60, scoreMult: 0.20 }] }
+    atk:  { name: '攻势', icon: '⚔', color: '#ff7043', tiers: [{ dmg: 0.05, maxHpPct: 0.04 }, { dmg: 0.12, crit: 0.05, maxHpPct: 0.08 }, { dmg: 0.20, crit: 0.10, critDmg: 0.3, maxHpPct: 0.12 }] },
+    def:  { name: '坚守', icon: '🛡', color: '#42a5f5', tiers: [{ dmgTaken: -0.05, maxHpPct: 0.06 }, { dmgTaken: -0.10, regenPct: 0.005, maxHpPct: 0.12 }, { dmgTaken: -0.15, regenPct: 0.01, maxHpPct: 0.18 }] },
+    spd:  { name: '迅捷', icon: '💨', color: '#66bb6a', tiers: [{ speed: 0.05, maxHpPct: 0.04 }, { speed: 0.10, dashCdr: 0.10, maxHpPct: 0.08 }, { speed: 0.15, dashCdr: 0.20, atkSpd: 0.12, maxHpPct: 0.12 }] },
+    arc:  { name: '秘法', icon: '✨', color: '#b388ff', tiers: [{ cdr: 0.05, maxHpPct: 0.04 }, { cdr: 0.10, skillDmg: 0.10, maxHpPct: 0.08 }, { cdr: 0.15, skillDmg: 0.20, aoe: 0.10, maxHpPct: 0.12 }] },
+    luck: { name: '机缘', icon: '🎲', color: '#ffd740', tiers: [{ expMult: 0.10, maxHpPct: 0.04 }, { expMult: 0.20, pickup: 40, maxHpPct: 0.08 }, { expMult: 0.30, pickup: 60, scoreMult: 0.20, maxHpPct: 0.12 }] }
 };
 const SCHOOL_TYPES = Object.keys(TALENT_SCHOOLS);
 // 天赋 id → 流派(没列出的算 atk)
@@ -379,7 +379,7 @@ const TALENT_SCHOOL = {
 const MOD_LABEL = {
     dmg: ['伤害', 1], crit: ['暴击率', 1], critDmg: ['暴击伤害', 1], dmgTaken: ['受到伤害', 1], regenPct: ['每秒回复生命', 1], speed: ['移速', 1],
     dashCdr: ['冲刺冷却缩减', 1], atkSpd: ['攻速', 1], cdr: ['技能冷却缩减', 1], skillDmg: ['技能伤害', 1], aoe: ['范围', 1],
-    expMult: ['经验', 1], pickup: ['磁吸范围', 0], scoreMult: ['击杀分数', 1]
+    expMult: ['经验', 1], pickup: ['磁吸范围', 0], scoreMult: ['击杀分数', 1], maxHpPct: ['最大生命', 1]
 };
 function fmtMods(mods) {
     return Object.keys(mods).map(k => {
@@ -8183,14 +8183,14 @@ class Game {
         this.items.push(new Item(x, y, 'gear_' + kind));
     }
 
-    // 遗物的生命修正以「追踪增量」方式叠在 maxHealth 上(p._relicHp),每帧按当前遗物重新对账:
+    // 遗物与流派共鸣的生命修正以「追踪增量」方式叠在 maxHealth 上(p._relicHp),每帧按当前构筑重新对账:
     //   换掉 / 丢失遗物会自动撤销,百分比修正跟着其他来源的成长一起缩放。只在本机玩家身上跑
     //   (主机上客机的 maxHealth 由客机上报,已包含它自己的修正)
     _syncRelicStats(p) {
         if (!p) return;
         const cur = p._relicHp || 0;
         const base = p.maxHealth - cur;
-        const want = Math.round(relicMod(p, 'maxHp') + base * relicMod(p, 'maxHpPct'));
+        const want = Math.round(statMod(p, 'maxHp') + base * statMod(p, 'maxHpPct'));
         if (want === cur) return;
         const delta = want - cur;
         p._relicHp = want;
