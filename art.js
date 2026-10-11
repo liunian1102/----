@@ -974,6 +974,13 @@ Object.assign(Art, {
         if (!u) { u = 'data:image/svg+xml;charset=utf-8,' + encodeURIComponent(make()); this._urls.set(k, u); }
         return u;
     },
+    // 道具 / 装备 / 遗物立绘的 data URL(ArtSVG.items)
+    itemURL(key) {
+        if (typeof ArtSVG === 'undefined' || !ArtSVG.items[key]) return '';
+        let u = this._urls.get('item|' + key);
+        if (!u) { u = 'data:image/svg+xml;charset=utf-8,' + encodeURIComponent(ArtSVG.items[key]()); this._urls.set('item|' + key, u); }
+        return u;
+    },
     badgeURL(k, color) {
         if (!this.svgOf(k)) return '';
         const key = 'bdg|' + k + '|' + color;
