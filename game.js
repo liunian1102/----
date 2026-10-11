@@ -1728,7 +1728,7 @@ class Game {
             // 构筑面板:B / T 开关,Esc 关闭;打开期间不响应其它游戏按键
             const buildKey = e.key === 'b' || e.key === 'B' || e.key === 't' || e.key === 'T';
             if (this.showingBuild) {
-                if ((buildKey || e.key === 'Escape') && !e.repeat) this.closeBuild();
+                if ((buildKey || e.key === 'Escape' || e.key === 'c' || e.key === 'C') && !e.repeat) this.closeBuild();
                 return;
             }
             if (this.showingPotentialMenu && !this.showingClassSelection && !e.repeat) {
@@ -1736,6 +1736,7 @@ class Game {
                 return;
             }
             if (buildKey && !e.repeat && e.target.tagName !== 'INPUT') { this.openBuild(); return; }
+            if ((e.key === 'c' || e.key === 'C') && !e.repeat && e.target.tagName !== 'INPUT') { this.openBuild('stats'); return; }
             if (e.key === 'p' || e.key === 'P' || e.key === 'Escape') {
                 if (this.isRunning) this.togglePause();
             }
@@ -8462,6 +8463,28 @@ class Game {
 
     // 职业命中修正(技能、普攻、箭矢共用):刺客暴击、冰霜觉醒碎冰、毒刃上毒。p = 出手的玩家
     // 另含构筑:天赋/宝石伤害倍率、回响倍率、通用暴击、瘟疫使者
+    // 暴击率(某个技能位):天赋树 + 技能石 + 刺客被动 + 契约 + 星图;角色面板与战斗结算共用
+    _critChance(p, slot) {
+        const t = p.tree || {};
+        let crit = (t.crit || 0) + this._gv(p, slot, 'crit');
+        if (p.class === 'assassin') crit += 0.2 + (p.spec === 'shadow' ? 0.15 : 0);
+        // 贪婪诅咒【狂风契】:暴击率额外 +20%,暴击伤害额外 +60%
+        if (p.greedContract === 'gale') crit += 0.20;
+        // 🌟 星图天赋【天箭座】:暴击率额外 +5%~15%
+        if (p.metagrowth && p.metagrowth.sagitta > 0) crit += p.metagrowth.sagitta * 0.05;
+        return crit;
+    }
+
+    // 暴击额外伤害(暴击倍率 = 2 + 它)
+    _critBonus(p) {
+        const t = p.tree || {};
+        let critBonus = (t.critDmg || 0) + (p.greedContract === 'gale' ? 0.6 : 0);
+        if (p.metagrowth && p.metagrowth.sagitta >= 2) critBonus += 0.3;
+        // 🌌 每日突变【熔岩炽地】:暴伤额外 +80%
+        if (this.mutations && this.mutations.includes('magma_ground')) critBonus += 0.8;
+        return critBonus;
+    }
+
     _applyHitMods(p, target, dmg) {
         if (!p || !target) return dmg;
         const ctx = this._ctx, slot = ctx ? ctx.slot : null;
@@ -8490,26 +8513,15 @@ class Game {
             dmg *= (1 + (target.staggerVulnerableBonus || 0.15));
         }
 
-        let crit = (t.crit || 0) + this._gv(p, slot, 'crit');
-        if (p.class === 'assassin') crit += 0.2 + (p.spec === 'shadow' ? 0.15 : 0);
+        let crit = this._critChance(p, slot);
         // 【幻影瞬息】共鸣: 下 2 次普攻必暴击
         if (slot === 'a' && p._phantomStepCrits > 0) {
             crit = 1.0;
             p._phantomStepCrits--;
         }
-        // 贪婪诅咒【狂风契】:暴击率额外 +20%,暴击伤害额外 +60%
-        if (p.greedContract === 'gale') crit += 0.20;
-        // 🌟 星图天赋【天箭座】:暴击率额外 +5%~15%
-        if (p.metagrowth && p.metagrowth.sagitta > 0) {
-            crit += p.metagrowth.sagitta * 0.05;
-        }
 
         if (crit > 0 && Math.random() < crit) {
-            let critBonus = (t.critDmg || 0) + (p.greedContract === 'gale' ? 0.6 : 0);
-            if (p.metagrowth && p.metagrowth.sagitta >= 2) critBonus += 0.3;
-            // 🌌 每日突变【熔岩炽地】:暴伤额外 +80%
-            if (this.mutations && this.mutations.includes('magma_ground')) critBonus += 0.8;
-            dmg *= 2 + critBonus;
+            dmg *= 2 + this._critBonus(p);
             Sound.play('critHit');
             this._vibrate('crit');
             // 暴击命中时为本地玩家施加 50ms 的轻微顿帧,强化打击感
@@ -12235,6 +12247,7 @@ class Game {
     _buildShowTab(tab) {
         this._buildTab = tab;
         document.querySelectorAll('.build-tab').forEach(b => b.classList.toggle('active', b.dataset.tab === tab));
+        document.getElementById('buildStats').style.display = tab === 'stats' ? 'block' : 'none';
         document.getElementById('buildTree').style.display = tab === 'tree' ? 'flex' : 'none';
         document.getElementById('buildGems').style.display = tab === 'gems' ? 'block' : 'none';
         if (tab === 'gems') this.player._newGem = false;
@@ -12246,7 +12259,98 @@ class Game {
         document.getElementById('treePts').textContent = free > 0 ? free : '';
         document.getElementById('gemNew').textContent = this.player._newGem ? '新' : '';
         if (this._buildTab === 'tree') this._treeRefresh();
+        else if (this._buildTab === 'stats') this._statsRefresh();
         else this._gemRefresh();
+    }
+
+    // ── 角色面板:属性 / 技能 / 装备与遗物 / 天赋 / 本局 ──
+    // 数值都调用战斗结算同一套函数(_critChance、evadeChance、armorValue、damageTakenMult…),面板和实际效果不会对不上
+    _statSheet(p) {
+        const pct = v => `${Math.round(v * 100)}%`;
+        const sign = v => (v >= 0 ? '+' : '') + Math.round(v * 100) + '%';
+        const t = p.tree || {};
+        const atk = this._runAsPlayer(p, () => this._computeAttackDamage(p.attack));
+        const armor = p.armorValue();
+        const rows = [
+            ['生命', `${Math.ceil(p.currentHealth)} / ${Math.ceil(p.maxHealth)}`, ''],
+            ['攻击', `${Math.round(atk)}`, Math.round(atk) !== Math.round(p.attack) ? `基础 ${Math.round(p.attack)},含装备 / 祝福 / 低血加成` : ''],
+            ['普攻伤害', sign(this._buildDmgMult(p, 'a') - 1), '天赋树与技能石'],
+            ['技能伤害', `Q ${sign(this._buildDmgMult(p, 'q') - 1)} · E ${sign(this._buildDmgMult(p, 'e') - 1)}`, ''],
+            ['暴击率', pct(Math.min(1, this._critChance(p, 'a'))), `暴击伤害 ×${(2 + this._critBonus(p)).toFixed(1)}`],
+            ['防御', `${Math.round(armor.def)}`, armor.flat ? `每次受伤另减 ${Math.round(armor.flat)}` : '最多抵消 80% 伤害'],
+            ['受到伤害', pct(p.damageTakenMult()), '防御结算之后的倍率'],
+            ['闪避', pct(Math.min(1, p.evadeChance())), p.projEvade ? `子弹偏折 ${pct(p.projEvade)}` : ''],
+            ['移动速度', `${p.speed.toFixed(1)}`, ''],
+            ['攻击间隔', `${(p.autoAttackInterval / this._atkSpeedMult(p)).toFixed(2)} 秒`, p.class === 'archer' ? '站定专注时更快' : ''],
+            ['作用范围', pct(1 + (t.aoe || 0)), ''],
+            ['冲刺冷却', `${p.dashCdTotal().toFixed(1)} 秒`, ''],
+            ['击杀回血', `${p.lifeStealPerKill || 0}`, ''],
+            ['分数倍率', `×${(this.scoreMult || 1).toFixed(2)}`, '全队共享']
+        ];
+        const res = { mage: ['法力', p.mana, p.maxMana], warrior: ['怒气', p.rage, p.maxRage], paladin: ['信念', p.faith, p.maxFaith],
+            assassin: ['蓄力', p.assassinCharge, p.maxAssassinCharge], archer: ['箭矢', p.arrows, p.maxArrows] }[p.class];
+        if (res) rows.splice(1, 0, [res[0], `${Math.floor(res[1] || 0)} / ${Math.round(res[2] || 0)}`, p.class === 'mage' ? `回复 ${p.manaRegen}/s · 法力护盾 ${pct(Player.MANA_SHIELD)}` : '']);
+        if (p.class === 'paladin') rows.splice(1, 0, ['圣盾', `${Math.ceil(p.shield || 0)} / ${Math.round(p.maxHealth * (p.shieldCapRatio || 0.1))}`, '脱战后再生']);
+        return rows;
+    }
+
+    _statsRefresh() {
+        const p = this.player;
+        const esc = v => String(v).replace(/[&<>"]/g, c => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;' }[c]));
+        const img = (u, cls) => u ? `<img class="${cls}" src="${u}" alt="" draggable="false">` : '';
+        const A = typeof Art !== 'undefined' ? Art : null;
+        // 头部
+        const sp = specDef(p);
+        const clsName = p.class ? CLASS_NAMES[p.class] : '未选择职业';
+        const head = `<div class="st-head">
+            ${p.class && A ? img(A.badgeURL('cls_' + p.class, CLASS_COLORS[p.class] || '#4fc3f7'), 'st-badge') : ''}
+            <div><div class="st-name" style="color:${CLASS_COLORS[p.class] || '#c8e8ff'}">${clsName}${sp ? ' · ' + iconHTML(sp.icon) + ' ' + sp.name : ''}${p.awakened ? ' · 觉醒' : ''}</div>
+            <div class="st-sub">Lv ${this.level} · 生命 ${this.life}/${this.maxLife} · ${diffDef(this.diffMode).name}</div></div></div>`;
+        // 属性
+        const attrs = `<div class="st-card"><div class="st-title">属性</div><div class="st-attrs">${this._statSheet(p).map(([k, v, h]) =>
+            `<div class="st-row"><span class="k">${k}</span><b>${esc(v)}</b>${h ? `<small>${esc(h)}</small>` : ''}</div>`).join('')}</div></div>`;
+        // 技能
+        let skills = '';
+        if (p.class) {
+            const map = this._gemMap(p);
+            const row = (slot, name, sk) => {
+                const key = slot === 'r' ? SKILL_ART[p.class].r : skillArtKey(p.class, p.spec, slot);
+                const gems = slot === 'r' ? '' : Object.keys(map[slot]).map(id => A ? img(A.badgeURL(GEMS[id].icon, GEMS[id].color), 'st-gem') : GEMS[id].icon).join('');
+                const info = slot === 'r' ? (p.awakened ? `充能 ${Math.floor(p.ultCharge || 0)}%` : '7 级觉醒后解锁')
+                    : `Lv${sk.level} · 冷却 ${sk.maxCooldown.toFixed(1)} 秒`;
+                return `<div class="st-skill">${A ? img(A.url(key), 'st-sk-ic') : ''}<div><b>${slot.toUpperCase()} ${name}</b><small>${info}</small></div><span class="st-gems">${gems}</span></div>`;
+            };
+            const ultNames = { warrior: '诸神黄昏', mage: '时空坍缩', assassin: '万刃影杀', archer: '箭雨风暴', paladin: '圣光降临' };
+            skills = `<div class="st-card"><div class="st-title">技能</div>
+                ${row('q', SKILL_NAMES[p.class].q, p.skillQ)}${row('e', SKILL_NAMES[p.class].e, p.skillE)}${row('r', ultNames[p.class], null)}</div>`;
+        }
+        // 装备与遗物
+        let gear = '<div class="st-empty">暂无。地上发光的限时装备每 25~35 秒掉落一件,击退魔王必掉。</div>';
+        if (p.gear && GEARS[p.gear.type]) {
+            const g = GEARS[p.gear.type], evo = p.gear.level === 2;
+            gear = `<div class="st-item" style="--c:${g.color}">${A ? img(A.itemURL('gear_' + p.gear.type), 'st-item-ic') : ''}
+                <div><b>${evo ? g.evoName : g.name}${evo ? ' · 觉醒' : ''}</b><small>${evo ? g.evoDesc : g.desc}</small></div>
+                <span class="st-time">${Math.ceil(p.gear.timer)}s</span></div>`;
+        }
+        const relics = (p.relics || []).length ? p.relics.map(rk => {
+            const r = RELICS[rk];
+            if (!r) return '';
+            return `<div class="st-item relic" style="--c:${r.color}">${A ? img(A.itemURL('relic_' + rk), 'st-item-ic') : ''}
+                <div><b>${r.name}</b><small>${r.desc}</small></div></div>`;
+        }).join('') : '<div class="st-empty">还没有暗金遗物。击败词缀精英有几率掉落。</div>';
+        const equip = `<div class="st-card"><div class="st-title">限时装备</div>${gear}<div class="st-title">暗金遗物</div>${relics}</div>`;
+        // 天赋
+        const tal = (p.acquiredTalents || []).map(a => {
+            const d = this.talentDefs.find(x => x.id === a.id);
+            if (!d) return '';
+            return `<span class="st-talent r-${d.rarity}" title="${esc(d.desc)}">${A ? img(A.badgeURL(d.icon, d.color), 'st-tal-ic') : d.icon}${d.name}${a.count > 1 ? ` <i>×${a.count}</i>` : ''}</span>`;
+        }).join('');
+        const talents = `<div class="st-card"><div class="st-title">天赋 <small>${(p.acquiredTalents || []).reduce((n, a) => n + a.count, 0)} 层</small></div>
+            <div class="st-talents">${tal || '<div class="st-empty">升级时从三张天赋卡里选一张。</div>'}</div></div>`;
+        // 本局
+        const run = `<div class="st-card"><div class="st-title">本局</div><div class="st-run">${this._runSummaryRows().filter(([k]) => k !== '职业' && k !== '暗金遗物')
+            .map(([k, v]) => `<div><small>${k}</small><b>${esc(v)}</b></div>`).join('')}</div></div>`;
+        document.getElementById('buildStats').innerHTML = head + `<div class="st-cols"><div>${attrs}${run}</div><div>${skills}${equip}${talents}</div></div>`;
     }
 
     _initBuildPanel() {
@@ -13372,6 +13476,41 @@ class Player {
     }
 
     // pct:额外按最大生命百分比的真实伤害(无视防御/减伤值,护盾只能挡一半)
+    // 闪避率:天赋「疾风之舞」+ 暗金遗物【死神斗篷】(低血量)+ 弓手被动「灵巧」;角色面板与受伤结算共用
+    evadeChance() {
+        const t = this.tree || {};
+        const reaperEvade = (this.relics && this.relics.includes('reaper_cloak') && this.currentHealth < this.maxHealth * 0.35) ? 0.25 : 0;
+        const classEvade = this.class === 'archer' ? Player.ARCHER_EVADE : 0;
+        return (t.evade || 0) + reaperEvade + classEvade;
+    }
+
+    // 护甲:def = 按天赋百分比放大的防御 + 限时装备防御;flat = 每次受伤固定减免
+    armorValue() {
+        const t = this.tree || {};
+        const relicFlatRed = (this.relics && this.relics.includes('warmog_vest')) ? 5 : 0; // 暗金遗物【狂徒铠甲】
+        const gear = this.gear && GEARS[this.gear.type];
+        const gearDef = gear ? ((this.gear.level === 2 && gear.evoDefBonus) ? gear.evoDefBonus : (gear.defBonus || 0)) : 0;
+        return { def: this.defense * Math.max(0, 1 + (t.defPct || 0)) + gearDef, flat: (this.flatDamageReduction || 0) + relicFlatRed };
+    }
+
+    // 受伤倍率(防御结算之后):天赋、战士战意 / 奥义、契约、突变、守护者光环
+    damageTakenMult() {
+        const t = this.tree || {};
+        let mult = 1;
+        if (t.dmgTaken) mult *= Math.max(0.1, 1 + t.dmgTaken);
+        // 战士被动「战意」:怒气越高越抗揍(满怒 -30%)
+        if (this.class === 'warrior') mult *= 1 - 0.3 * Math.min(1, this.rage / this.maxRage);
+        // 战士终极奥义「诸神黄昏」:狂暴期间受到伤害额外减免 35%
+        if (this.ultActiveTimer > 0 && this.class === 'warrior') mult *= 0.65;
+        // 贪婪诅咒【血契】:受到所有伤害增加 30%
+        if (this.greedContract === 'blood') mult *= 1.3;
+        // 🌌 每日突变【死寂决斗】:受到的所有伤害增加 40%
+        if (this.game && this.game.mutations && this.game.mutations.includes('glass_canon')) mult *= 1.4;
+        // 守护者觉醒:神圣光环内减伤 50%
+        if (this.auraGuard > 0) mult *= 0.5;
+        return mult;
+    }
+
     takeDamage(damage, src = '其他伤害', pct = 0) {
         if (this.invincibleTimer > 0 || this.dashTimer > 0) return 0;
         // 最后一次挨打(含被闪避/护盾挡下)的游戏时间:脱战回盾、狂徒铠甲脱战回血都按它判断
@@ -13393,43 +13532,24 @@ class Player {
             return 0;
         }
 
-        // 天赋「疾风之舞」与暗金遗物【死神斗篷】(低血量闪避加成):几率完全闪避
-        const reaperEvade = (this.relics && this.relics.includes('reaper_cloak') && this.currentHealth < this.maxHealth * 0.35) ? 0.25 : 0;
-        // 弓手被动「灵巧」:天生闪避(专注要站定输出,给一点容错)
-        const classEvade = this.class === 'archer' ? Player.ARCHER_EVADE : 0;
-        const totalEvade = (t.evade || 0) + reaperEvade + classEvade;
+        const totalEvade = this.evadeChance();
         if (totalEvade > 0 && Math.random() < totalEvade) {
             this._evadeFx = true;
             this.dodgeCount = (this.dodgeCount || 0) + 1;
             return 0;
         }
-        // 暗金遗物【狂徒铠甲】:受到的所有伤害强制减免 5 点
-        const relicFlatRed = (this.relics && this.relics.includes('warmog_vest')) ? 5 : 0;
-        const flatReduction = (this.flatDamageReduction || 0) + relicFlatRed;
-        const gear = this.gear && GEARS[this.gear.type];
-        const gearDef = gear ? ((this.gear.level === 2 && gear.evoDefBonus) ? gear.evoDefBonus : (gear.defBonus || 0)) : 0;
-        const def = this.defense * Math.max(0, 1 + (t.defPct || 0));
+        const armor = this.armorValue();
         // 防御最多抵掉 80%:堆防不会把后期敌人的伤害压到 1 点 (无基础攻击时不强行保底 1 点)
-        let actualDamage = damage > 0 ? Math.max(1, damage * 0.2, damage - def - gearDef - flatReduction) : 0;
+        let actualDamage = damage > 0 ? Math.max(1, damage * 0.2, damage - armor.def - armor.flat) : 0;
         // 投射物百分比专有减伤
         if (isProjectileHit && this.projDmgReduction > 0) {
             actualDamage *= Math.max(0.1, 1 - this.projDmgReduction);
         }
         const pctPart = pct > 0 ? this.maxHealth * pct : 0;
         actualDamage += pctPart;
-        let mult = 1;
-        if (t.dmgTaken) mult *= Math.max(0.1, 1 + t.dmgTaken);
-        // 战士被动「战意」:怒气越高越抗揍(满怒 -30%)
-        if (this.class === 'warrior') mult *= 1 - 0.3 * Math.min(1, this.rage / this.maxRage);
-        // 战士终极奥义「诸神黄昏」:狂暴期间受到伤害额外减免 35%
-        if (this.ultActiveTimer > 0 && this.class === 'warrior') mult *= 0.65;
-        // 贪婪诅咒【血契】:受到所有伤害增加 30%
-        if (this.greedContract === 'blood') mult *= 1.3;
-        // 🌌 每日突变【死寂决斗】:受到的所有伤害增加 40%
-        if (this.game && this.game.mutations && this.game.mutations.includes('glass_canon')) mult *= 1.4;
-        // 守护者觉醒:神圣光环内减伤 50%;记下原始伤害,交给 Game 反弹
-        if (this.auraGuard > 0) mult *= 0.5;
+        const mult = this.damageTakenMult();
         actualDamage *= mult;
+        // 守护者觉醒:记下原始伤害,交给 Game 反弹
         // 百分比伤害有一半穿透护盾
         const pierce = pctPart * mult * 0.5;
         actualDamage -= pierce;
