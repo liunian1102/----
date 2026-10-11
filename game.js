@@ -3,7 +3,7 @@ const DT = 16 / 1000; // 单帧时长(秒),与 setInterval(16ms) 对应
 // 职业 Q/E 技能基础冷却(秒),职业选择 + 技能升级天赋共用
 const CLASS_BASE_CD = {
     warrior:  { q: 3, e: 5  },
-    mage:     { q: 1, e: 8  },
+    mage:     { q: 1, e: 6.5 },
     assassin: { q: 4, e: 6  },
     archer:   { q: 3, e: 8  },
     paladin:  { q: 4, e: 12 }
@@ -18,7 +18,7 @@ const CLASS_BASE_CD = {
 // 远程职业(法师/弓手)原先没有任何生存加成,模拟里死亡次数是战士的 3~4 倍,各给 +15 生命,弓手去掉防御惩罚
 const CLASS_BASE_ADJUST = {
     warrior:  { attack:  10, defense: -5, maxHealth: 20 },
-    mage:     { manaRegen: 5, maxMana: 10, maxHealth: 30 },
+    mage:     { manaRegen: 7, maxMana: 50, maxHealth: 60 },
     archer:   { attack:   8, maxHealth: 30, autoAttackDmgMult: 1.3 },
     assassin: { speed:  1.5 },
     paladin:  { defense: 10, attack:  -5, maxHealth: 30 }
@@ -1774,9 +1774,9 @@ class Game {
               applicable: g => g.player.class === 'mage',
               apply: g => { g.player.magePenetration = (g.player.magePenetration || 0) + 0.3; } },
             { id: 'mageManaWell', name: '法力之泉', icon: '✺', color: '#29b6f6', rarity: 'rare',
-              desc: '最大法力 +10,法力恢复 +1/s', stackable: true, maxStacks: 4,
+              desc: '最大法力 +20,法力恢复 +2/s', stackable: true, maxStacks: 4,
               applicable: g => g.player.class === 'mage',
-              apply: g => { g.player.maxMana += 10; g.player.manaRegen += 1; g.player.mana = g.player.maxMana; } },
+              apply: g => { g.player.maxMana += 20; g.player.manaRegen += 2; g.player.mana = g.player.maxMana; } },
             { id: 'mageFrostMastery', name: '斥力精通', icon: '↔', color: '#80deea', rarity: 'epic',
               desc: 'E 斥力波击退距离 +30% 并附加短暂僵直', stackable: true, maxStacks: 2,
               applicable: g => g.player.class === 'mage',
@@ -2879,7 +2879,7 @@ class Game {
         };
         // 职业资源只发本职业用到的
         switch (p.class) {
-            case 'mage':     d.mana = q1(p.mana); d.maxMana = p.maxMana; d.qOn = p.qToggleActive ? 1 : 0; break;
+            case 'mage':     d.mana = q1(p.mana); d.maxMana = p.maxMana; d.qOn = p.qToggleActive ? 1 : 0; d.shield = q1(p.shield || 0); break;
             case 'warrior':  d.rage = q1(p.rage); d.maxRage = p.maxRage; break;
             case 'paladin':  d.faith = q1(p.faith); d.maxFaith = p.maxFaith; d.shield = q1(p.shield); break;
             case 'archer':   d.arrows = p.arrows; d.maxArrows = p.maxArrows; d.reload = q2(p.reloadTimer); d.reloadDur = q2(p.reloadDuration); break;
@@ -5277,6 +5277,13 @@ class Game {
             p._evadeFx = false;
             this._showFloatingText('闪避', pcx, p.y - 22, '#b9f6ca');
         }
+        // 法师被动「奥术屏障」
+        if (p._barrierFx) {
+            p._barrierFx = false;
+            this._showFloatingText('奥术屏障', pcx, p.y - 30, '#80deea');
+            this.effects.push({ type: 'sigil', x: pcx, y: pcy, r: p.size * 1.6, n: 6, color: '#80deea', rot: 0, spin: 1, ttl: 0.7, maxTtl: 0.7 });
+            this.spawnBurstRing(pcx, pcy, 40, '#b2ebf2', 18);
+        }
         // 天赋「不灭意志」/ 传说「不落要塞」触发提示
         if (p._cheatFx) {
             p._cheatFx = false;
@@ -5764,7 +5771,7 @@ class Game {
         if (g.flux) {
             const lv = g.flux;
             if (p.class === 'warrior') p.gainRage(2 + lv * 2);
-            else if (p.class === 'mage') p.mana = Math.min(p.maxMana, p.mana + 1 + lv);
+            else if (p.class === 'mage') p.mana = Math.min(p.maxMana, p.mana + 3 + lv * 2);
             else if (p.class === 'assassin') p.assassinCharge = Math.min(p.maxAssassinCharge, p.assassinCharge + 3 + lv * 2);
             else if (p.class === 'paladin') p.faith = Math.min(p.maxFaith, p.faith + 2 + lv * 2);
             else if (p.class === 'archer' && Math.random() < 0.25 * lv) {
@@ -9082,7 +9089,7 @@ class Game {
         }
         // 智慧基石「时空裂隙 / 奥术异化」(iK):命中附加基于法力上限的魔法裂解真实伤害
         if (p.treeNodes && p.treeNodes.has('iK') && p.maxMana) {
-            const manaDmg = p.maxMana * 0.8;
+            const manaDmg = p.maxMana * 0.3;
             dmg += manaDmg;
             if (Math.random() < 0.3) {
                 const tx = target.x + target.size / 2, ty = target.y + target.size / 2;
@@ -9722,7 +9729,7 @@ class Game {
     }
 
     _mageQ(skill) {
-        // 切换"魔力涌注"开关:激活后每次普攻附加 maxMana×1.5 法术伤害,消耗 10% maxMana
+        // 切换"魔力涌注"开关:激活后每次普攻附加 maxMana × MAGE_SURGE_DMG 法术伤害,消耗 maxMana × MAGE_SURGE_COST
         this.player.qToggleActive = !this.player.qToggleActive;
         const pcx = this.player.x + this.player.size / 2;
         const pcy = this.player.y + this.player.size / 2;
@@ -9736,7 +9743,7 @@ class Game {
     }
 
     _mageE(skill) {
-        if (!this._payMana(3)) return;
+        if (!this._payMana(Player.MAGE_NOVA_COST)) return;
         this._mageNova(skill);
         // 奥术连击:0.4s 后再次无消耗触发一次
         if (this.player.mageMulticast) {
@@ -10116,9 +10123,9 @@ class Game {
         // 法师 Q 开关:激活时附加法术伤害并消耗法力(支持血魔契约)
         let mageBonusDmg = 0;
         if (cls === 'mage' && this.player.qToggleActive) {
-            const cost = Math.max(1, Math.ceil(this.player.maxMana * 0.10 * (this.player.mageQCostMult || 1)));
+            const cost = Math.max(1, Math.ceil(this.player.maxMana * Player.MAGE_SURGE_COST * (this.player.mageQCostMult || 1)));
             if (this._payMana(cost)) {
-                mageBonusDmg = this.player.maxMana * 1.5;
+                mageBonusDmg = this.player.maxMana * Player.MAGE_SURGE_DMG;
             } else {
                 // 蓝不够且血魔契约也不满足 → 自动关闭
                 this.player.qToggleActive = false;
@@ -10534,8 +10541,8 @@ class Game {
                 choice: 2, name: '法师', icon: '✦', color: '#4ecdc4',
                 tag: '远程  法力  爆发',
                 tagColor: '#80deea',
-                flavor: '被动·奥术充能：第 4 发普攻会爆炸；法力护盾：受伤的 30% 由法力抵扣',
-                stats: ['法力 +10  回复 +5/s  生命 +30', '远程自动攻击，Q开关附魔'],
+                flavor: '被动·奥术充能：第 4 发普攻会爆炸；法力护盾：受伤的 40% 由法力抵扣；奥术屏障：生命跌破 30% 时张开屏障',
+                stats: [`法力 +${CLASS_BASE_ADJUST.mage.maxMana}  回复 +${CLASS_BASE_ADJUST.mage.manaRegen}/s  生命 +${CLASS_BASE_ADJUST.mage.maxHealth}`, '远程自动攻击，Q开关附魔'],
                 q: { name: '魔力涌注', cd: '切换', desc: '开启后每发普攻附加法术伤害，消耗法力' },
                 e: { name: '斥力波',   cd: '8s',  desc: '消耗3法力，将周围敌人向四周强力推开并造成伤害' }
             },
@@ -12886,7 +12893,7 @@ class Game {
         ];
         const res = { mage: ['法力', p.mana, p.maxMana], warrior: ['怒气', p.rage, p.maxRage], paladin: ['信念', p.faith, p.maxFaith],
             assassin: ['蓄力', p.assassinCharge, p.maxAssassinCharge], archer: ['箭矢', p.arrows, p.maxArrows] }[p.class];
-        if (res) rows.splice(1, 0, [res[0], `${Math.floor(res[1] || 0)} / ${Math.round(res[2] || 0)}`, p.class === 'mage' ? `回复 ${p.manaRegen}/s · 法力护盾 ${pct(Player.MANA_SHIELD)}` : '']);
+        if (res) rows.splice(1, 0, [res[0], `${Math.floor(res[1] || 0)} / ${Math.round(res[2] || 0)}`, p.class === 'mage' ? `回复 ${p.manaRegen}/s · 法力护盾 ${pct(Player.MANA_SHIELD)} · 奥术屏障${p.barrierCd > 0 ? ' 冷却 ' + Math.ceil(p.barrierCd) + 's' : ' 就绪'}` : '']);
         if (p.class === 'paladin') rows.splice(1, 0, ['圣盾', `${Math.ceil(p.shield || 0)} / ${Math.round(p.maxHealth * (p.shieldCapRatio || 0.1))}`, '脱战后再生']);
         return rows;
     }
@@ -13555,7 +13562,7 @@ class Game {
             ctx.lineWidth = 3;
             roundRect(ctx, qSlotX - 3, baseY - 3, slotW + 6, slotH + 6, slotR + 2);
             ctx.stroke();
-            const cost = Math.max(1, Math.ceil(this.player.maxMana * 0.10 * (this.player.mageQCostMult || 1)));
+            const cost = Math.max(1, Math.ceil(this.player.maxMana * Player.MAGE_SURGE_COST * (this.player.mageQCostMult || 1)));
             ctx.fillStyle = '#4dd0e1';
             ctx.font = 'bold 10px Arial';
             ctx.textAlign = 'center';
@@ -13746,10 +13753,18 @@ class Game {
 }
 
 class Player {
-    static MANA_SHIELD = 0.3; // 法师被动「法力护盾」:受到伤害中由法力抵扣的比例
+    static MANA_SHIELD = 0.4; // 法师被动「法力护盾」:受到伤害中由法力抵扣的比例
     static ARCHER_EVADE = 0.18; // 弓手被动「灵巧」:天生闪避率
     static ARCHER_DASH_CDR = 0.3; // 弓手被动「灵巧」:冲刺冷却缩减
     static PALADIN_SHIELD_DELAY = 1.5; // 圣骑士挨打后多少秒才开始回护盾
+    // 法师:魔力涌注每发普攻附加 maxMana × SURGE_DMG 法术伤害、消耗 maxMana × SURGE_COST;斥力波耗 NOVA_COST 法力
+    static MAGE_SURGE_DMG = 0.6;
+    static MAGE_SURGE_COST = 0.08;
+    static MAGE_NOVA_COST = 6;
+    // 法师被动「奥术屏障」:生命跌破 30% 时获得 maxHealth × BARRIER 的屏障,持续 BARRIER_T 秒,冷却 BARRIER_CD 秒
+    static MAGE_BARRIER = 0.3;
+    static MAGE_BARRIER_T = 4;
+    static MAGE_BARRIER_CD = 15;
     static CHEAT_DEATH_CD = 45; // 天赋「不灭意志」冷却
 
     constructor(x, y, game = null) {
@@ -13944,6 +13959,11 @@ class Player {
         if (this.undyingCd > 0) this.undyingCd = Math.max(0, this.undyingCd - DT);
         // 天赋 / 传说天赋计时
         if (this.cheatDeathCd > 0) this.cheatDeathCd -= DT;
+        if (this.barrierCd > 0) this.barrierCd -= DT;
+        if (this.barrierTimer > 0) {
+            this.barrierTimer -= DT;
+            if (this.barrierTimer <= 0) this.shield = 0; // 屏障到时消散
+        }
         if (this.fortressCd > 0) this.fortressCd -= DT;
         if (this.fortressTimer > 0) this.fortressTimer -= DT;
         if (this.galeTimer > 0) this.galeTimer -= DT;
@@ -14190,7 +14210,7 @@ class Player {
             actualDamage -= absorbed;
             if (this.shield <= 0.01) { this.shield = 0; this._shieldBroke = true; }
         }
-        // 法师被动「法力护盾」:剩余伤害的 30%(Player.MANA_SHIELD)改由法力 1:1 抵扣(和魔力涌注抢法力,开着 Q 输出高但护盾薄)
+        // 法师被动「法力护盾」:剩余伤害的 Player.MANA_SHIELD(40%)改由法力 1:1 抵扣(和魔力涌注抢法力,开着 Q 输出高但护盾薄)
         if (this.class === 'mage' && this.mana > 0 && actualDamage > 0) {
             const manaAbsorb = Math.min(this.mana, actualDamage * Player.MANA_SHIELD);
             this.mana -= manaAbsorb;
@@ -14221,6 +14241,13 @@ class Player {
             this.currentHealth = Math.max(0, this.currentHealth - actualDamage);
             if (this.currentHealth <= 0 && this.game) {
                 this.game.fatalBlow = { ...this.lastHitInfo };
+            }
+            // 法师被动「奥术屏障」:生命跌破 30% 时张开吸收伤害的屏障
+            if (this.class === 'mage' && this.currentHealth > 0 && this.currentHealth < this.maxHealth * 0.3 && !(this.barrierCd > 0)) {
+                this.shield = Math.max(this.shield || 0, this.maxHealth * Player.MAGE_BARRIER);
+                this.barrierTimer = Player.MAGE_BARRIER_T;
+                this.barrierCd = Player.MAGE_BARRIER_CD;
+                this._barrierFx = true;
             }
             // 传说天赋「不落要塞」:生命跌破 30% 时获得 4 秒 60% 减伤
             if (this.legend && this.legend.fortress && this.currentHealth > 0 && this.currentHealth < this.maxHealth * 0.3 && !(this.fortressCd > 0)) {
