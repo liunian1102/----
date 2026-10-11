@@ -234,12 +234,17 @@ const ArtSVG = (() => {
         line('M40 66 Q50 76 60 66', 4.5));
 
     // ── 方块大魔王:皇冠 + 恶魔角 + 发光怒目 + 獠牙 ──
-    const boss = (enraged) => {
-        const c1 = enraged ? '#ff6e6e' : '#9e7bff', c2 = enraged ? '#3a0010' : '#1a0033';
-        const eyeC = enraged ? '#ffea00' : '#ff1744';
+    // form = 'void':虚空魔王(深蓝黑身体、青色眼睛、紫晶冠、乌角)
+    const boss = (enraged, form) => {
+        const v = form === 'void';
+        const c1 = v ? (enraged ? '#7b1fa2' : '#3949ab') : enraged ? '#ff6e6e' : '#9e7bff';
+        const c2 = v ? '#05010f' : enraged ? '#3a0010' : '#1a0033';
+        const eyeC = v ? (enraged ? '#ff80ff' : '#18ffff') : enraged ? '#ffea00' : '#ff1744';
+        const crown = v ? ['#f3e5f5', '#8e24aa'] : ['#fff59d', '#ff8f00'];
+        const horn = v ? ['#b39ddb', '#120024'] : ['#f5f0e1', '#6d4c41'];
         return svg(bodyDefs(c1, c2) +
-            `<linearGradient id="gold" x1="0" y1="0" x2="0" y2="1"><stop offset="0" stop-color="#fff59d"/><stop offset="1" stop-color="#ff8f00"/></linearGradient>` +
-            `<linearGradient id="horn" x1="0" y1="0" x2="0" y2="1"><stop offset="0" stop-color="#f5f0e1"/><stop offset="1" stop-color="#6d4c41"/></linearGradient>`,
+            `<linearGradient id="gold" x1="0" y1="0" x2="0" y2="1"><stop offset="0" stop-color="${crown[0]}"/><stop offset="1" stop-color="${crown[1]}"/></linearGradient>` +
+            `<linearGradient id="horn" x1="0" y1="0" x2="0" y2="1"><stop offset="0" stop-color="${horn[0]}"/><stop offset="1" stop-color="${horn[1]}"/></linearGradient>`,
             shape('M14 32 C-6 24 -16 2 -9 -18 C-1 -1 12 10 27 14 Z', 'url(#horn)', 4) +
             shape('M86 32 C106 24 116 2 109 -18 C101 -1 88 10 73 14 Z', 'url(#horn)', 4) +
             cube(18) +

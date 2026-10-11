@@ -2364,7 +2364,7 @@ class Game {
     //   p: [id, 种类(0 普通弹/1 穿透箭/2 装备弹/3 奥术弹/4 爆裂火球), x, y, 角度]
     //   ev: [事件序号(EVENT_TYPES), 剩余, 总时长, 剩余精英数, (祭坛) x, y, 充能 0~1] 或 0;bt: 魔王 idle 倒计时mt: [id, x, y, 半径, 落地倒计时, 总时长]
     //   b: [id, x, y, 角度]
-    //   boss: [x, y, hp, maxHp, 击退中(0/1), 受击闪白(0/1), 招式序号(BlockBoss.ATK_CODES), 招式阶段, 阶段剩余, 阶段总长, 招式角度, 狂暴(0/1), 等级, 激光扫向(±1)]
+    //   boss: [x, y, hp, maxHp, 击退中(0/1), 受击闪白(0/1), 招式序号(BlockBoss.ATK_CODES), 招式阶段, 阶段剩余, 阶段总长, 招式角度, 狂暴(0/1), 等级, 激光扫向(±1), 护盾, 护盾上限, 形态(BlockBoss.FORMS), 闪现落点 x, y]
     serializeState() {
         this._mpSnapSeq = (this._mpSnapSeq || 0) + 1;
         const players = [this._serializePlayer(this.player, 0)];
@@ -2387,7 +2387,8 @@ class Game {
                 Math.ceil(this.boss.maxHealth), this.boss.retreating ? 1 : 0, this._mpTakeBossHit(),
                 BlockBoss.ATK_CODES.indexOf(this.boss.atk), this.boss.atkPhase, q2(this.boss.atkTimer),
                 q2(this.boss.atkDur), q2(this.boss.atkAngle), this.boss.enraged ? 1 : 0, this.boss.tier || 1, this.boss.atkSweep || 1,
-                Math.ceil(this.boss.barrier || 0), Math.ceil(this.boss.maxBarrier || 0)] : null,
+                Math.ceil(this.boss.barrier || 0), Math.ceil(this.boss.maxBarrier || 0),
+                BlockBoss.FORMS.indexOf(this.boss.form), q1(this.boss.blinkX), q1(this.boss.blinkY)] : null,
             i: this.items.map(i => [i.id, MP_ITEM_TYPES.indexOf(i.type), q1(i.targetX), q1(i.targetY), q1(i.duration)]),
             p: this.projectiles.map(p => [p.id, p.isPiercing && !p.pierceRemaining ? 1 : p.gearBolt ? 2 : p.kind || 0, q1(p.x), q1(p.y),
                 q2(Math.atan2(p.dy, p.dx))]),
@@ -2398,7 +2399,7 @@ class Game {
                     this.event.type === 'void_rift' ? [q1(this.event.rx), q1(this.event.ry), q2(this.event.charge), this.event.activated ? 1 : 0] :
                     this.event.type === 'greed' ? [q1(this.event.gx), q1(this.event.gy), q2(this.event.charge), this.event.contract, this.event.signed ? 1 : 0] : [])] : 0,
             bt: this.bossState === 'idle' ? q1(this.bossTimer) : 0,
-            mt: this.meteors.map(m => [m.id, q1(m.x), q1(m.y), q1(m.r), q2(m.t), m.dur]),
+            mt: this.meteors.map(m => [m.id, q1(m.x), q1(m.y), q1(m.r), q2(m.t), m.dur, m.v ? 1 : 0]),
             tp: (this.tacticalPings || []).map(t => [t.id, q1(t.x), q1(t.y), t.type, q1(t.timer)]),
             tx: (this.toxicPuddles || []).map(p => [q1(p.x), q1(p.y), q1(p.radius), q1(p.timer)]),
             hz: (this.hazards || []).map(h => [h.id, q1(h.x), q1(h.y), h.type, h.hp, q1(h.timer || 0)]),
@@ -2571,7 +2572,7 @@ class Game {
 
         // Boss
         if (snapshot.boss) {
-            const [bx, by, hp, maxHp, retreating, hit, atk, atkPhase, atkTimer, atkDur, atkAngle, enraged, tier, sweep, barrier, maxBarrier] = snapshot.boss;
+            const [bx, by, hp, maxHp, retreating, hit, atk, atkPhase, atkTimer, atkDur, atkAngle, enraged, tier, sweep, barrier, maxBarrier, form, blinkX, blinkY] = snapshot.boss;
             const isNew = !this.boss;
             if (isNew) this.boss = new BlockBoss(bx, by, snapshot.difficulty || 1, this.player.maxHealth);
             this._mpSetTarget(this.boss, bx, by, isNew);
@@ -2588,6 +2589,9 @@ class Game {
             this.boss.tier = tier || 1;
             this.boss.atkSweep = sweep || 1;
             this.boss.barrier = barrier || 0;
+            this.boss.form = BlockBoss.FORMS[form] || null;
+            this.boss.blinkX = blinkX || 0;
+            this.boss.blinkY = blinkY || 0;
             this.boss.maxBarrier = maxBarrier || (barrier || 0);
             if (this.boss.barrier > 0) this.boss.phase2 = true;
         } else {
@@ -2620,7 +2624,7 @@ class Game {
         }
         if (snapshot.bt !== undefined) this.bossTimer = snapshot.bt;
         const mt = this._mpSyncList(this.meteors, snapshot.mt || [], () => ({}),
-            (m, r) => { m.x = r[1]; m.y = r[2]; m.r = r[3]; m.t = r[4]; m.dur = r[5]; });
+            (m, r) => { m.x = r[1]; m.y = r[2]; m.r = r[3]; m.t = r[4]; m.dur = r[5]; m.v = r[6] || 0; });
         this.meteors = mt.list;
         if (mt.removed.length) Sound.play('meteor');
         if (snapshot.tk !== undefined) this.treasureKills = snapshot.tk;
@@ -4406,7 +4410,7 @@ class Game {
         if (cur.q > prev.q + 0.2 || cur.e > prev.e + 0.2) Sound.play('skill');
         if (cur.atk !== prev.atk && cur.atk) {
             if (cur.atk.endsWith('0')) Sound.play('bossTell');
-            else Sound.play({ slam1: 'bossSlam', ring1: 'bossRing', laser1: 'bossLaser', summon1: 'bossSummon' }[cur.atk] || 'bossCharge');
+            else Sound.play({ slam1: 'bossSlam', ring1: 'bossRing', laser1: 'bossLaser', summon1: 'bossSummon', blink1: 'bossSlam', rift1: 'bossSummon' }[cur.atk] || 'bossCharge');
         }
         if (cur.rage && !prev.rage) Sound.play('bossEnrage');
         if (cur.ev && cur.ev !== prev.ev) Sound.play('event');
@@ -6051,8 +6055,16 @@ class Game {
                 charge: dist > 200 ? 3 : 1, ring: 2, slam: dist < 180 ? 3 : 0.5,
                 laser: b.tier >= 2 ? (dist > 140 ? 2.5 : 1.2) : 0,
                 summon: b.tier >= 3 && this.enemies.length < 30 ? 1.5 : 0,
-                cross: b.phase2 ? (dist > 100 ? 3 : 1.5) : 0
+                cross: b.phase2 ? (dist > 100 ? 3 : 1.5) : 0,
+                blink: 0, rift: 0
             };
+            // 虚空形态:冲撞换成闪现(远了更爱闪),新增虚空坍缩;不召唤爪牙
+            if (b.isVoid) {
+                w.blink = dist > 160 ? 3.5 : 1.5;
+                w.charge = 0;
+                w.summon = 0;
+                w.rift = b.enraged ? 2.6 : 2;
+            }
             if (b.lastAtk) w[b.lastAtk] = 0;
             const keys = Object.keys(w);
             let r = Math.random() * keys.reduce((sum, k) => sum + w[k], 0);
@@ -6060,7 +6072,8 @@ class Game {
             for (const k of keys) { if ((r -= w[k]) < 0) { atk = k; break; } }
             b.atk = b.lastAtk = atk;
             b.atkPhase = 0;
-            b.atkDur = b.atkTimer = { charge: 0.95, ring: 0.8, slam: 1.1, laser: 1.15, summon: 1.0, cross: 1.3 }[atk] * speedUp;
+            b.atkDur = b.atkTimer = { charge: 0.95, ring: 0.8, slam: 1.1, laser: 1.15, summon: 1.0, cross: 1.3, blink: 0.95, rift: 0.7 }[atk] * speedUp;
+            if (atk === 'blink') this._bossBlinkAim(b, tcx, tcy);
             b.atkAngle = atk === 'ring' || atk === 'summon' || atk === 'cross' ? Math.random() * Math.PI * 2 : Math.atan2(tcy - bcy, tcx - bcx);
             b.atkSweep = Math.random() < 0.5 ? 1 : -1;
             return;
@@ -6075,6 +6088,8 @@ class Game {
         if (b.atk === 'laser' && b.atkPhase === 0 && b.atkTimer > b.atkDur * 0.5) {
             b.atkAngle = Math.atan2(tcy - bcy, tcx - bcx);
         }
+        // 虚空闪现前摇的前 55% 跟着目标挪落点,之后锁定留出走位时间
+        if (b.atk === 'blink' && b.atkPhase === 0 && b.atkTimer > b.atkDur * 0.45) this._bossBlinkAim(b, tcx, tcy);
         if (b.atk === 'laser' && b.atkPhase === 1) this._bossLaserTick(b, bcx, bcy);
         if (b.atk === 'cross' && b.atkPhase === 1) this._bossCrossLaserTick(b, bcx, bcy);
         if (b.atk === 'charge' && b.atkPhase === 1) {
@@ -6093,7 +6108,7 @@ class Game {
             b.atkPhase = 1;
             this._releaseBossAttack(b, bcx, bcy);
             b.atkDur = b.atkTimer = { charge: BlockBoss.CHARGE_TIME, ring: 0.4, slam: 0.35,
-                laser: b.enraged ? 1.1 : 1.3, summon: 0.4, cross: 1.4 }[b.atk];
+                laser: b.enraged ? 1.1 : 1.3, summon: 0.4, cross: 1.4, blink: 0.45, rift: 0.4 }[b.atk];
         } else {
             if (b.atk === 'ring' && b.enraged) this._bossRing(b, bcx, bcy, b.atkAngle + Math.PI / BlockBoss.ringCount(true));
             b.atk = null;
@@ -6101,8 +6116,54 @@ class Game {
         }
     }
 
+    // 虚空闪现落点:目标中心,限制在场地内
+    _bossBlinkAim(b, tcx, tcy) {
+        const h = b.size / 2;
+        b.blinkX = Math.max(h, Math.min(this.width - h, tcx));
+        b.blinkY = Math.max(h, Math.min(this.height - h, tcy));
+    }
+
+    // 虚空闪现:瞬移到落点并震击周围;虚空坍缩:在目标脚下与周围召出数个延迟内爆的虚空区
+    _bossVoidRelease(b, bcx, bcy) {
+        if (b.atk === 'blink') {
+            this.spawnParticles(bcx, bcy, '#7c4dff', 16, 1, 4, 2, 4, 0.05);
+            b.x = b.blinkX - b.size / 2;
+            b.y = b.blinkY - b.size / 2;
+            const r = BlockBoss.BLINK_R * (b.enraged ? 1.12 : 1);
+            this.effects.push({ type: 'shockwave', x: b.blinkX, y: b.blinkY, radius: 16, maxRadius: r, color: '#d500f9', ttl: 0.4, maxTtl: 0.4 });
+            this.effects.push({ type: 'shockwave', x: b.blinkX, y: b.blinkY, radius: 8, maxRadius: r * 0.55, color: '#18ffff', ttl: 0.3, maxTtl: 0.3 });
+            this.spawnParticles(b.blinkX, b.blinkY, '#ea80fc', 22, 3, 7, 2, 5, 0.04);
+            this.screenShake = Math.max(this.screenShake, 0.35);
+            const dmg = b.attack * 0.55;
+            for (const p of this._livingPlayers()) {
+                const d = Math.hypot(p.x + p.size / 2 - b.blinkX, p.y + p.size / 2 - b.blinkY);
+                if (d <= r + p.size * 0.3) this._bossHitPlayer(p, dmg, '#d500f9', '虚空闪现');
+            }
+        } else if (b.atk === 'rift') {
+            const target = this._bossTarget();
+            if (!target) return;
+            const tcx = target.x + target.size / 2, tcy = target.y + target.size / 2;
+            const n = b.enraged ? 5 : 3;
+            const dmg = b.attack * 0.4;
+            this._spawnVoidZone(tcx, tcy, dmg, 1.05);
+            for (let i = 1; i < n; i++) {
+                const a = b.atkAngle + (i / (n - 1)) * Math.PI * 2, d = 70 + Math.random() * 50;
+                this._spawnVoidZone(tcx + Math.cos(a) * d, tcy + Math.sin(a) * d, dmg, 1.05 + i * 0.12);
+            }
+            this.effects.push({ type: 'ring', x: bcx, y: bcy, radius: b.size * 0.8, color: '#ea80fc', ttl: 0.4, maxTtl: 0.4, rotation: b.atkAngle });
+        }
+    }
+
+    // 虚空区与流星共用一套地面预警 / 倒计时 / 联机同步(v = 1),只伤玩家
+    _spawnVoidZone(x, y, dmg, dur) {
+        this.meteors.push({ id: nextEntityId(), x: Math.max(24, Math.min(this.width - 24, x)), y: Math.max(24, Math.min(this.height - 24, y)),
+            r: 46, t: dur, dur, v: 1, dmg });
+    }
+
     _releaseBossAttack(b, bcx, bcy) {
-        if (b.atk === 'charge') {
+        if (b.atk === 'blink' || b.atk === 'rift') {
+            this._bossVoidRelease(b, bcx, bcy);
+        } else if (b.atk === 'charge') {
             this.screenShake = Math.max(this.screenShake, 0.2);
             this.spawnParticles(bcx, bcy, '#ff1744', 12, 2, 5, 2, 4, 0.05);
         } else if (b.atk === 'ring') {
@@ -6318,6 +6379,8 @@ class Game {
         this.boss = new BlockBoss(x, y, this.difficulty, this.player.maxHealth);
         this.bossWave = (this.bossWave || 0) + 1;
         this.boss.tier = this.bossWave;
+        // 第 3 只起,单数波次换成虚空形态(与普通形态交替出现)
+        if (this.bossWave >= 3 && this.bossWave % 2 === 1) this.boss.form = 'void';
         // 每多一只魔王,血量与击退所需伤害 +30%(后期魔王不再一碰就退)
         this.boss.maxHealth *= Game.bossTierMult(this.boss.tier);
         this.boss.currentHealth = this.boss.maxHealth;
@@ -6328,12 +6391,12 @@ class Game {
         // 出场闪白 / 大震动
         this.effects.push({ type: 'shockwave', x: this.boss.x + 40, y: this.boss.y + 40, radius: 5, maxRadius: 200, color: '#ff1744', ttl: 0.8, maxTtl: 0.8 });
         this.spawnParticles(this.boss.x + 40, this.boss.y + 40, '#ff1744', 30, 2, 6, 3, 6, 0.03);
-        const tier = this.boss.tier;
-        this._showFloatingText(tier > 1 ? `方块大魔王 Lv${tier}!` : '方块大魔王!', this.width / 2, this.height * 0.4, '#ff1744');
-        const learned = { 2: '激光扫射', 3: '召唤爪牙' }[tier];
+        const tier = this.boss.tier, voidForm = this.boss.isVoid;
+        this._showFloatingText(`${this.boss.title}${tier > 1 ? ' Lv' + tier : ''}!`, this.width / 2, this.height * 0.4, voidForm ? '#ea80fc' : '#ff1744');
+        const learned = voidForm ? (tier === 3 ? '虚空闪现 · 虚空坍缩' : null) : { 2: '激光扫射', 3: '召唤爪牙' }[tier];
         if (learned) {
-            this.effects.push({ type: 'floatText', text: `魔王习得新招「${learned}」`, x: this.width / 2, y: this.height * 0.4 + 30,
-                color: '#ea80fc', ttl: 2.2, maxTtl: 2.2 });
+            this.effects.push({ type: 'floatText', text: `${voidForm ? '虚空形态' : '魔王习得新招'}「${learned}」`, x: this.width / 2, y: this.height * 0.4 + 30,
+                color: '#ea80fc', ttl: 2.6, maxTtl: 2.6 });
         }
     }
 
@@ -7026,6 +7089,19 @@ class Game {
     }
 
     _meteorImpact(m) {
+        if (m.v) {
+            // 虚空坍缩:向内塌缩的紫色冲击,只伤玩家
+            this.effects.push({ type: 'shockwave', x: m.x, y: m.y, radius: m.r * 1.2, maxRadius: 4, color: '#d500f9', ttl: 0.3, maxTtl: 0.3 });
+            this.effects.push({ type: 'shockwave', x: m.x, y: m.y, radius: 4, maxRadius: m.r, color: '#ea80fc', ttl: 0.35, maxTtl: 0.35 });
+            this.spawnParticles(m.x, m.y, '#b388ff', 12, 2, 5, 2, 4, 0.05);
+            this.screenShake = Math.max(this.screenShake, 0.1);
+            Sound.play('meteor');
+            for (const p of this._livingPlayers()) {
+                const d = Math.hypot(p.x + p.size / 2 - m.x, p.y + p.size / 2 - m.y);
+                if (d <= m.r + p.size * 0.3) this._bossHitPlayer(p, m.dmg || 20, '#d500f9', '虚空坍缩');
+            }
+            return;
+        }
         this.effects.push({ type: 'shockwave', x: m.x, y: m.y, radius: 6, maxRadius: m.r, color: '#ff9100', ttl: 0.35, maxTtl: 0.35 });
         this.spawnParticles(m.x, m.y, '#ffab40', 12, 2, 6, 2, 4, 0.05);
         this.screenShake = Math.max(this.screenShake, 0.12);
@@ -7090,6 +7166,24 @@ class Game {
         ctx.save();
         for (const m of this.meteors) {
             const p = Math.max(0, Math.min(1, 1 - m.t / m.dur));
+            if (m.v) {
+                // 虚空区:外圈不动,内圈从外向里收(和流星的由内向外反过来,一眼区分)
+                ctx.fillStyle = 'rgba(124,77,255,0.16)';
+                ctx.beginPath();
+                ctx.arc(m.x, m.y, m.r, 0, Math.PI * 2);
+                ctx.fill();
+                ctx.fillStyle = 'rgba(213,0,249,0.22)';
+                ctx.beginPath();
+                ctx.arc(m.x, m.y, m.r, 0, Math.PI * 2);
+                ctx.arc(m.x, m.y, m.r * (1 - p), 0, Math.PI * 2, true);
+                ctx.fill();
+                ctx.strokeStyle = `rgba(234,128,252,${0.5 + 0.5 * p})`;
+                ctx.lineWidth = 2;
+                ctx.beginPath();
+                ctx.arc(m.x, m.y, m.r, 0, Math.PI * 2);
+                ctx.stroke();
+                continue;
+            }
             ctx.fillStyle = 'rgba(255,145,0,0.12)';
             ctx.beginPath();
             ctx.arc(m.x, m.y, m.r, 0, Math.PI * 2);
@@ -7118,7 +7212,7 @@ class Game {
         ctx.lineCap = 'round';
         for (const m of this.meteors) {
             const p = 1 - m.t / m.dur;
-            if (p < 0.4) continue;
+            if (p < 0.4 || m.v) continue;
             const k = (p - 0.4) / 0.6, f = 1 - k * k;
             const x = m.x + 150 * f, y = m.y - 240 * f;
             const tx = x + 150 * 0.18, ty = y - 240 * 0.18;
@@ -11652,7 +11746,7 @@ class Game {
             ctx.font = 'bold 12px Arial';
             ctx.textAlign = 'center';
             ctx.textBaseline = 'middle';
-            ctx.fillText(`方块大魔王${(this.boss.tier || 1) > 1 ? ' Lv' + this.boss.tier : ''}${this.boss.enraged ? ' · 狂暴' : ''}  ${Math.ceil(this.boss.currentHealth)}/${Math.ceil(this.boss.maxHealth)}`, bx + barW / 2, by + barH / 2);
+            ctx.fillText(`${this.boss.title}${(this.boss.tier || 1) > 1 ? ' Lv' + this.boss.tier : ''}${this.boss.enraged ? ' · 狂暴' : ''}  ${Math.ceil(this.boss.currentHealth)}/${Math.ceil(this.boss.maxHealth)}`, bx + barW / 2, by + barH / 2);
 
             // 第二行:坚持倒计时 + 累计伤害进度
             const subBarW = barW;
@@ -15050,7 +15144,14 @@ class BlockBoss {
         this.barrier = 0;         // 绝境暗影护盾
         this.maxBarrier = 0;
         this.vulnerableTimer = 0; // 破盾力竭硬直(受伤害额外 +50%)
+        // 形态:null = 方块大魔王;'void' = 虚空魔王(第 3、5、7… 只):冲撞换成虚空闪现,并会召唤虚空坍缩
+        this.form = null;
+        this.blinkX = 0;          // 虚空闪现落点(魔王中心)
+        this.blinkY = 0;
     }
+
+    get isVoid() { return this.form === 'void'; }
+    get title() { return this.isVoid ? '虚空魔王' : '方块大魔王'; }
 
     get slamRadius() { return this.enraged ? 160 : 140; }
 
@@ -15188,6 +15289,35 @@ class BlockBoss {
                 ctx.lineTo(cx + c * r1, cy + s * r1);
             }
             ctx.stroke();
+        } else if (this.atk === 'blink') {
+            // 虚空闪现:落点紫圈随前摇填满,魔王到落点之间一条虚线;锁定后圈变实
+            const r = BlockBoss.BLINK_R * (this.enraged ? 1.12 : 1);
+            const locked = this.atkPhase === 0 && t >= 0.55;
+            if (this.atkPhase === 0) {
+                ctx.strokeStyle = 'rgba(234,128,252,0.45)';
+                ctx.setLineDash([6, 6]);
+                ctx.lineWidth = 2;
+                ctx.beginPath(); ctx.moveTo(cx, cy); ctx.lineTo(this.blinkX, this.blinkY); ctx.stroke();
+                ctx.setLineDash([]);
+                ctx.fillStyle = `rgba(124,77,255,${0.1 + 0.12 * t})`;
+                ctx.beginPath(); ctx.arc(this.blinkX, this.blinkY, r, 0, Math.PI * 2); ctx.fill();
+                ctx.fillStyle = 'rgba(213,0,249,0.28)';
+                ctx.beginPath(); ctx.arc(this.blinkX, this.blinkY, r * t, 0, Math.PI * 2); ctx.fill();
+                ctx.strokeStyle = locked ? 'rgba(255,128,255,0.95)' : `rgba(234,128,252,${0.4 + 0.4 * t})`;
+                ctx.lineWidth = locked ? 3 : 2;
+                ctx.beginPath(); ctx.arc(this.blinkX, this.blinkY, r, 0, Math.PI * 2); ctx.stroke();
+            }
+        } else if (this.atk === 'rift') {
+            // 虚空坍缩前摇:身边三圈反向旋转的紫色弧
+            if (this.atkPhase === 0) {
+                ctx.translate(cx, cy);
+                ctx.lineWidth = 3;
+                for (let i = 0; i < 3; i++) {
+                    const rr = this.size * (0.75 + i * 0.22) * (1.15 - 0.25 * t), a0 = (i % 2 ? -1 : 1) * t * Math.PI * 2 + i;
+                    ctx.strokeStyle = `rgba(${i === 1 ? '24,255,255' : '234,128,252'},${0.35 + 0.5 * t})`;
+                    ctx.beginPath(); ctx.arc(0, 0, rr, a0, a0 + Math.PI * 1.2); ctx.stroke();
+                }
+            }
         } else if (this.atk === 'cross') {
             // 十字歼灭死光:4 道正交旋转光束
             const L = BlockBoss.LASER_LEN, hw = 12;
@@ -15294,19 +15424,26 @@ class BlockBoss {
         // 外层威胁红光环
         ctx.save();
         ctx.globalAlpha = this.retreating ? Math.max(0, this.retreatTimer / 1.5) : 1;
+        // 虚空闪现前摇后半段本体渐隐,像要遁入虚空
+        if (this.atk === 'blink' && this.atkPhase === 0) {
+            const t = Math.max(0, Math.min(1, 1 - this.atkTimer / this.atkDur));
+            ctx.globalAlpha *= 1 - 0.65 * Math.max(0, (t - 0.4) / 0.6);
+        }
+        const aura = this.isVoid ? '#d500f9' : '#ff1744';
         ctx.shadowBlur = 40 * pulse;
-        ctx.shadowColor = '#ff1744';
-        ctx.fillStyle = 'rgba(255, 23, 68, 0.18)';
+        ctx.shadowColor = aura;
+        ctx.fillStyle = this.isVoid ? 'rgba(213, 0, 249, 0.16)' : 'rgba(255, 23, 68, 0.18)';
         ctx.beginPath();
         ctx.arc(cx, cy, this.size * 0.95 * pulse, 0, Math.PI * 2);
         ctx.fill();
 
         // 立绘:皇冠 + 恶魔角 + 怒目;狂暴时换红色版本
-        const artKey = this.enraged ? 'boss|enraged' : 'boss';
-        const art = typeof ArtSVG !== 'undefined' ? artImg(artKey, () => ArtSVG.boss(this.enraged)) : null;
+        const artKey = (this.isVoid ? 'boss|void' : 'boss') + (this.enraged ? '|enraged' : '');
+        const art = typeof ArtSVG !== 'undefined' ? artImg(artKey, () => ArtSVG.boss(this.enraged, this.form)) : null;
         if (art) {
             ctx.shadowBlur = 0;
-            SpriteCache.draw(ctx, Art.sprite(artKey, art, this.size, 16, this.enraged ? '#ff1744' : '#7c4dff'), this.x, this.y, this.size, this.size);
+            const glow = this.isVoid ? (this.enraged ? '#ea80fc' : '#18ffff') : (this.enraged ? '#ff1744' : '#7c4dff');
+            SpriteCache.draw(ctx, Art.sprite(artKey, art, this.size, 16, glow), this.x, this.y, this.size, this.size);
             this._renderStatusRings(ctx, cx, cy);
             if (this.hitFlash > 0) {
                 ctx.shadowBlur = 0;
@@ -15396,7 +15533,9 @@ class BlockBoss {
 BlockBoss.CHARGE_SPEED = 10;   // 冲撞速度(px/帧)
 BlockBoss.CHARGE_TIME = 0.55;  // 冲撞持续(秒)
 BlockBoss.ringCount = enraged => enraged ? 16 : 12;
-BlockBoss.ATK_CODES = [null, 'charge', 'ring', 'slam', 'laser', 'summon', 'cross'];
+BlockBoss.ATK_CODES = [null, 'charge', 'ring', 'slam', 'laser', 'summon', 'cross', 'blink', 'rift'];
+BlockBoss.FORMS = [null, 'void']; // 快照里的形态编号
+BlockBoss.BLINK_R = 92;           // 虚空闪现落点震击半径
 BlockBoss.LASER_HALF = 13;     // 激光半宽
 BlockBoss.LASER_LEN = 1100;    // 激光长度(足够射出 800×600 的场地)
 // 扫射时光束的当前角度:从 atkAngle 一侧扫到另一侧,狂暴时扫得更宽
