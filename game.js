@@ -3515,7 +3515,7 @@ class Game {
             const isEvo = g.level === 2;
             const name = isEvo ? `🌟${def.evoName}` : def.name;
             const color = isEvo ? '#ffd700' : def.color;
-            this._renderBuffPill(y, def.icon, name, color, g.timer, g.max, isEvo);
+            this._renderBuffPill(y, def.icon, name, color, g.timer, g.max, isEvo, 'gear_' + g.type);
             y += 34;
         }
         if (p.blessTimer > 0) {
@@ -3567,10 +3567,13 @@ class Game {
                 roundRect(ctx, rx, y, slotSize, slotSize, 6);
                 ctx.stroke();
 
-                ctx.font = '15px Arial';
-                ctx.textAlign = 'center';
-                ctx.textBaseline = 'middle';
-                ctx.fillText(rdef.icon, rx + slotSize / 2, y + slotSize / 2);
+                ctx.shadowBlur = 0;
+                if (!(typeof Art !== 'undefined' && Art.icon(ctx, 'relic_' + rk, rx + slotSize / 2, y + slotSize / 2, 22))) {
+                    ctx.font = '15px Arial';
+                    ctx.textAlign = 'center';
+                    ctx.textBaseline = 'middle';
+                    ctx.fillText(rdef.icon, rx + slotSize / 2, y + slotSize / 2);
+                }
                 ctx.restore();
                 rx += slotSize + 6;
             }
@@ -3601,7 +3604,7 @@ class Game {
         }
     }
 
-    _renderBuffPill(y, icon, name, color, timer, max, isEvo = false) {
+    _renderBuffPill(y, icon, name, color, timer, max, isEvo = false, artKey = null) {
         const def = { icon, name, color };
         const g = { timer, max };
         const ctx = this.ctx;
@@ -3619,10 +3622,12 @@ class Game {
         roundRect(ctx, x, y, w, h, 8);
         ctx.stroke();
         ctx.globalAlpha = blink;
-        ctx.font = '14px Arial';
-        ctx.textAlign = 'center';
-        ctx.textBaseline = 'middle';
-        ctx.fillText(def.icon, x + 15, y + 15);
+        if (!(artKey && typeof Art !== 'undefined' && Art.icon(ctx, artKey, x + 15, y + 15, 22))) {
+            ctx.font = '14px Arial';
+            ctx.textAlign = 'center';
+            ctx.textBaseline = 'middle';
+            ctx.fillText(def.icon, x + 15, y + 15);
+        }
         ctx.font = 'bold 10.5px Arial';
         ctx.textAlign = 'left';
         ctx.fillStyle = isEvo ? '#fff59d' : def.color;
@@ -14617,8 +14622,25 @@ class Item {
 
         const isEquip = !!this.gear;
         const rad = this.size * 0.52;
+        // 道具图标(art.js):就绪时不画圆盘/方块底座,只画图标;未就绪(或 node 测试)时用原来的 emoji 徽章
+        const iconKey = this.gear ? 'gear_' + this.gear : this.relic ? 'relic_' + this.relic : this.type;
+        const artReady = typeof Art !== 'undefined' && Art.iconReady(iconKey);
 
-        if (isEquip) {
+        if (artReady) {
+            // 地面椭圆投影
+            ctx.fillStyle = 'rgba(0, 0, 0, 0.25)';
+            ctx.beginPath();
+            ctx.ellipse(cx, (this.landTimer > 0 ? this.targetY : this.y) + this.size + 2, rad * 0.8, rad * 0.3, 0, 0, Math.PI * 2);
+            ctx.fill();
+            // 快消失时的红色警告圈
+            if (warningFlash) {
+                ctx.strokeStyle = '#ff1744';
+                ctx.lineWidth = 2.5;
+                ctx.beginPath();
+                ctx.arc(cx, drawCy, rad + 3, 0, Math.PI * 2);
+                ctx.stroke();
+            }
+        } else if (isEquip) {
             // 限时装备:维持圆角方块基础形
             const grad = ctx.createRadialGradient(
                 this.x + this.size * 0.35, drawY + this.size * 0.35, 0,
@@ -14713,13 +14735,15 @@ class Item {
             ctx.restore();
         }
 
-        // 图标(放大 1.15 倍居中)
+        // 图标:立绘约 1.3 倍道具尺寸;未就绪时画 emoji
         ctx.save();
         ctx.globalAlpha = flicker;
-        ctx.font = '16px Arial';
-        ctx.textAlign = 'center';
-        ctx.textBaseline = 'middle';
-        ctx.fillText(this.icon, cx, drawCy);
+        if (!artReady || !Art.icon(ctx, iconKey, cx, drawCy, Math.round(this.size * (isEquip ? 1.35 : 1.3)))) {
+            ctx.font = '16px Arial';
+            ctx.textAlign = 'center';
+            ctx.textBaseline = 'middle';
+            ctx.fillText(this.icon, cx, drawCy);
+        }
         ctx.restore();
     }
 }

@@ -47,6 +47,20 @@ const Art = {
         });
     },
 
+    // 道具图标是否已就绪(未就绪时会开始加载)
+    iconReady(key) {
+        return typeof ArtSVG !== 'undefined' && !!ArtSVG.items[key] && !!this.get('item|' + key, ArtSVG.items[key]);
+    },
+
+    // 道具图标:按 size(逻辑像素)居中画在 (cx, cy);立绘未就绪返回 false,调用方画原来的 emoji
+    icon(ctx, key, cx, cy, size) {
+        if (!this.iconReady(key)) return false;
+        const img = this.get('item|' + key, ArtSVG.items[key]);
+        const spr = SpriteCache.get(`art|item|${key}|${size}`, size, size, 2, g => g.drawImage(img, 0, 0, size, size));
+        SpriteCache.draw(ctx, spr, cx - size / 2, cy - size / 2, size, size);
+        return true;
+    },
+
     // #rrggbb 与白/黑混合,t ∈ [0,1]
     mix(hex, to, t) {
         const n = parseInt(hex.slice(1), 16);
@@ -240,5 +254,213 @@ const ArtSVG = (() => {
             shape('M31 71 L35.5 82 L40 72 Z', '#fff', 1.8) + shape('M60 72 L64.5 82 L69 71 Z', '#fff', 1.8));
     };
 
-    return { enemies, player, boss };
+    // ── 道具图标(viewBox 0 0 100 100,图标居中占满) ──
+    const isvg = (defs, body) =>
+        `<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 100 100" width="200" height="200">` +
+        `<defs>${defs}<filter id="bl" x="-50%" y="-50%" width="200%" height="200%"><feGaussianBlur stdDeviation="4"/></filter></defs>${body}</svg>`;
+    const lg = (id, stops, x2 = 0, y2 = 1) =>
+        `<linearGradient id="${id}" x1="0" y1="0" x2="${x2}" y2="${y2}">` +
+        stops.map(([o, c]) => `<stop offset="${o}" stop-color="${c}"/>`).join('') + `</linearGradient>`;
+    const rg = (id, stops, cx = 0.35, cy = 0.3, r = 0.75) =>
+        `<radialGradient id="${id}" cx="${cx}" cy="${cy}" r="${r}">` +
+        stops.map(([o, c, a = 1]) => `<stop offset="${o}" stop-color="${c}" stop-opacity="${a}"/>`).join('') + `</radialGradient>`;
+    // n 角星
+    const star = (cx, cy, R, r, n = 5, rot = -Math.PI / 2) => {
+        let d = '';
+        for (let i = 0; i < n * 2; i++) {
+            const a = rot + i * Math.PI / n, rr = i % 2 ? r : R;
+            d += (i ? 'L' : 'M') + (cx + Math.cos(a) * rr).toFixed(1) + ' ' + (cy + Math.sin(a) * rr).toFixed(1);
+        }
+        return d + 'Z';
+    };
+    const glowDot = (cx, cy, r, c, o = 0.55) => `<circle cx="${cx}" cy="${cy}" r="${r}" fill="${c}" opacity="${o}" filter="url(#bl)"/>`;
+    const glint = (cx, cy, r) => `<path d="${star(cx, cy, r, r * 0.28, 4, 0)}" fill="#fff"/>`;
+    // 双层描边线:深色外描边 + 彩色内芯
+    const dl = (d, w, c) => line(d, w + 4) + line(d, w, c);
+
+    const items = {
+        // 生命药水:圆底烧瓶,翠绿药液 + 白色十字
+        potion: () => {
+            const F = 'M40 32 V20 H60 V32 Q84 41 84 64 Q84 92 50 92 Q16 92 16 64 Q16 41 40 32 Z';
+            return isvg(lg('lq', [[0, '#b9f6ca'], [0.45, '#00e676'], [1, '#00695c']]) + `<clipPath id="fl"><path d="${F}"/></clipPath>`,
+                glowDot(50, 66, 30, '#00e676', 0.35) +
+                `<path d="${F}" fill="#e0f7fa" fill-opacity="0.35"/>` +
+                `<g clip-path="url(#fl)"><rect x="0" y="48" width="100" height="52" fill="url(#lq)"/><path d="M14 50 Q32 44 50 50 T86 50 V55 H14 Z" fill="#fff" opacity="0.4"/></g>` +
+                `<path d="M46 59 H54 V65 H60 V73 H54 V79 H46 V73 H40 V65 H46 Z" fill="#fff" opacity="0.92"/>` +
+                `<circle cx="31" cy="76" r="3" fill="#fff" opacity="0.7"/><circle cx="69" cy="63" r="2.4" fill="#fff" opacity="0.7"/>` +
+                `<path d="${F}" fill="none" stroke="${OUT}" stroke-width="5" stroke-linejoin="round"/>` +
+                line('M27 50 Q22 62 26 76', 4, '#ffffff') +
+                `<rect x="35" y="17" width="30" height="8" rx="3" fill="#b2ebf2" stroke="${OUT}" stroke-width="3.5"/>` +
+                `<rect x="38" y="5" width="24" height="14" rx="4" fill="#a1887f" stroke="${OUT}" stroke-width="4"/>` + glint(78, 30, 6));
+        },
+        // 经验书:摊开的书 + 头顶金星
+        exp_book: () => isvg(lg('pg', [[0, '#fffde7'], [1, '#ffe0b2']]) + lg('cv', [[0, '#ffb300'], [1, '#bf5f00']]),
+            glowDot(50, 17, 16, '#ffd54f', 0.6) +
+            `<path d="M50 90 Q30 80 5 86 V30 Q30 25 50 35 Q70 25 95 30 V86 Q70 80 50 90 Z" fill="url(#cv)" stroke="${OUT}" stroke-width="5" stroke-linejoin="round"/>` +
+            `<path d="M50 34 Q32 24 12 28 V79 Q32 75 50 83 Z" fill="url(#pg)" stroke="${OUT}" stroke-width="3.5" stroke-linejoin="round"/>` +
+            `<path d="M50 34 Q68 24 88 28 V79 Q68 75 50 83 Z" fill="url(#pg)" stroke="${OUT}" stroke-width="3.5" stroke-linejoin="round"/>` +
+            [42, 52, 62, 70].map(y => line(`M18 ${y} Q31 ${y - 4} 44 ${y + 2}`, 2.6, '#c8a27a') + line(`M56 ${y + 2} Q69 ${y - 4} 82 ${y}`, 2.6, '#c8a27a')).join('') +
+            `<path d="${star(50, 17, 12, 5.2)}" fill="#ffeb3b" stroke="${OUT}" stroke-width="3" stroke-linejoin="round"/>` + glint(80, 14, 5)),
+        // 雪花:六臂冰晶
+        snowflake: () => {
+            let d = '';
+            for (let i = 0; i < 6; i++) {
+                const a = i * Math.PI / 3, ca = Math.cos(a), sa = Math.sin(a);
+                d += `M50 50 L${(50 + ca * 42).toFixed(1)} ${(50 + sa * 42).toFixed(1)} `;
+                for (const [r, l] of [[22, 12], [33, 8]]) {
+                    const bx = 50 + ca * r, by = 50 + sa * r;
+                    for (const s of [-1, 1]) {
+                        const b = a + s * 0.8;
+                        d += `M${bx.toFixed(1)} ${by.toFixed(1)} L${(bx + Math.cos(b) * l).toFixed(1)} ${(by + Math.sin(b) * l).toFixed(1)} `;
+                    }
+                }
+            }
+            return isvg(lg('ic', [[0, '#ffffff'], [0.5, '#b3e5fc'], [1, '#29b6f6']], 1, 1),
+                glowDot(50, 50, 34, '#00e5ff', 0.35) + line(d, 10) + line(d, 5.5, 'url(#ic)') +
+                `<path d="${star(50, 50, 10, 8.6, 6, 0)}" fill="#e1f5fe" stroke="${OUT}" stroke-width="3"/>` + glint(76, 22, 6) + glint(24, 78, 4));
+        },
+        // 炸弹:圆炸弹 + 冒火星的引信
+        bomb: () => isvg(rg('bm', [[0, '#b0bec5'], [0.4, '#455a64'], [1, '#0d1316']]) + rg('sp', [[0, '#fff'], [0.4, '#ffeb3b'], [1, '#ff6d00', 0]], 0.5, 0.5, 0.5),
+            dl('M64 28 Q72 12 84 11', 4.5, '#d7b49e') +
+            `<circle cx="85" cy="11" r="13" fill="url(#sp)"/>` +
+            `<path d="${star(85, 11, 9, 3, 4, 0)}" fill="#fff59d" stroke="#ff6d00" stroke-width="1.5"/>` +
+            `<rect x="54" y="20" width="18" height="13" rx="3" transform="rotate(35 63 26)" fill="#546e7a" stroke="${OUT}" stroke-width="3.5"/>` +
+            glowDot(45, 59, 34, '#90a4ae', 0.35) +
+            `<circle cx="45" cy="59" r="32" fill="url(#bm)" stroke="${OUT}" stroke-width="5"/>` +
+            `<circle cx="45" cy="59" r="28.5" fill="none" stroke="#b0bec5" stroke-opacity="0.45" stroke-width="2"/>` +
+            `<ellipse cx="33" cy="46" rx="10" ry="6" transform="rotate(-35 33 46)" fill="#fff" opacity="0.55"/>`),
+        // 红心:+1 命
+        heart: () => {
+            const H = 'M50 90 C22 70 6 54 8 34 C10 16 32 8 50 26 C68 8 90 16 92 34 C94 54 78 70 50 90 Z';
+            return isvg(lg('ht', [[0, '#ff9ec0'], [0.5, '#ff4081'], [1, '#ad1457']], 0.6, 1),
+                glowDot(50, 50, 34, '#ff4081', 0.4) +
+                `<path d="${H}" fill="url(#ht)" stroke="${OUT}" stroke-width="5" stroke-linejoin="round"/>` +
+                `<ellipse cx="29" cy="31" rx="10" ry="6.5" transform="rotate(-35 29 31)" fill="#fff" opacity="0.65"/>` +
+                `<circle cx="20" cy="45" r="3" fill="#fff" opacity="0.5"/>` + glint(79, 17, 7));
+        },
+        // 无敌药水:金色盾牌 + 闪电
+        potion_invicible: () => {
+            const S = 'M50 6 L88 20 V46 Q88 76 50 94 Q12 76 12 46 V20 Z';
+            return isvg(lg('gd', [[0, '#fff9c4'], [0.5, '#ffd54f'], [1, '#e65100']], 0.4, 1),
+                glowDot(50, 50, 36, '#ffd700', 0.45) +
+                `<path d="${S}" fill="url(#gd)" stroke="${OUT}" stroke-width="5" stroke-linejoin="round"/>` +
+                `<path d="M50 15 L79 26 V46 Q79 70 50 84 Q21 70 21 46 V26 Z" fill="none" stroke="#fff" stroke-opacity="0.55" stroke-width="3"/>` +
+                `<path d="M57 20 L35 54 H50 L42 82 L67 44 H52 L61 20 Z" fill="#fff" stroke="${OUT}" stroke-width="3.5" stroke-linejoin="round"/>` + glint(80, 12, 6));
+        },
+
+        // ── 限时装备 ──
+        // 雷霆之刃:金色闪电剑
+        gear_blade: () => isvg(lg('bd', [[0, '#ffffff'], [0.5, '#fff59d'], [1, '#ffc400']], 1, 0),
+            glowDot(50, 50, 32, '#ffe14d', 0.4) +
+            `<g transform="rotate(40 50 50)">` +
+            `<path d="M50 2 L59 15 V62 H41 V15 Z" fill="url(#bd)" stroke="${OUT}" stroke-width="4" stroke-linejoin="round"/>` +
+            line('M50 13 V57', 2.5, '#ffffff') +
+            `<rect x="27" y="60" width="46" height="10" rx="4" fill="#ffb300" stroke="${OUT}" stroke-width="4"/>` +
+            `<rect x="45" y="69" width="10" height="18" rx="3" fill="#6d4c41" stroke="${OUT}" stroke-width="3.5"/>` +
+            `<circle cx="50" cy="91" r="6" fill="#ffd54f" stroke="${OUT}" stroke-width="3.5"/></g>` +
+            dl('M16 34 L25 29 L23 38 L32 33', 2.6, '#fff59d') + dl('M68 78 L77 73 L75 82 L84 77', 2.6, '#fff59d')),
+        // 烈焰法球:火焰包裹的熔核
+        gear_orb: () => isvg(lg('fm', [[0, '#ffeb3b'], [0.45, '#ff7043'], [1, '#bf360c']]) + rg('core', [[0, '#fffde7'], [0.45, '#ffcc80'], [1, '#ff5722']]),
+            glowDot(50, 56, 34, '#ff7043', 0.45) +
+            `<path d="M50 4 C60 18 77 22 74 44 C87 52 85 80 50 93 C15 80 13 52 26 44 C23 26 40 22 50 4 Z" fill="url(#fm)" stroke="${OUT}" stroke-width="4.5" stroke-linejoin="round"/>` +
+            `<circle cx="50" cy="62" r="20" fill="url(#core)" stroke="${OUT}" stroke-width="3.2"/>` +
+            line('M39 62 Q50 50 61 60', 3, '#ffffff') +
+            `<ellipse cx="50" cy="62" rx="45" ry="12" transform="rotate(-18 50 62)" fill="none" stroke="#ffab91" stroke-width="2.5" stroke-dasharray="40 14"/>`),
+        // 寒霜战甲:冰蓝胸甲 + 雪花纹
+        gear_armor: () => isvg(lg('ia', [[0, '#e1f5fe'], [0.5, '#4fc3f7'], [1, '#01579b']], 0.6, 1),
+            glowDot(50, 52, 34, '#80d8ff', 0.4) +
+            `<path d="M20 18 L36 10 Q50 22 64 10 L80 18 L91 36 L78 43 V84 Q50 96 22 84 V43 L9 36 Z" fill="url(#ia)" stroke="${OUT}" stroke-width="5" stroke-linejoin="round"/>` +
+            line('M36 10 Q50 26 64 10', 4) + line('M50 26 V88', 2.5, 'rgba(255,255,255,0.55)') +
+            line('M27 56 Q50 64 73 56', 3) + line('M27 71 Q50 79 73 71', 3) +
+            line('M50 32 V48 M43 36 L57 44 M57 36 L43 44', 2.6, '#ffffff') + glint(78, 26, 5)),
+        // 风暴连弩:翠绿弩弓 + 箭矢
+        gear_bow: () => isvg(lg('bw', [[0, '#b9f6ca'], [1, '#00c853']], 1, 0),
+            glowDot(50, 46, 32, '#69f0ae', 0.35) +
+            `<rect x="44" y="30" width="12" height="62" rx="4" fill="#6d4c41" stroke="${OUT}" stroke-width="4"/>` +
+            line('M9 46 Q50 8 91 46', 11) + line('M9 46 Q50 8 91 46', 6, 'url(#bw)') +
+            line('M11 46 L50 60 L89 46', 2.4, '#e0f2f1') +
+            line('M50 62 V12', 6) + line('M50 62 V12', 3, '#cfd8dc') +
+            `<path d="M50 2 L58 15 H42 Z" fill="#69f0ae" stroke="${OUT}" stroke-width="3" stroke-linejoin="round"/>` +
+            `<rect x="40" y="72" width="20" height="7" rx="3" fill="#a1887f" stroke="${OUT}" stroke-width="2.5"/>` +
+            line('M14 70 Q22 64 30 70', 2.5, '#b9f6ca') + line('M70 70 Q78 64 86 70', 2.5, '#b9f6ca')),
+        // 荆棘之甲:一圈尖刺的圆盾
+        gear_thorns: () => {
+            let spikes = '';
+            for (let i = 0; i < 10; i++) {
+                const a = i * Math.PI / 5 - Math.PI / 2;
+                const p = (r, da) => `${(50 + Math.cos(a + da) * r).toFixed(1)} ${(52 + Math.sin(a + da) * r).toFixed(1)}`;
+                spikes += `<path d="M${p(27, -0.24)} L${p(47, 0)} L${p(27, 0.24)} Z" fill="#e6ee9c" stroke="${OUT}" stroke-width="3" stroke-linejoin="round"/>`;
+            }
+            return isvg(lg('th', [[0, '#f4ff81'], [0.5, '#76ff03'], [1, '#33691e']], 0.6, 1),
+                glowDot(50, 52, 34, '#c6ff00', 0.35) + spikes +
+                `<circle cx="50" cy="52" r="30" fill="url(#th)" stroke="${OUT}" stroke-width="5"/>` +
+                `<circle cx="50" cy="52" r="18" fill="#33691e" fill-opacity="0.45" stroke="${OUT}" stroke-width="3"/>` +
+                `<circle cx="50" cy="52" r="8" fill="#f4ff81" stroke="${OUT}" stroke-width="3"/>` +
+                `<ellipse cx="38" cy="38" rx="8" ry="5" transform="rotate(-35 38 38)" fill="#fff" opacity="0.5"/>`);
+        },
+
+        // ── 暗金遗物 ──
+        // 雷神指环:金指环 + 发光黄宝石
+        relic_thunder_ring: () => isvg(lg('rg', [[0, '#fff9c4'], [0.5, '#ffd54f'], [1, '#b26a00']], 1, 1) + lg('gm', [[0, '#ffffff'], [0.4, '#ffe14d'], [1, '#ff8f00']], 1, 1),
+            glowDot(50, 34, 20, '#ffe14d', 0.6) +
+            `<ellipse cx="50" cy="64" rx="30" ry="24" fill="none" stroke="${OUT}" stroke-width="15"/>` +
+            `<ellipse cx="50" cy="64" rx="30" ry="24" fill="none" stroke="url(#rg)" stroke-width="9"/>` +
+            `<path d="M27 56 Q34 46 46 43" fill="none" stroke="#fff" stroke-opacity="0.6" stroke-width="2.5" stroke-linecap="round"/>` +
+            `<path d="M35 34 L43 21 H57 L65 34 L50 47 Z" fill="url(#gm)" stroke="${OUT}" stroke-width="3.5" stroke-linejoin="round"/>` +
+            line('M35 34 H65 M43 21 L50 34 L57 21 M50 34 V47', 1.6, 'rgba(255,255,255,0.7)') +
+            dl('M12 26 L19 21 L17 29 L24 24', 2.4, '#fff59d') + dl('M76 24 L83 19 L81 27 L88 22', 2.4, '#fff59d')),
+        // 吸血鬼獠牙:象牙獠牙 + 血滴
+        relic_vampire_fang: () => isvg(lg('fg', [[0, '#ffffff'], [1, '#d7ccc8']], 1, 1),
+            glowDot(50, 50, 32, '#ff5252', 0.35) +
+            `<path d="M33 10 Q63 6 71 22 Q73 50 57 78 Q50 90 46 77 Q42 52 30 30 Q26 16 33 10 Z" fill="url(#fg)" stroke="${OUT}" stroke-width="5" stroke-linejoin="round"/>` +
+            `<path d="M46 68 Q53 72 57 66 Q57 79 51 86 Q45 79 46 68 Z" fill="#e53935"/>` +
+            `<path d="M51 88 Q46 95 51 99 Q56 95 51 88 Z" fill="#e53935" stroke="${OUT}" stroke-width="2"/>` +
+            line('M40 18 Q46 40 47 60', 3, 'rgba(255,255,255,0.85)')),
+        // 时空怀表:金壳怀表 + 链子
+        relic_chrono_watch: () => {
+            let ticks = '';
+            for (let i = 0; i < 12; i++) {
+                const a = i * Math.PI / 6, r1 = i % 3 ? 23 : 20;
+                ticks += `M${(50 + Math.cos(a) * r1).toFixed(1)} ${(58 + Math.sin(a) * r1).toFixed(1)} L${(50 + Math.cos(a) * 26).toFixed(1)} ${(58 + Math.sin(a) * 26).toFixed(1)} `;
+            }
+            return isvg(lg('wc', [[0, '#fff9c4'], [0.5, '#ffca28'], [1, '#b26a00']], 1, 1),
+                glowDot(50, 58, 36, '#80d8ff', 0.35) +
+                dl('M50 12 Q30 2 16 13', 3, '#ffd54f') +
+                `<rect x="43" y="9" width="14" height="11" rx="3" fill="url(#wc)" stroke="${OUT}" stroke-width="3"/>` +
+                `<circle cx="50" cy="58" r="37" fill="url(#wc)" stroke="${OUT}" stroke-width="5"/>` +
+                `<circle cx="50" cy="58" r="29" fill="#e1f5fe" stroke="${OUT}" stroke-width="3"/>` +
+                `<circle cx="50" cy="58" r="26" fill="none" stroke="#80d8ff" stroke-width="2" opacity="0.7"/>` +
+                line(ticks, 2.2, '#455a64') +
+                line('M50 58 L50 37', 3.5) + line('M50 58 L64 64', 4) +
+                `<circle cx="50" cy="58" r="3.5" fill="${OUT}"/>` +
+                `<ellipse cx="36" cy="38" rx="8" ry="4" transform="rotate(-35 36 38)" fill="#fff" opacity="0.6"/>`);
+        },
+        // 死神斗篷:暗紫兜帽斗篷 + 发光扣
+        relic_reaper_cloak: () => isvg(lg('ck', [[0, '#9575cd'], [0.5, '#5e35b1'], [1, '#1a0638']], 0.4, 1),
+            glowDot(50, 52, 34, '#ea80fc', 0.35) +
+            `<path d="M50 5 C30 7 22 25 22 40 L9 93 H91 L78 40 C78 25 70 7 50 5 Z" fill="url(#ck)" stroke="${OUT}" stroke-width="5" stroke-linejoin="round"/>` +
+            `<ellipse cx="50" cy="36" rx="15" ry="17" fill="#07010f" stroke="${OUT}" stroke-width="3"/>` +
+            `<ellipse cx="44" cy="36" rx="3.4" ry="2.4" fill="#ea80fc"/><ellipse cx="56" cy="36" rx="3.4" ry="2.4" fill="#ea80fc"/>` +
+            line('M36 66 L28 91 M64 66 L72 91 M50 70 V92', 2.5, 'rgba(0,0,0,0.35)') +
+            `<circle cx="50" cy="60" r="6" fill="#ea80fc" stroke="${OUT}" stroke-width="3"/>` +
+            line('M28 30 Q30 18 42 12', 2.5, 'rgba(255,255,255,0.4)')),
+        // 炼金魔石:符文法阵中的翠绿六棱宝石
+        relic_alchemist_stone: () => isvg(lg('as', [[0, '#e8f5e9'], [0.45, '#69f0ae'], [1, '#1b5e20']], 1, 1),
+            glowDot(50, 50, 34, '#b9f6ca', 0.45) +
+            `<circle cx="50" cy="50" r="43" fill="none" stroke="#b9f6ca" stroke-width="2.5" stroke-dasharray="9 6" opacity="0.8"/>` +
+            `<path d="M50 11 L84 70 H16 Z" fill="none" stroke="#b9f6ca" stroke-width="2" opacity="0.6"/>` +
+            `<path d="M50 20 L74 35 V65 L50 80 L26 65 V35 Z" fill="url(#as)" stroke="${OUT}" stroke-width="5" stroke-linejoin="round"/>` +
+            `<path d="M50 20 L74 35 L50 50 L26 35 Z" fill="#fff" opacity="0.3"/>` +
+            line('M50 50 V80 M50 50 L74 65 M50 50 L26 65', 1.8, 'rgba(255,255,255,0.45)') + glint(66, 30, 5)),
+        // 狂徒铠甲:金色重甲背心 + 红心徽记
+        relic_warmog_vest: () => isvg(lg('wv', [[0, '#fff59d'], [0.5, '#ffd54f'], [1, '#e65100']], 0.5, 1),
+            glowDot(50, 52, 34, '#ffd54f', 0.4) +
+            `<path d="M27 12 L40 8 Q50 18 60 8 L73 12 L88 30 L78 39 V86 Q50 95 22 86 V39 L12 30 Z" fill="url(#wv)" stroke="${OUT}" stroke-width="5" stroke-linejoin="round"/>` +
+            line('M40 8 Q50 22 60 8', 4) + line('M28 70 Q50 78 72 70', 3) +
+            `<circle cx="27" cy="44" r="3" fill="#fff8e1" stroke="${OUT}" stroke-width="2"/><circle cx="73" cy="44" r="3" fill="#fff8e1" stroke="${OUT}" stroke-width="2"/>` +
+            `<path d="M50 62 C40 55 35 49 36 43 C37 37 45 35 50 41 C55 35 63 37 64 43 C65 49 60 55 50 62 Z" fill="#e53935" stroke="${OUT}" stroke-width="3"/>` +
+            `<ellipse cx="44" cy="42" rx="3" ry="2" fill="#fff" opacity="0.7"/>`)
+    };
+
+    return { enemies, player, boss, items };
 })();
