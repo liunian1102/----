@@ -9294,7 +9294,8 @@ class Game {
         }
 
         // 法师被动「奥术充能」:每第 4 发普攻是会爆炸的奥术弹;炎术师每发都是爆裂火球
-        let kind = 0, splash = 0, freeze = 0, orbMult = 1;
+        // 弹体造型:弓手箭矢 / 法师奥术飞弹 / 刺客苦无(纯外观,快照里同一编号)
+        let kind = cls === 'archer' ? 5 : cls === 'mage' ? 6 : cls === 'assassin' ? 7 : 0, splash = 0, freeze = 0, orbMult = 1;
         if (cls === 'mage') {
             const p = this.player;
             p.arcaneCount = (p.arcaneCount || 0) + 1;
@@ -11818,37 +11819,40 @@ class Game {
                 ctx.arc(fx.x, fx.y, Math.max(1, 2 * alpha), 0, Math.PI * 2);
                 ctx.fill();
             } else if (fx.type === 'slash') {
+                // 刀光:两端尖、中间鼓起的弯月形 + 白色刃芯。参数可以是两端点 x1..y2,也可以是中心 x,y + angle + length
+                let x1 = fx.x1, y1 = fx.y1, x2 = fx.x2, y2 = fx.y2;
+                if (x1 === undefined) {
+                    const hl = (fx.length || 60) / 2, c = Math.cos(fx.angle || 0), sn = Math.sin(fx.angle || 0);
+                    x1 = fx.x - c * hl; y1 = fx.y - sn * hl; x2 = fx.x + c * hl; y2 = fx.y + sn * hl;
+                }
+                const len = Math.hypot(x2 - x1, y2 - y1) || 1;
+                const nx = -(y2 - y1) / len, ny = (x2 - x1) / len;
+                const bulge = Math.min(10, len * 0.09) * (0.4 + alpha * 0.6);
+                const mx = (x1 + x2) / 2, my = (y1 + y2) / 2;
                 ctx.globalAlpha = alpha;
                 ctx.shadowBlur = 12;
                 ctx.shadowColor = fx.color;
-                ctx.strokeStyle = fx.color;
-                ctx.lineWidth = 3 * alpha;
-                ctx.lineCap = 'round';
-                ctx.beginPath();
-                ctx.moveTo(fx.x1, fx.y1);
-                ctx.lineTo(fx.x2, fx.y2);
-                ctx.stroke();
-            } else if (fx.type === 'arrow') {
-                ctx.globalAlpha = alpha;
-                ctx.shadowBlur = 14;
-                ctx.shadowColor = fx.color;
-                ctx.save();
-                ctx.translate(fx.x, fx.y);
-                ctx.rotate(fx.angle);
                 ctx.fillStyle = fx.color;
                 ctx.beginPath();
-                ctx.moveTo(fx.length, 0);
-                ctx.lineTo(-fx.length * 0.6, -4);
-                ctx.lineTo(-fx.length * 0.6, 4);
-                ctx.closePath();
+                ctx.moveTo(x1, y1);
+                ctx.quadraticCurveTo(mx + nx * bulge * 2, my + ny * bulge * 2, x2, y2);
+                ctx.quadraticCurveTo(mx + nx * bulge * 0.6, my + ny * bulge * 0.6, x1, y1);
                 ctx.fill();
-                ctx.strokeStyle = fx.color;
-                ctx.lineWidth = 2;
+                ctx.shadowBlur = 0;
+                ctx.strokeStyle = 'rgba(255,255,255,0.9)';
+                ctx.lineWidth = 1.5 * alpha;
+                ctx.lineCap = 'round';
                 ctx.beginPath();
-                ctx.moveTo(-fx.length * 0.6, 0);
-                ctx.lineTo(-fx.length, 0);
+                ctx.moveTo(x1, y1);
+                ctx.quadraticCurveTo(mx + nx * bulge * 1.3, my + ny * bulge * 1.3, x2, y2);
                 ctx.stroke();
-                ctx.restore();
+            } else if (fx.type === 'arrow') {
+                // 箭矢特效(箭雨落箭 / 穿透箭出手):发光能量箭精灵,长度按 fx.length 缩放
+                ctx.globalAlpha = alpha;
+                ctx.translate(fx.x, fx.y);
+                ctx.rotate(fx.angle);
+                const k = fx.length * 1.6 / PiercingArrow.W;
+                SpriteCache.draw(ctx, PiercingArrow.sprite(), -fx.length, -PiercingArrow.H * k / 2, PiercingArrow.W * k, PiercingArrow.H * k);
             } else if (fx.type === 'holyAura') {
                 const pulse = Math.sin(fx.ttl * 8) * 0.3 + 0.7;
                 ctx.globalAlpha = alpha * pulse * 0.5;
@@ -11908,15 +11912,24 @@ class Game {
                 const dist = fx.length * 2 * prog + fx.length;
                 const endX = fx.x + Math.cos(fx.angle) * dist;
                 const endY = fx.y + Math.sin(fx.angle) * dist;
+                // 冰棱:细长菱形(浅色填充 + 彩色描边)
+                const sx = fx.x + Math.cos(fx.angle) * dist * 0.6, sy = fx.y + Math.sin(fx.angle) * dist * 0.6;
+                const mx = (sx + endX * 1.6) / 2.6, my = (sy + endY * 1.6) / 2.6;
+                const w = Math.max(1.5, dist * 0.07), nx = -Math.sin(fx.angle) * w, ny = Math.cos(fx.angle) * w;
                 ctx.globalAlpha = alpha;
                 ctx.shadowBlur = 10;
                 ctx.shadowColor = fx.color;
+                ctx.fillStyle = 'rgba(255,255,255,0.85)';
                 ctx.strokeStyle = fx.color;
-                ctx.lineWidth = 2;
-                ctx.lineCap = 'round';
+                ctx.lineWidth = 1.2;
+                ctx.lineJoin = 'round';
                 ctx.beginPath();
-                ctx.moveTo(fx.x + Math.cos(fx.angle) * dist * 0.6, fx.y + Math.sin(fx.angle) * dist * 0.6);
+                ctx.moveTo(sx, sy);
+                ctx.lineTo(mx + nx, my + ny);
                 ctx.lineTo(endX, endY);
+                ctx.lineTo(mx - nx, my - ny);
+                ctx.closePath();
+                ctx.fill();
                 ctx.stroke();
             } else if (fx.type === 'levelUp') {
                 this._renderLevelUpFx(ctx, fx, alpha);
@@ -15237,7 +15250,7 @@ class Projectile {
         this.color = '#ff9800';
         this.damage = damage;
         this.trail = [];
-        this.kind = 0;   // 0 普通 / 3 奥术弹 / 4 爆裂火球(快照里同一编号)
+        this.kind = 0;   // 0 普通 / 3 奥术弹 / 4 爆裂火球 / 5 箭矢 / 6 奥术飞弹 / 7 苦无(快照里同一编号)
     }
 
     setKind(kind) {
@@ -15256,36 +15269,138 @@ class Projectile {
     }
     
     static getPal(p) {
-        if (p.gearBolt) return { trail: '#b9f6ca', glow: '#00e676', fill: '#b9f6ca', key: 'gear' };
-        if (p.kind === 3) return { trail: '#d1c4e9', glow: '#7c4dff', fill: '#ede7f6', key: 'arcane' };
-        if (p.kind === 4) return { trail: '#ffab91', glow: '#ff3d00', fill: '#ffccbc', key: 'fire' };
-        return { trail: '#ffcc80', glow: '#ff9800', fill: '#ffe082', key: 'normal' };
+        if (p.gearBolt) return { trail: '#b9f6ca', key: 'gear' };
+        switch (p.kind) {
+            case 3: return { trail: '#d1c4e9', key: 'arcane' };
+            case 4: return { trail: '#ffab91', key: 'fire' };
+            case 5: return { trail: '#dcedc8', key: 'arrow' };
+            case 6: return { trail: '#b2ebf2', key: 'bolt' };
+            case 7: return { trail: '#d1c4e9', key: 'kunai' };
+        }
+        return { trail: '#ffcc80', key: 'normal' };
     }
 
-    static bulletSprite(palKey, size, glowColor, fillColor) {
-        const pad = SpriteCache.padFor(12);
-        return SpriteCache.get(`proj|${palKey}|${size}`, size, size, pad, g => {
-            const c = size / 2;
-            g.translate(c, c);
-            g.shadowBlur = SpriteCache.blur(12);
-            g.shadowColor = glowColor;
-            g.fillStyle = fillColor;
-            g.beginPath();
-            g.arc(0, 0, size / 2, 0, Math.PI * 2);
-            g.fill();
+    // 弹体造型:精灵坐标 (0,0)-(w,h),+x 为飞行方向,中心对准弹体中心。只在第一次用到时画一次
+    static STYLES = {
+        // 未选职业时的普攻:橙色能量弹
+        normal: { w: 18, h: 10, glowR: 11, glow: '#ff9800', draw(g, w, h) {
+            const gr = g.createRadialGradient(w * 0.62, h / 2, 0, w * 0.55, h / 2, w * 0.5);
+            gr.addColorStop(0, '#ffffff'); gr.addColorStop(0.35, '#ffe082'); gr.addColorStop(1, '#ff6d00');
+            g.fillStyle = gr;
+            g.beginPath(); g.ellipse(w * 0.55, h / 2, w * 0.45, h * 0.42, 0, 0, Math.PI * 2); g.fill();
+        } },
+        // 弓手:木杆 + 银色箭头 + 绿色尾羽
+        arrow: { w: 26, h: 9, glowR: 8, glow: '#aaff44', draw(g, w, h) {
+            const c = h / 2;
+            g.shadowBlur = 0;
+            g.strokeStyle = '#8d6e63'; g.lineWidth = 2; g.lineCap = 'round';
+            g.beginPath(); g.moveTo(3, c); g.lineTo(w - 7, c); g.stroke();
+            g.fillStyle = '#aed581';
+            g.beginPath(); g.moveTo(0, c - 4); g.lineTo(7, c); g.lineTo(0, c + 4); g.lineTo(3, c); g.closePath(); g.fill();
+            g.fillStyle = '#f1f8e9';
+            g.beginPath(); g.moveTo(w, c); g.lineTo(w - 9, c - 4); g.lineTo(w - 7, c); g.lineTo(w - 9, c + 4); g.closePath(); g.fill();
+        } },
+        // 法师:青色奥术晶体
+        bolt: { w: 20, h: 10, glowR: 11, glow: '#00e5ff', draw(g, w, h) {
+            const c = h / 2;
+            const gr = g.createLinearGradient(0, 0, w, 0);
+            gr.addColorStop(0, '#00838f'); gr.addColorStop(0.6, '#4dd0e1'); gr.addColorStop(1, '#e0f7fa');
+            g.fillStyle = gr;
+            g.beginPath(); g.moveTo(w, c); g.lineTo(w * 0.5, 0.5); g.lineTo(1, c); g.lineTo(w * 0.5, h - 0.5); g.closePath(); g.fill();
+            g.shadowBlur = 0;
+            g.fillStyle = 'rgba(255,255,255,0.85)';
+            g.beginPath(); g.moveTo(w - 2, c); g.lineTo(w * 0.55, c - 1.6); g.lineTo(w * 0.3, c); g.lineTo(w * 0.55, c + 1.6); g.closePath(); g.fill();
+        } },
+        // 刺客:苦无(刃 + 柄环)
+        kunai: { w: 20, h: 9, glowR: 8, glow: '#b388ff', draw(g, w, h) {
+            const c = h / 2;
+            g.shadowBlur = 0;
+            g.strokeStyle = '#b388ff'; g.lineWidth = 1.6;
+            g.beginPath(); g.arc(3.2, c, 2.4, 0, Math.PI * 2); g.stroke();
+            g.fillStyle = '#4a148c'; g.fillRect(5.5, c - 1.2, 5, 2.4);
+            const gr = g.createLinearGradient(0, 0, 0, h);
+            gr.addColorStop(0, '#ffffff'); gr.addColorStop(1, '#9575cd');
+            g.fillStyle = gr;
+            g.beginPath(); g.moveTo(w, c); g.lineTo(w * 0.5, 0.6); g.lineTo(10, c); g.lineTo(w * 0.5, h - 0.6); g.closePath(); g.fill();
+        } },
+        // 奥术充能弹:紫色法球 + 光环
+        arcane: { w: 16, h: 16, glowR: 15, glow: '#7c4dff', draw(g, w, h) {
+            const gr = g.createRadialGradient(w * 0.42, h * 0.4, 0, w / 2, h / 2, w * 0.45);
+            gr.addColorStop(0, '#ffffff'); gr.addColorStop(0.4, '#d1c4e9'); gr.addColorStop(1, '#651fff');
+            g.fillStyle = gr;
+            g.beginPath(); g.arc(w / 2, h / 2, w * 0.4, 0, Math.PI * 2); g.fill();
+            g.shadowBlur = 0;
+            g.strokeStyle = 'rgba(234,128,252,0.9)'; g.lineWidth = 1.4;
+            g.beginPath(); g.ellipse(w / 2, h / 2, w * 0.5, h * 0.2, 0, 0, Math.PI * 2); g.stroke();
+        } },
+        // 炎术师:火球 + 火焰尾
+        fire: { w: 26, h: 16, glowR: 15, glow: '#ff3d00', draw(g, w, h) {
+            const c = h / 2, bx = w - 8;
+            const tail = g.createLinearGradient(0, 0, bx, 0);
+            tail.addColorStop(0, 'rgba(255,61,0,0)'); tail.addColorStop(1, 'rgba(255,145,0,0.95)');
+            g.fillStyle = tail;
+            g.beginPath(); g.moveTo(0, c); g.quadraticCurveTo(bx * 0.5, c - h * 0.5, bx, c - 6.5); g.lineTo(bx, c + 6.5); g.quadraticCurveTo(bx * 0.5, c + h * 0.5, 0, c); g.fill();
+            const gr = g.createRadialGradient(bx + 1, c - 1, 0, bx, c, 7);
+            gr.addColorStop(0, '#fffde7'); gr.addColorStop(0.45, '#ffab40'); gr.addColorStop(1, '#ff3d00');
+            g.fillStyle = gr;
+            g.beginPath(); g.arc(bx, c, 7, 0, Math.PI * 2); g.fill();
+        } },
+        // 风暴连弩:绿色电弧弩矢
+        gear: { w: 22, h: 10, glowR: 12, glow: '#00e676', draw(g, w, h) {
+            const c = h / 2;
+            const zig = () => { g.beginPath(); g.moveTo(1, c); g.lineTo(6, c - 3.5); g.lineTo(11, c + 3); g.lineTo(16, c - 2.5); g.lineTo(w - 1, c); };
+            g.lineJoin = 'round'; g.lineCap = 'round';
+            zig(); g.strokeStyle = '#00e676'; g.lineWidth = 3.4; g.stroke();
+            g.shadowBlur = 0;
+            zig(); g.strokeStyle = '#ffffff'; g.lineWidth = 1.2; g.stroke();
+        } }
+    };
+
+    // 弹体按 48 个方向预先转好(7.5° 一档,用到哪个方向才画),绘制时不旋转、按设备像素对齐直接拷贝。
+    // 实时旋转贴图要逐像素插值,几十颗弹体时明显更慢
+    static ANGLES = 48;
+    static bodySprite(key, ai) {
+        const st = Projectile.STYLES[key] || Projectile.STYLES.normal;
+        const side = Math.ceil(Math.hypot(st.w, st.h)) + 2;
+        return SpriteCache.get(`proj2|${key}|${ai}`, side, side, 1, g => {
+            g.translate(side / 2, side / 2);
+            g.rotate(ai * Math.PI * 2 / Projectile.ANGLES);
+            g.translate(-st.w / 2, -st.h / 2);
+            st.draw(g, st.w, st.h);
         });
+    }
+    static glowSprite(color, r) {
+        return SpriteCache.get(`projGlow|${color}|${r}`, r * 2, r * 2, 0, g => {
+            const gr = g.createRadialGradient(r, r, 0, r, r, r);
+            gr.addColorStop(0, color + 'aa'); gr.addColorStop(0.45, color + '44'); gr.addColorStop(1, color + '00');
+            g.fillStyle = gr;
+            g.fillRect(0, 0, r * 2, r * 2);
+        });
+    }
+
+    // 光晕 + 弹体(客机的投射物只有快照里的 angle)。snap = 当前画布变换 {a, e, f}
+    static drawBody(ctx, p, key, snap) {
+        const st = Projectile.STYLES[key] || Projectile.STYLES.normal;
+        const cx = p.x + p.size / 2, cy = p.y + p.size / 2;
+        if (st.glowR) SpriteCache.drawPx(ctx, Projectile.glowSprite(st.glow, st.glowR), cx - st.glowR, cy - st.glowR, snap);
+        const ang = p.angle !== undefined ? p.angle : Math.atan2(p.dy, p.dx);
+        const N = Projectile.ANGLES;
+        const ai = ((Math.round(ang / (Math.PI * 2) * N) % N) + N) % N;
+        const spr = Projectile.bodySprite(key, ai);
+        const half = (spr.width / SpriteCache.scale) / 2;
+        SpriteCache.drawPx(ctx, spr, cx - half + spr.pad, cy - half + spr.pad, snap);
     }
 
     static renderAll(ctx, list) {
         if (!list || !list.length) return;
         const L = 8;
         ctx.save();
-        // 尾迹合并路径: 按透明度档位与颜色批量合并
+        // 尾迹合并路径: 按透明度档位与颜色批量合并(穿透箭 PiercingArrow 自己画)
         for (let k = 1; k <= L; k++) {
             const paths = {};
             let any = false;
             for (const p of list) {
-                if (p.isPiercing) continue;
+                if (p instanceof PiercingArrow) continue;
                 const n = p.trail.length;
                 if (!n) continue;
                 const pal = Projectile.getPal(p);
@@ -15314,33 +15429,16 @@ class Projectile {
         }
         ctx.restore();
 
-        // 发光弹体预渲染绘制
+        // 弹体:预渲染精灵按方向旋转
+        const snap = ctx.getTransform();
         for (const p of list) {
-            if (p.isPiercing) {
-                p.render(ctx);
-                continue;
-            }
-            const pal = Projectile.getPal(p);
-            const spr = Projectile.bulletSprite(pal.key, Math.round(p.size), pal.glow, pal.fill);
-            SpriteCache.draw(ctx, spr, p.x, p.y, p.size, p.size);
+            if (p instanceof PiercingArrow) { p.render(ctx); continue; }
+            Projectile.drawBody(ctx, p, Projectile.getPal(p).key, snap);
         }
     }
     
     render(ctx) {
-        const pal = Projectile.getPal(this);
-        ctx.save();
-        for (let i = 0; i < this.trail.length; i++) {
-            const a = (i / this.trail.length) * 0.4;
-            const r = (i / this.trail.length) * this.size * 0.5;
-            ctx.globalAlpha = a;
-            ctx.fillStyle = pal.trail;
-            ctx.beginPath();
-            ctx.arc(this.trail[i].x, this.trail[i].y, r, 0, Math.PI * 2);
-            ctx.fill();
-        }
-        ctx.restore();
-        const spr = Projectile.bulletSprite(pal.key, Math.round(this.size), pal.glow, pal.fill);
-        SpriteCache.draw(ctx, spr, this.x, this.y, this.size, this.size);
+        Projectile.renderAll(ctx, [this]);
     }
 }
 
@@ -15426,20 +15524,36 @@ class PiercingArrow {
             ctx.fill();
         }
         ctx.globalAlpha = 1;
-        ctx.shadowBlur = 14;
-        ctx.shadowColor = '#aaff44';
-        ctx.save();
+        const spr = PiercingArrow.sprite();
         ctx.translate(this.x + this.size / 2, this.y + this.size / 2);
         ctx.rotate(this.angle);
-        ctx.fillStyle = '#ddff88';
-        ctx.beginPath();
-        ctx.moveTo(10, 0);
-        ctx.lineTo(-8, -3);
-        ctx.lineTo(-8, 3);
-        ctx.closePath();
-        ctx.fill();
+        SpriteCache.draw(ctx, spr, -PiercingArrow.W / 2 - 4, -PiercingArrow.H / 2, PiercingArrow.W, PiercingArrow.H);
         ctx.restore();
-        ctx.restore();
+    }
+
+    // 穿透箭:发光能量箭(+x 为箭头方向),也给技能特效 arrow 复用
+    static W = 36;
+    static H = 12;
+    static sprite() {
+        const W = PiercingArrow.W, H = PiercingArrow.H;
+        return SpriteCache.get('pierceArrow', W, H, SpriteCache.padFor(14), g => {
+            const c = H / 2;
+            g.shadowBlur = SpriteCache.blur(14);
+            g.shadowColor = '#aaff44';
+            const sh = g.createLinearGradient(0, 0, W, 0);
+            sh.addColorStop(0, 'rgba(170,255,68,0)'); sh.addColorStop(1, '#eeff41');
+            g.strokeStyle = sh; g.lineWidth = 3; g.lineCap = 'round';
+            g.beginPath(); g.moveTo(2, c); g.lineTo(W - 10, c); g.stroke();
+            g.fillStyle = '#ccff90';
+            for (const d of [-1, 1]) {
+                g.beginPath(); g.moveTo(3, c); g.lineTo(0, c + d * 5.5); g.lineTo(9, c + d * 1.2); g.closePath(); g.fill();
+            }
+            g.fillStyle = '#f9fbe7';
+            g.beginPath(); g.moveTo(W, c); g.lineTo(W - 13, c - 5.5); g.lineTo(W - 9, c); g.lineTo(W - 13, c + 5.5); g.closePath(); g.fill();
+            g.shadowBlur = 0;
+            g.fillStyle = '#ffffff';
+            g.beginPath(); g.moveTo(W - 1.5, c); g.lineTo(W - 10, c - 2); g.lineTo(W - 10, c + 2); g.closePath(); g.fill();
+        });
     }
 }
 
