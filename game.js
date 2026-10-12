@@ -4342,6 +4342,43 @@ class Game {
                 ctx.arc(cx, cy, r, 0, Math.PI * 2);
                 ctx.stroke();
             }
+            // 圣骑士神圣光环：持久温柔金色圆环，每帧直接绘制
+            if (cls === 'paladin' && p.holyAuraActive) {
+                const auraR = this._auraRadius(p);
+                const breath = 0.75 + 0.25 * Math.sin(t * 1.8); // 缓慢呼吸，约 3.5s 一周
+                // 极淡内填充（仅提示范围）
+                ctx.globalAlpha = 0.05 * breath;
+                ctx.fillStyle = '#ffd700';
+                ctx.beginPath();
+                ctx.arc(cx, cy, auraR, 0, Math.PI * 2);
+                ctx.fill();
+                // 主圆环：细线 + 柔和透明度
+                ctx.globalAlpha = 0.5 * breath;
+                ctx.strokeStyle = '#ffe082';
+                ctx.lineWidth = 1.8;
+                ctx.beginPath();
+                ctx.arc(cx, cy, auraR, 0, Math.PI * 2);
+                ctx.stroke();
+                // 内侧柔光晕环（比主环略小，更细更淡）
+                ctx.globalAlpha = 0.18 * breath;
+                ctx.lineWidth = 5;
+                ctx.strokeStyle = '#fff9c4';
+                ctx.beginPath();
+                ctx.arc(cx, cy, auraR * 0.94, 0, Math.PI * 2);
+                ctx.stroke();
+                // 缓慢旋转的虚线外缘点缀（剩余时间少于 2s 时消失，暗示快结束）
+                if (p.holyAuraTimer > 2) {
+                    ctx.globalAlpha = 0.22 * breath;
+                    ctx.lineWidth = 1.2;
+                    ctx.strokeStyle = '#ffd700';
+                    ctx.setLineDash([6, 10]);
+                    ctx.lineDashOffset = -t * 18;
+                    ctx.beginPath();
+                    ctx.arc(cx, cy, auraR + 5, 0, Math.PI * 2);
+                    ctx.stroke();
+                    ctx.setLineDash([]);
+                }
+            }
             ctx.restore();
         }
     }
@@ -5590,23 +5627,7 @@ class Game {
                             this.bossDamageDealt += auraDmgTick;
                         }
                     }
-                    // 节流：每 0.28s 推一次光晕特效，杜绝每帧堆叠 20+ 层导致的刺眼过曝
-                    if (!this.player._holyAuraFxCd || this.player._holyAuraFxCd <= 0) {
-                        this.effects.push({ type: 'holyAura', x: pcx, y: pcy, radius: auraR, color: '#ffd700', ttl: 0.32, maxTtl: 0.32 });
-                        this.player._holyAuraFxCd = 0.28;
-                    } else {
-                        this.player._holyAuraFxCd -= DT;
-                    }
-                    // 每 0.6s 升一批柔和金色微尘粒子
-                    if (!this.player._holyDustCd || this.player._holyDustCd <= 0) {
-                        const ang = Math.random() * Math.PI * 2;
-                        const rr = auraR * (0.5 + Math.random() * 0.5);
-                        this.spawnParticles(pcx + Math.cos(ang) * rr, pcy + Math.sin(ang) * rr,
-                            '#ffe082', 3, 0.3, 1.2, 0.5, 1.5, 0.06);
-                        this.player._holyDustCd = 0.6;
-                    } else {
-                        this.player._holyDustCd -= DT;
-                    }
+                    // 持久圆环由 _renderClassAura 直接每帧绘制，此处只维持治疗和伤害逻辑
                 }
             }
         }
@@ -13416,7 +13437,7 @@ class Game {
                 const t = 1 - alpha; // 0=刚生成 1=消亡
                 const eased = t * t; // 加速下落
                 const curY = fx.startY + (fx.endY - fx.startY) * eased;
-                // 尾迹（淡青白细线）
+                // 尾迹（淡青白细线，从上方起点到当前位置）
                 ctx.globalAlpha = alpha * 0.45;
                 ctx.strokeStyle = '#e8f5e9';
                 ctx.lineWidth = 1.5;
@@ -13425,23 +13446,20 @@ class Game {
                 ctx.moveTo(fx.x, fx.startY + (fx.endY - fx.startY) * Math.max(0, eased - 0.25));
                 ctx.lineTo(fx.x, curY);
                 ctx.stroke();
-                // 箭身（灵风翠绿）
+                // 箭身：箭尖朝下（正 Y 方向），不旋转
                 ctx.globalAlpha = alpha;
                 ctx.translate(fx.x, curY);
-                ctx.rotate(Math.PI / 2);
-                const k2 = 24 * 1.6 / PiercingArrow.W;
-                // 用自定义颜色替代弓手原色箭矢精灵：直接画简洁风格箭形
                 ctx.fillStyle = '#69f0ae';
                 ctx.shadowBlur = 6;
                 ctx.shadowColor = '#00e676';
                 ctx.beginPath();
-                ctx.moveTo(0, -20); // 箭尖
-                ctx.lineTo(-4, -8);
-                ctx.lineTo(-1.5, -8);
+                ctx.moveTo(0, 18);   // 箭尖（朝下）
+                ctx.lineTo(-4, 6);
                 ctx.lineTo(-1.5, 6);
-                ctx.lineTo(1.5, 6);
+                ctx.lineTo(-1.5, -8);
                 ctx.lineTo(1.5, -8);
-                ctx.lineTo(4, -8);
+                ctx.lineTo(1.5, 6);
+                ctx.lineTo(4, 6);
                 ctx.closePath();
                 ctx.fill();
                 ctx.shadowBlur = 0;
