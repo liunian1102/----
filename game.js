@@ -5590,7 +5590,23 @@ class Game {
                             this.bossDamageDealt += auraDmgTick;
                         }
                     }
-                    this.effects.push({ type: 'holyAura', x: pcx, y: pcy, radius: auraR, color: '#ffd700', ttl: 0.35, maxTtl: 0.35, pulse: this.player.holyAuraTimer });
+                    // 节流：每 0.28s 推一次光晕特效，杜绝每帧堆叠 20+ 层导致的刺眼过曝
+                    if (!this.player._holyAuraFxCd || this.player._holyAuraFxCd <= 0) {
+                        this.effects.push({ type: 'holyAura', x: pcx, y: pcy, radius: auraR, color: '#ffd700', ttl: 0.32, maxTtl: 0.32 });
+                        this.player._holyAuraFxCd = 0.28;
+                    } else {
+                        this.player._holyAuraFxCd -= DT;
+                    }
+                    // 每 0.6s 升一批柔和金色微尘粒子
+                    if (!this.player._holyDustCd || this.player._holyDustCd <= 0) {
+                        const ang = Math.random() * Math.PI * 2;
+                        const rr = auraR * (0.5 + Math.random() * 0.5);
+                        this.spawnParticles(pcx + Math.cos(ang) * rr, pcy + Math.sin(ang) * rr,
+                            '#ffe082', 3, 0.3, 1.2, 0.5, 1.5, 0.06);
+                        this.player._holyDustCd = 0.6;
+                    } else {
+                        this.player._holyDustCd -= DT;
+                    }
                 }
             }
         }
@@ -10531,7 +10547,7 @@ class Game {
         const dmg = this._computeAttackDamage(this.player.attack) * 0.8 * this._getSkillMultiplier(skill.level) * (this.player.archerSkillDmgMult || 1);
         // 游侠:每支箭锁定附近一个敌人(轮流分配),落下时追到它当前位置
         const pool = ranger ? this._findClosestEnemies(8).filter(e => Math.hypot(e.x - pcx, e.y - pcy) < 340) : [];
-        if (!ranger) this.effects.push({ type: 'zone', x: pcx, y: pcy, r: 110, color: '#aaff44', ttl: count * 0.1 + 0.3, maxTtl: count * 0.1 + 0.3 });
+        if (!ranger) this.effects.push({ type: 'zone', x: pcx, y: pcy, r: 110, color: '#69f0ae', ttl: count * 0.1 + 0.3, maxTtl: count * 0.1 + 0.3 });
         for (let i = 0; i < count; i++) {
             this.pendingActions.push({
                 delay: i * 0.1,
@@ -10540,12 +10556,15 @@ class Game {
                     const alive = lock && (lock === this.boss ? this.bossState === 'active' : this.enemies.includes(lock));
                     const tx = alive ? lock.x + lock.size / 2 + (Math.random() - 0.5) * 10 : pcx + (Math.random() - 0.5) * 200;
                     const ty = alive ? lock.y + lock.size / 2 + (Math.random() - 0.5) * 10 : pcy + (Math.random() - 0.5) * 200;
-                    this.effects.push({ type: 'arrow', x: tx, y: ty - 120, angle: Math.PI / 2, length: 24, color: '#aaff44', ttl: 0.25, maxTtl: 0.25 });
+                    // 落下动画：fallingArrow 从 ty-110 高空以 0.22s 俯冲至落地点
+                    this.effects.push({ type: 'fallingArrow', x: tx, startY: ty - 110, endY: ty, color: '#69f0ae', ttl: 0.22, maxTtl: 0.22 });
                     this.pendingActions.push({
-                        delay: 0.2,
+                        delay: 0.20,
                         fn: () => {
-                            this.spawnHitParticles(tx, ty, '#aaff44', 6);
-                            this.effects.push({ type: 'shockwave', x: tx, y: ty, radius: 5, maxRadius: 30, color: '#aaff44', ttl: 0.2, maxTtl: 0.2 });
+                            // 落地：细小风刃碎尘替代粗绿冲击波
+                            this.spawnParticles(tx, ty, '#b9f6ca', 8, 0.5, 2.5, 1.5, 3.5, 0.05);
+                            this.spawnParticles(tx, ty, '#ffffff', 3, 0.3, 1.2, 1, 2.5, 0.07);
+                            this.effects.push({ type: 'shockwave', x: tx, y: ty, radius: 3, maxRadius: 22, color: '#69f0ae', ttl: 0.18, maxTtl: 0.18 });
                             this._hitAround(tx, ty, this._aoe(25), dmg);
                         }
                     });
@@ -10588,12 +10607,15 @@ class Game {
         this.player.faith -= 50;
         this.player.holyAuraActive = true;
         this.player.holyAuraTimer = 5 + (this.player.paladinAuraDurationBonus || 0);
+        this.player._holyAuraFxCd = 0;
+        this.player._holyDustCd = 0;
         const pcx = this.player.x + this.player.size / 2;
         const pcy = this.player.y + this.player.size / 2;
         const auraR = this._auraRadius(this.player);
-        this.effects.push({ type: 'holyAura', x: pcx, y: pcy, radius: auraR, color: '#ffd700', ttl: 0.6, maxTtl: 0.6, pulse: 5 });
+        // 激活时：一次柔和扩散光圈 + 旋转法阵，不再额外叠重光晕
+        this.effects.push({ type: 'shockwave', x: pcx, y: pcy, radius: 8, maxRadius: auraR, color: '#ffe082', ttl: 0.55, maxTtl: 0.55 });
         this.effects.push({ type: 'sigil', x: pcx, y: pcy, r: auraR, n: 8, color: '#ffe082', rot: 0, spin: 0.5, ttl: 0.9, maxTtl: 0.9 });
-        this.spawnBurstRing(pcx, pcy, auraR, '#ffd700', skill.level >= 3 ? 24 : 16);
+        this.spawnBurstRing(pcx, pcy, auraR, '#ffe082', skill.level >= 3 ? 18 : 12);
         skill.cooldown = skill.maxCooldown;
     }
     
@@ -13383,25 +13405,71 @@ class Game {
                 ctx.quadraticCurveTo(mx + nx * bulge * 1.3, my + ny * bulge * 1.3, x2, y2);
                 ctx.stroke();
             } else if (fx.type === 'arrow') {
-                // 箭矢特效(箭雨落箭 / 穿透箭出手):发光能量箭精灵,长度按 fx.length 缩放
+                // 箭矢特效(穿透箭出手):发光能量箭精灵,长度按 fx.length 缩放
                 ctx.globalAlpha = alpha;
                 ctx.translate(fx.x, fx.y);
                 ctx.rotate(fx.angle);
                 const k = fx.length * 1.6 / PiercingArrow.W;
                 SpriteCache.draw(ctx, PiercingArrow.sprite(), -fx.length, -PiercingArrow.H * k / 2, PiercingArrow.W * k, PiercingArrow.H * k);
+            } else if (fx.type === 'fallingArrow') {
+                // 箭雨落箭：从 startY 高空俯冲至 endY 地面，带加速感（easeIn）
+                const t = 1 - alpha; // 0=刚生成 1=消亡
+                const eased = t * t; // 加速下落
+                const curY = fx.startY + (fx.endY - fx.startY) * eased;
+                // 尾迹（淡青白细线）
+                ctx.globalAlpha = alpha * 0.45;
+                ctx.strokeStyle = '#e8f5e9';
+                ctx.lineWidth = 1.5;
+                ctx.lineCap = 'round';
+                ctx.beginPath();
+                ctx.moveTo(fx.x, fx.startY + (fx.endY - fx.startY) * Math.max(0, eased - 0.25));
+                ctx.lineTo(fx.x, curY);
+                ctx.stroke();
+                // 箭身（灵风翠绿）
+                ctx.globalAlpha = alpha;
+                ctx.translate(fx.x, curY);
+                ctx.rotate(Math.PI / 2);
+                const k2 = 24 * 1.6 / PiercingArrow.W;
+                // 用自定义颜色替代弓手原色箭矢精灵：直接画简洁风格箭形
+                ctx.fillStyle = '#69f0ae';
+                ctx.shadowBlur = 6;
+                ctx.shadowColor = '#00e676';
+                ctx.beginPath();
+                ctx.moveTo(0, -20); // 箭尖
+                ctx.lineTo(-4, -8);
+                ctx.lineTo(-1.5, -8);
+                ctx.lineTo(-1.5, 6);
+                ctx.lineTo(1.5, 6);
+                ctx.lineTo(1.5, -8);
+                ctx.lineTo(4, -8);
+                ctx.closePath();
+                ctx.fill();
+                ctx.shadowBlur = 0;
             } else if (fx.type === 'holyAura') {
-                const pulse = Math.sin(fx.ttl * 8) * 0.3 + 0.7;
-                ctx.globalAlpha = alpha * pulse * 0.5;
+                // 柔和单层呼吸光晕：轻微内填充 + 一道软边界描边，杜绝多层叠加过曝
+                const t = 1 - alpha;
+                const breath = Math.sin(t * Math.PI * 2.5) * 0.18 + 0.82; // 缓慢呼吸波
                 const r = Math.max(1, Math.round(fx.radius));
-                SpriteCache.draw(ctx, this._fxHolyGlow(fx.color, r), fx.x - fx.radius, fx.y - fx.radius, fx.radius * 2, fx.radius * 2);
+                // 极淡内填充（仅范围提示，不夺目）
+                ctx.globalAlpha = alpha * breath * 0.07;
+                ctx.fillStyle = fx.color;
+                ctx.beginPath();
+                ctx.arc(fx.x, fx.y, fx.radius, 0, Math.PI * 2);
+                ctx.fill();
+                // 柔和边界线（细一点，lineWidth 2，透明度控制在 0.45）
+                ctx.globalAlpha = alpha * breath * 0.45;
                 ctx.strokeStyle = fx.color;
-                ctx.lineWidth = 3;
+                ctx.lineWidth = 2;
                 ctx.beginPath();
                 ctx.arc(fx.x, fx.y, fx.radius, 0, Math.PI * 2);
                 ctx.stroke();
-                ctx.globalAlpha = alpha * pulse * 0.12;
-                ctx.fillStyle = fx.color;
-                ctx.fill();
+                // 内侧晕光（半径略小，更柔）
+                ctx.globalAlpha = alpha * breath * 0.12;
+                ctx.lineWidth = 6;
+                ctx.strokeStyle = '#fff9c4';
+                ctx.beginPath();
+                ctx.arc(fx.x, fx.y, fx.radius * 0.92, 0, Math.PI * 2);
+                ctx.stroke();
             } else if (fx.type === 'floatText') {
                 const prog = 1 - alpha;
                 ctx.globalAlpha = alpha;
