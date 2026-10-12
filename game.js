@@ -302,7 +302,8 @@ const EVENT_TYPES = Object.keys(GAME_EVENTS);
 const MP_ITEM_TYPES = ['potion', 'exp_book', 'snowflake', 'bomb', 'heart', 'potion_invicible',
     'gear_blade', 'gear_orb', 'gear_armor', 'gear_bow', 'gear_thorns',
     'relic_thunder_ring', 'relic_vampire_fang', 'relic_chrono_watch', 'relic_reaper_cloak', 'relic_alchemist_stone', 'relic_warmog_vest',
-    'relic_glass_crown', 'relic_berserk_mask', 'relic_frost_heart', 'relic_gold_idol', 'relic_storm_boots', 'relic_blood_chalice'];
+    'relic_glass_crown', 'relic_berserk_mask', 'relic_frost_heart', 'relic_gold_idol', 'relic_storm_boots', 'relic_blood_chalice',
+    'relic_astral_compass', 'relic_resonance_crystal'];
 
 // 永久战利品暗金遗物系统 (Relic Loot System)
 //   玩家最多同时装备 3 件遗物,整局常驻。每件都是一笔交易:pros 增益 + cons 代价(至少一条)
@@ -346,12 +347,22 @@ for (const k in RELICS) {
     const r = RELICS[k];
     r.desc = r.pros.join(',') + ';代价:' + r.cons.join(',');
 }
-// 已装备遗物某项修正的合计值
+// 已装备遗物某项修正的合计值(支持暗金赋能:增益增幅或代价遏制)
 function relicMod(p, key) {
     const list = p && p.relics;
     if (!list || !list.length) return 0;
     let v = 0;
-    for (const rk of list) { const r = RELICS[rk]; if (r && r.mods[key]) v += r.mods[key]; }
+    for (const rk of list) {
+        const r = RELICS[rk];
+        if (!r || !r.mods[key]) continue;
+        let val = r.mods[key];
+        const emp = p && p.relicEmpowers && p.relicEmpowers[rk];
+        // 增益增幅: 正向修正提升 35%
+        if (emp === 'pros' && val > 0 && key !== 'dmgTaken') val *= 1.35;
+        // 代价遏制: 负向惩罚削减 50%
+        if (emp === 'cons' && (val < 0 || key === 'dmgTaken')) val *= 0.5;
+        v += val;
+    }
     return v;
 }
 // 遗物掉率:魔王击退 / 完美击退 / 深渊层 / 深渊层(仙女座 Lv3) / 虚空裂隙 / 词缀精英
@@ -804,10 +815,12 @@ const TREE_NODES = [
     { id: 'rm9', br: 'mix', kind: 'small', name: '星尘', a: 110.0, r: 1010, mods: { dmg: 0.02, maxHealth: 10 } },
     { id: 'rm10', br: 'mix', kind: 'small', name: '星尘', a: 140.0, r: 1010, mods: { dmg: 0.02, maxHealth: 10 } },
     { id: 'rm11', br: 'mix', kind: 'small', name: '星尘', a: 168.0, r: 1010, mods: { dmg: 0.02, maxHealth: 10 } },
-    { id: 'rm12', br: 'mix', kind: 'small', name: '星尘', a: -162.0, r: 1010, mods: { dmg: 0.02, maxHealth: 10 } }
+    { id: 'rm12', br: 'mix', kind: 'small', name: '星尘', a: -162.0, r: 1010, mods: { dmg: 0.02, maxHealth: 10 } },
+    { id: 'rSk1', br: 'mix', kind: 'socket', name: '圣物神龛·阳', a: -70.0, r: 295, mods: { relicSlot: 1 }, icon: '⛩' },
+    { id: 'rSk2', br: 'mix', kind: 'socket', name: '圣物神龛·阴', a: 171.0, r: 295, mods: { relicSlot: 1 }, icon: '⛩' }
 ];
 const TREE_LINKS = [
-    ['start', 's1'], ['s1', 's2'], ['s1', 's3'], ['s2', 'sN1'], ['s2', 'sSk'], ['s3', 'sSk'], ['s3', 'sN2'], ['sN1', 's4'], ['sSk', 's4'], ['sN2', 's4'], ['sN1', 'sa1'], ['sa1', 'sa2'], ['sa2', 'sa3'], ['sa3', 'sa4'], ['sa3', 'sa5'], ['sa4', 'sa6'], ['sa5', 'sa6'], ['sa6', 'saK'], ['s4', 'sb1'], ['sb1', 'sb2'], ['sb2', 'sb3'], ['sb3', 'sb4'], ['sb3', 'sb5'], ['sb4', 'sb6'], ['sb5', 'sb6'], ['sb6', 'sK'], ['sb6', 'sM'], ['sN2', 'sc1'], ['sc1', 'sc2'], ['sc2', 'sc3'], ['sc3', 'sc4'], ['sc3', 'sc5'], ['sc4', 'sc6'], ['sc5', 'sc6'], ['sc6', 'scK'], ['start', 'd1'], ['d1', 'd2'], ['d1', 'd3'], ['d2', 'dN1'], ['d2', 'dSk'], ['d3', 'dSk'], ['d3', 'dN2'], ['dN1', 'd4'], ['dSk', 'd4'], ['dN2', 'd4'], ['dN1', 'da1'], ['da1', 'da2'], ['da2', 'da3'], ['da3', 'da4'], ['da3', 'da5'], ['da4', 'da6'], ['da5', 'da6'], ['da6', 'daK'], ['d4', 'db1'], ['db1', 'db2'], ['db2', 'db3'], ['db3', 'db4'], ['db3', 'db5'], ['db4', 'db6'], ['db5', 'db6'], ['db6', 'dK'], ['db6', 'dM'], ['dN2', 'dc1'], ['dc1', 'dc2'], ['dc2', 'dc3'], ['dc3', 'dc4'], ['dc3', 'dc5'], ['dc4', 'dc6'], ['dc5', 'dc6'], ['dc6', 'dcK'], ['start', 'i1'], ['i1', 'i2'], ['i1', 'i3'], ['i2', 'iN1'], ['i2', 'iSk'], ['i3', 'iSk'], ['i3', 'iN2'], ['iN1', 'i4'], ['iSk', 'i4'], ['iN2', 'i4'], ['iN1', 'ia1'], ['ia1', 'ia2'], ['ia2', 'ia3'], ['ia3', 'ia4'], ['ia3', 'ia5'], ['ia4', 'ia6'], ['ia5', 'ia6'], ['ia6', 'iaK'], ['i4', 'ib1'], ['ib1', 'ib2'], ['ib2', 'ib3'], ['ib3', 'ib4'], ['ib3', 'ib5'], ['ib4', 'ib6'], ['ib5', 'ib6'], ['ib6', 'iK'], ['ib6', 'iM'], ['iN2', 'ic1'], ['ic1', 'ic2'], ['ic2', 'ic3'], ['ic3', 'ic4'], ['ic3', 'ic5'], ['ic4', 'ic6'], ['ic5', 'ic6'], ['ic6', 'icK'], ['sN2', 'b1'], ['iN1', 'b1'], ['b1', 'bK1'], ['b1', 'h11'], ['h11', 'h12'], ['h12', 'h13'], ['h12', 'h14'], ['h13', 'h15'], ['h14', 'h15'], ['h15', 'h16'], ['h12', 'sc2'], ['h12', 'ia2'], ['h15', 'h1K'], ['iN2', 'b2'], ['dN1', 'b2'], ['b2', 'bK2'], ['b2', 'h21'], ['h21', 'h22'], ['h22', 'h23'], ['h22', 'h24'], ['h23', 'h25'], ['h24', 'h25'], ['h25', 'h26'], ['h22', 'ic2'], ['h22', 'da2'], ['h25', 'h2K'], ['dN2', 'b3'], ['sN1', 'b3'], ['b3', 'bK3'], ['b3', 'h31'], ['h31', 'h32'], ['h32', 'h33'], ['h32', 'h34'], ['h33', 'h35'], ['h34', 'h35'], ['h35', 'h36'], ['h32', 'dc2'], ['h32', 'sa2'], ['h35', 'h3K'], ['sb6', 'r1'], ['sc6', 'r2'], ['h16', 'r3'], ['ia6', 'r4'], ['ib6', 'r5'], ['ic6', 'r6'], ['h26', 'r7'], ['da6', 'r8'], ['db6', 'r9'], ['dc6', 'r10'], ['h36', 'r11'], ['sa6', 'r12'], ['r1', 'rm1'], ['rm1', 'r2'], ['r2', 'rm2'], ['rm2', 'r3'], ['r3', 'rm3'], ['rm3', 'r4'], ['r4', 'rm4'], ['rm4', 'r5'], ['r5', 'rm5'], ['rm5', 'r6'], ['r6', 'rm6'], ['rm6', 'r7'], ['r7', 'rm7'], ['rm7', 'r8'], ['r8', 'rm8'], ['rm8', 'r9'], ['r9', 'rm9'], ['rm9', 'r10'], ['r10', 'rm10'], ['rm10', 'r11'], ['r11', 'rm11'], ['rm11', 'r12'], ['r12', 'rm12'], ['rm12', 'r1']
+    ['start', 's1'], ['s1', 's2'], ['s1', 's3'], ['s2', 'sN1'], ['s2', 'sSk'], ['s3', 'sSk'], ['s3', 'sN2'], ['sN1', 's4'], ['sSk', 's4'], ['sN2', 's4'], ['sN1', 'sa1'], ['sa1', 'sa2'], ['sa2', 'sa3'], ['sa3', 'sa4'], ['sa3', 'sa5'], ['sa4', 'sa6'], ['sa5', 'sa6'], ['sa6', 'saK'], ['s4', 'sb1'], ['sb1', 'sb2'], ['sb2', 'sb3'], ['sb3', 'sb4'], ['sb3', 'sb5'], ['sb4', 'sb6'], ['sb5', 'sb6'], ['sb6', 'sK'], ['sb6', 'sM'], ['sN2', 'sc1'], ['sc1', 'sc2'], ['sc2', 'sc3'], ['sc3', 'sc4'], ['sc3', 'sc5'], ['sc4', 'sc6'], ['sc5', 'sc6'], ['sc6', 'scK'], ['start', 'd1'], ['d1', 'd2'], ['d1', 'd3'], ['d2', 'dN1'], ['d2', 'dSk'], ['d3', 'dSk'], ['d3', 'dN2'], ['dN1', 'd4'], ['dSk', 'd4'], ['dN2', 'd4'], ['dN1', 'da1'], ['da1', 'da2'], ['da2', 'da3'], ['da3', 'da4'], ['da3', 'da5'], ['da4', 'da6'], ['da5', 'da6'], ['da6', 'daK'], ['d4', 'db1'], ['db1', 'db2'], ['db2', 'db3'], ['db3', 'db4'], ['db3', 'db5'], ['db4', 'db6'], ['db5', 'db6'], ['db6', 'dK'], ['db6', 'dM'], ['dN2', 'dc1'], ['dc1', 'dc2'], ['dc2', 'dc3'], ['dc3', 'dc4'], ['dc3', 'dc5'], ['dc4', 'dc6'], ['dc5', 'dc6'], ['dc6', 'dcK'], ['start', 'i1'], ['i1', 'i2'], ['i1', 'i3'], ['i2', 'iN1'], ['i2', 'iSk'], ['i3', 'iSk'], ['i3', 'iN2'], ['iN1', 'i4'], ['iSk', 'i4'], ['iN2', 'i4'], ['iN1', 'ia1'], ['ia1', 'ia2'], ['ia2', 'ia3'], ['ia3', 'ia4'], ['ia3', 'ia5'], ['ia4', 'ia6'], ['ia5', 'ia6'], ['ia6', 'iaK'], ['i4', 'ib1'], ['ib1', 'ib2'], ['ib2', 'ib3'], ['ib3', 'ib4'], ['ib3', 'ib5'], ['ib4', 'ib6'], ['ib5', 'ib6'], ['ib6', 'iK'], ['ib6', 'iM'], ['iN2', 'ic1'], ['ic1', 'ic2'], ['ic2', 'ic3'], ['ic3', 'ic4'], ['ic3', 'ic5'], ['ic4', 'ic6'], ['ic5', 'ic6'], ['ic6', 'icK'], ['sN2', 'b1'], ['iN1', 'b1'], ['b1', 'bK1'], ['b1', 'h11'], ['h11', 'h12'], ['h12', 'h13'], ['h12', 'h14'], ['h13', 'h15'], ['h14', 'h15'], ['h15', 'h16'], ['h12', 'sc2'], ['h12', 'ia2'], ['h15', 'h1K'], ['iN2', 'b2'], ['dN1', 'b2'], ['b2', 'bK2'], ['b2', 'h21'], ['h21', 'h22'], ['h22', 'h23'], ['h22', 'h24'], ['h23', 'h25'], ['h24', 'h25'], ['h25', 'h26'], ['h22', 'ic2'], ['h22', 'da2'], ['h25', 'h2K'], ['dN2', 'b3'], ['sN1', 'b3'], ['b3', 'bK3'], ['b3', 'h31'], ['h31', 'h32'], ['h32', 'h33'], ['h32', 'h34'], ['h33', 'h35'], ['h34', 'h35'], ['h35', 'h36'], ['h32', 'dc2'], ['h32', 'sa2'], ['h35', 'h3K'], ['sb6', 'r1'], ['sc6', 'r2'], ['h16', 'r3'], ['ia6', 'r4'], ['ib6', 'r5'], ['ic6', 'r6'], ['h26', 'r7'], ['da6', 'r8'], ['db6', 'r9'], ['dc6', 'r10'], ['h36', 'r11'], ['sa6', 'r12'], ['r1', 'rm1'], ['rm1', 'r2'], ['r2', 'rm2'], ['rm2', 'r3'], ['r3', 'rm3'], ['rm3', 'r4'], ['r4', 'rm4'], ['rm4', 'r5'], ['r5', 'rm5'], ['rm5', 'r6'], ['r6', 'rm6'], ['rm6', 'r7'], ['r7', 'rm7'], ['rm7', 'r8'], ['r8', 'rm8'], ['rm8', 'r9'], ['r9', 'rm9'], ['rm9', 'r10'], ['r10', 'rm10'], ['rm10', 'r11'], ['r11', 'rm11'], ['rm11', 'r12'], ['r12', 'rm12'], ['rm12', 'r1'], ['b1', 'rSk1'], ['rSk1', 'h11'], ['b3', 'rSk2'], ['rSk2', 'h31']
 ];
 const TREE_BY_ID = {};
 const TREE_ADJ = {};
@@ -861,7 +874,8 @@ const TREE_MOD_TEXT = {
     lowLifeEvade: v => `生命低于 35% 时闪避 +${fmtPct(v)}`,
     sockQ:      () => 'Q 技能 +1 连接孔',
     sockE:      () => 'E 技能 +1 连接孔',
-    sockA:      () => '普攻 +1 连接孔'
+    sockA:      () => '普攻 +1 连接孔',
+    relicSlot:  v => `暗金装备栏 +${v}`
 };
 function treeModLines(mods) {
     return Object.keys(mods).filter(k => TREE_MOD_TEXT[k] && mods[k]).map(k => TREE_MOD_TEXT[k](mods[k]));
@@ -3189,8 +3203,11 @@ class Game {
             // 终极觉醒奥义充能(0~100)与激活中标记
             uc: q1(p.ultCharge || 0), ua: p.ultActiveTimer > 0 ? 1 : 0,
             gc: p.greedContract || 0, // 贪婪契约
-            // 永久暗金遗物列表
+            // 永久暗金遗物列表、行囊、赋能与余烬
             rl: (p.relics && p.relics.length > 0) ? p.relics.slice() : undefined,
+            rb: (p.relicBag && p.relicBag.length > 0) ? p.relicBag.slice() : undefined,
+            re: (p.relicEmpowers && Object.keys(p.relicEmpowers).length > 0) ? Object.assign({}, p.relicEmpowers) : undefined,
+            ra: p.relicAsh || undefined,
             // 联机倒地信标状态 [剩余倒计时, 救援进度]
             dn: p.downed ? [q1(p.downedTimer), q2(p.rescueCharge || 0)] : 0,
             // 连杀 [连杀数, 剩余秒] 与本局最高连杀
@@ -3417,6 +3434,9 @@ class Game {
             this.player.blessTimer = myData.bl || 0;
             this.player.greedContract = myData.gc || null;
             if (myData.rl) this.player.relics = myData.rl.slice();
+            if (myData.rb) this.player.relicBag = myData.rb.slice();
+            if (myData.re) this.player.relicEmpowers = Object.assign({}, myData.re);
+            if (myData.ra !== undefined) this.player.relicAsh = myData.ra;
             if (myData.dn) {
                 this.player.downed = true;
                 this.player.downedTimer = myData.dn[0];
@@ -6460,6 +6480,18 @@ class Game {
         }
         p.tree = t;
         p._buildVer++;
+
+        // 暗金装备栏上限:基础 1 个,圣物神龛节点可扩充至最多 3 个
+        const newMaxRelics = Math.min(3, 1 + (t.relicSlot || 0));
+        p.maxRelicSlots = newMaxRelics;
+        if (!p.relicBag) p.relicBag = [];
+        // 若洗点或取消神龛导致槽位减少,超出上限的暗金自动安全退回行囊
+        while (p.relics && p.relics.length > p.maxRelicSlots) {
+            const popped = p.relics.pop();
+            if (p.relicBag.length < 6) p.relicBag.push(popped);
+        }
+        if (this._syncRelicStats) this._syncRelicStats(p);
+
         if (!applyBase) return;
         const old = p._treeBase;
         const nb = {};
@@ -9056,23 +9088,40 @@ class Game {
                 } else if (item.relic) {
                     const rdef = RELICS[item.relic];
                     if (rdef) {
-                        if (!this.player.relics) this.player.relics = [];
-                        const existingIdx = this.player.relics.indexOf(item.relic);
-                        if (existingIdx >= 0) {
-                            // 重复遗物不叠加,熔成分数
+                        const p = this.player;
+                        if (!p.relics) p.relics = [];
+                        if (!p.relicBag) p.relicBag = [];
+                        const maxSlots = p.maxRelicSlots || 1;
+                        const inEquip = p.relics.includes(item.relic);
+                        const inBag = p.relicBag.includes(item.relic);
+
+                        if (inEquip || inBag) {
+                            // 已拥有相同暗金:不重复叠加,熔成分数
                             const pts = Math.round(300 * (this.scoreMult || 1));
                             this.score += pts;
                             label = `👑 重复的【${rdef.name}】熔成 ${pts} 分`;
-                        } else {
-                            let lost = '';
-                            if (this.player.relics.length >= Game.RELIC_MAX) { // 满 3 件替换最早的
-                                const old = this.player.relics.shift();
-                                lost = RELICS[old] ? `(替换【${RELICS[old].name}】)` : '';
-                            }
-                            this.player.relics.push(item.relic);
-                            // 生命修正(狂徒铠甲 / 玻璃王冠 / 死神斗篷)由 _syncRelicStats 每帧对账,这里先结算一次
-                            if (!this._actingAs) this._syncRelicStats(this.player);
+                        } else if (p.relics.length < maxSlots) {
+                            // 装备栏有空位:直接装备生效
+                            p.relics.push(item.relic);
+                            if (!this._actingAs) this._syncRelicStats(p);
+                            label = `👑 装备【${rdef.name}】 ${rdef.pros.join(',')} · 代价:${rdef.cons.join(',')}`;
+                        } else if (p.relics.length >= Game.RELIC_MAX) {
+                            // 身上已满 3 件:替换最早的一件(兼容终局与既有测试行为)
+                            const old = p.relics.shift();
+                            p.relics.push(item.relic);
+                            if (!this._actingAs) this._syncRelicStats(p);
+                            const lost = RELICS[old] ? `(替换【${RELICS[old].name}】)` : '';
                             label = `👑 获得【${rdef.name}】${lost} ${rdef.pros.join(',')} · 代价:${rdef.cons.join(',')}`;
+                        } else if (p.relicBag.length < 6) {
+                            // 装备栏已满(但未达3件)且行囊未满:安全存入行囊
+                            p.relicBag.push(item.relic);
+                            p._newRelic = true;
+                            label = `📦 获得【${rdef.name}】(已存入行囊,可在构筑面板中切换)`;
+                        } else {
+                            // 行囊也满:熔成分数并提醒
+                            const pts = Math.round(300 * (this.scoreMult || 1));
+                            this.score += pts;
+                            label = `⚠️ 行囊已满,【${rdef.name}】熔成 ${pts} 分`;
                         }
                         Sound.play('levelUp');
                         this.effects.push({ type: 'shockwave', x: cx, y: cy, radius: 10, maxRadius: 100, color: '#ffd700', ttl: 0.5, maxTtl: 0.5 });
@@ -13604,7 +13653,10 @@ class Game {
         document.getElementById('buildStats').style.display = tab === 'stats' ? 'block' : 'none';
         document.getElementById('buildTree').style.display = tab === 'tree' ? 'flex' : 'none';
         document.getElementById('buildGems').style.display = tab === 'gems' ? 'block' : 'none';
+        const relicsEl = document.getElementById('buildRelics');
+        if (relicsEl) relicsEl.style.display = tab === 'relics' ? 'flex' : 'none';
         if (tab === 'gems') this.player._newGem = false;
+        if (tab === 'relics') this.player._newRelic = false;
         this._buildRefresh();
     }
 
@@ -13612,8 +13664,11 @@ class Game {
         const free = this._treePoints().free;
         document.getElementById('treePts').textContent = free > 0 ? free : '';
         document.getElementById('gemNew').textContent = this.player._newGem ? '新' : '';
+        const relicNewEl = document.getElementById('relicNew');
+        if (relicNewEl) relicNewEl.textContent = this.player._newRelic ? '新' : '';
         if (this._buildTab === 'tree') this._treeRefresh();
         else if (this._buildTab === 'stats') this._statsRefresh();
+        else if (this._buildTab === 'relics') this._relicRefresh();
         else this._gemRefresh();
     }
 
@@ -13860,6 +13915,8 @@ class Game {
             this._buildRefresh();
         });
         document.getElementById('buildGems').addEventListener('click', (e) => this._gemClick(e));
+        const brEl = document.getElementById('buildRelics');
+        if (brEl) brEl.addEventListener('click', (e) => this._relicClick(e));
     }
 
     _treeApplyView() {
@@ -14052,6 +14109,218 @@ class Game {
         this._buildRefresh();
     }
 
+    // ── 暗金圣物面板 (Relics Pane) ──
+    _relicRefresh() {
+        const p = this.player;
+        if (!p.relics) p.relics = [];
+        if (!p.relicBag) p.relicBag = [];
+        if (!p.relicEmpowers) p.relicEmpowers = {};
+        const maxSlots = p.maxRelicSlots || 1;
+        const sel = this._relicSel;
+
+        // 1. 已装备槽位
+        const slotsEl = document.getElementById('relicSlots');
+        if (slotsEl) {
+            const items = [];
+            for (let i = 0; i < 3; i++) {
+                if (i >= maxSlots) {
+                    items.push(`<div class="relic-slot-item locked" title="在天赋树点亮圣物神龛节点解锁">
+                        <div style="font-size:1.3em;">🔒</div><div class="relic-slot-empty">神龛未解锁<br><small>天赋树扩充</small></div></div>`);
+                } else if (p.relics[i]) {
+                    const id = p.relics[i];
+                    const def = RELICS[id] || { name: id, color: '#ffd700', icon: '👑' };
+                    const emp = p.relicEmpowers[id];
+                    const empBadge = emp === 'pros' ? '<span class="relic-empower-badge">极·增幅</span>' : emp === 'cons' ? '<span class="relic-empower-badge">极·遏制</span>' : '';
+                    const isSel = sel && sel.id === id && sel.from === 'equip';
+                    items.push(`<div class="relic-slot-item${isSel ? ' sel' : ''}" data-relic="${id}" data-from="equip" style="--c:${def.color}">
+                        ${empBadge}
+                        <div class="relic-tag">已装备 #${i + 1}</div>
+                        <div style="font-size:1.6em; margin-bottom: 2px;">${iconHTML(def.icon)}</div>
+                        <b style="color:${def.color}; font-size:0.9em;">${def.name}</b>
+                    </div>`);
+                } else {
+                    items.push(`<div class="relic-slot-item" data-slot-idx="${i}" style="border-style:dashed;">
+                        <div class="relic-slot-empty">空槽位 #${i + 1}<br><small>可装备行囊圣物</small></div>
+                    </div>`);
+                }
+            }
+            slotsEl.innerHTML = items.join('');
+        }
+
+        // 2. 行囊
+        const ashEl = document.getElementById('relicAshCount');
+        if (ashEl) ashEl.textContent = `🔥 暗金余烬: ${p.relicAsh || 0}`;
+
+        const bagEl = document.getElementById('relicBag');
+        if (bagEl) {
+            if (p.relicBag.length === 0) {
+                bagEl.innerHTML = '<div class="relic-empty">行囊空空如也。击败词缀精英、首领或虚空裂隙拾取暗金圣物。</div>';
+            } else {
+                bagEl.innerHTML = p.relicBag.map(id => {
+                    const def = RELICS[id] || { name: id, color: '#ffd700', icon: '👑' };
+                    const emp = p.relicEmpowers[id];
+                    const empBadge = emp === 'pros' ? '<span class="relic-empower-badge">极·增幅</span>' : emp === 'cons' ? '<span class="relic-empower-badge">极·遏制</span>' : '';
+                    const isSel = sel && sel.id === id && sel.from === 'bag';
+                    return `<div class="relic-card${isSel ? ' sel' : ''}${emp ? ' empowered' : ''}" data-relic="${id}" data-from="bag" style="--c:${def.color}">
+                        ${empBadge}
+                        <div class="rc-icon">${iconHTML(def.icon)}</div>
+                        <div class="rc-info">
+                            <b>${def.name}</b>
+                            <small>${emp ? '已赋能' : '未赋能'}</small>
+                        </div>
+                    </div>`;
+                }).join('');
+            }
+        }
+
+        // 3. 详情与操作
+        const detailsEl = document.getElementById('relicDetails');
+        if (detailsEl) {
+            if (!sel || !RELICS[sel.id]) {
+                detailsEl.innerHTML = `<div class="gi-hint" style="text-align:center; padding:6px 0;">点击上方已装备或行囊中的暗金圣物，可进行穿脱、分解为余烬，或消耗余烬进行赋能。</div>`;
+            } else {
+                const def = RELICS[sel.id];
+                const emp = p.relicEmpowers[sel.id];
+                const isEquipped = sel.from === 'equip';
+                const hasFreeSlot = p.relics.length < maxSlots;
+                const ash = p.relicAsh || 0;
+
+                const statusText = emp === 'pros' ? '【极·增益增幅 (+35%)】' : emp === 'cons' ? '【极·代价遏制 (-50%)】' : '【标准状态 · 未赋能】';
+                const toggleBtn = isEquipped
+                    ? `<button class="mp-btn mp-btn-ghost rd-act-toggle">卸下至行囊</button>`
+                    : `<button class="mp-btn mp-btn-primary rd-act-toggle"${hasFreeSlot ? '' : ' disabled'}>${hasFreeSlot ? '装备上身' : '装备栏已满'}</button>`;
+                const dismantleBtn = `<button class="mp-btn mp-btn-ghost rd-act-dismantle" style="border-color:#ff5252; color:#ff8a80;">分解 (+1 余烬)</button>`;
+
+                let empowerBtns = '';
+                if (!emp) {
+                    empowerBtns = `
+                        <button class="mp-btn mp-btn-ghost rd-act-empower-pros"${ash >= 1 ? '' : ' disabled'} style="border-color:#ffd700; color:#ffe082;">⚡ 增幅增益 (耗1余烬)</button>
+                        <button class="mp-btn mp-btn-ghost rd-act-empower-cons"${ash >= 1 ? '' : ' disabled'} style="border-color:#40c4ff; color:#80d8ff;">🛡️ 遏制代价 (耗1余烬)</button>`;
+                } else {
+                    empowerBtns = `<span style="color:#ffd54f; font-size:0.85em; display:flex; align-items:center;">✨ 已完成单件专属深度赋能</span>`;
+                }
+
+                detailsEl.innerHTML = `
+                    <div class="rd-head">
+                        <span class="rd-name" style="color:${def.color}">${iconHTML(def.icon)} ${def.name}</span>
+                        <span class="rd-status">${statusText}</span>
+                    </div>
+                    <div class="rd-pros">✦ 增益: ${def.pros.join('; ')} ${emp === 'pros' ? '<b>(已增强35%)</b>' : ''}</div>
+                    <div class="rd-cons">✦ 代价: ${def.cons.join('; ')} ${emp === 'cons' ? '<b>(已减免50%)</b>' : ''}</div>
+                    <div class="rd-actions">
+                        ${toggleBtn}
+                        ${dismantleBtn}
+                        ${empowerBtns}
+                    </div>
+                `;
+            }
+        }
+    }
+
+    _relicClick(e) {
+        const itemEl = e.target.closest('[data-relic]');
+        const toggleBtn = e.target.closest('.rd-act-toggle');
+        const dismantleBtn = e.target.closest('.rd-act-dismantle');
+        const empProsBtn = e.target.closest('.rd-act-empower-pros');
+        const empConsBtn = e.target.closest('.rd-act-empower-cons');
+
+        if (toggleBtn && this._relicSel) {
+            if (this._relicSel.from === 'equip') this._unequipRelic(this._relicSel.id);
+            else this._equipRelic(this._relicSel.id);
+            return;
+        }
+        if (dismantleBtn && this._relicSel) {
+            this._dismantleRelic(this._relicSel.id, this._relicSel.from);
+            return;
+        }
+        if (empProsBtn && this._relicSel) {
+            this._empowerRelic(this._relicSel.id, 'pros');
+            return;
+        }
+        if (empConsBtn && this._relicSel) {
+            this._empowerRelic(this._relicSel.id, 'cons');
+            return;
+        }
+
+        if (itemEl) {
+            const id = itemEl.dataset.relic;
+            const from = itemEl.dataset.from;
+            if (this._relicSel && this._relicSel.id === id && this._relicSel.from === from) {
+                this._relicSel = null;
+            } else {
+                this._relicSel = { id, from };
+            }
+            this._relicRefresh();
+        }
+    }
+
+    _equipRelic(id) {
+        const p = this.player;
+        const maxSlots = p.maxRelicSlots || 1;
+        if (p.relics.length >= maxSlots) {
+            this._showFloatingText('装备栏已满', this.width / 2, this.height * 0.45, '#ff5252');
+            return;
+        }
+        const idx = p.relicBag.indexOf(id);
+        if (idx >= 0) {
+            p.relicBag.splice(idx, 1);
+            p.relics.push(id);
+            this._syncRelicStats(p);
+            Sound.play('cdReady');
+            this._relicSel = { id, from: 'equip' };
+            this._buildRefresh();
+        }
+    }
+
+    _unequipRelic(id) {
+        const p = this.player;
+        if (p.relicBag.length >= 6) {
+            this._showFloatingText('行囊已满', this.width / 2, this.height * 0.45, '#ff5252');
+            return;
+        }
+        const idx = p.relics.indexOf(id);
+        if (idx >= 0) {
+            p.relics.splice(idx, 1);
+            p.relicBag.push(id);
+            this._syncRelicStats(p);
+            Sound.play('cdReady');
+            this._relicSel = { id, from: 'bag' };
+            this._buildRefresh();
+        }
+    }
+
+    _dismantleRelic(id, from) {
+        const p = this.player;
+        if (from === 'equip') {
+            const idx = p.relics.indexOf(id);
+            if (idx >= 0) p.relics.splice(idx, 1);
+        } else {
+            const idx = p.relicBag.indexOf(id);
+            if (idx >= 0) p.relicBag.splice(idx, 1);
+        }
+        p.relicAsh = (p.relicAsh || 0) + 1;
+        delete p.relicEmpowers[id];
+        this._syncRelicStats(p);
+        Sound.play('bomb');
+        this._showFloatingText('🔥 分解获得 +1 余烬', this.width / 2, this.height * 0.45, '#ffd54f');
+        this._relicSel = null;
+        this._buildRefresh();
+    }
+
+    _empowerRelic(id, mode) {
+        const p = this.player;
+        if ((p.relicAsh || 0) < 1) {
+            this._showFloatingText('余烬不足', this.width / 2, this.height * 0.45, '#ff5252');
+            return;
+        }
+        p.relicAsh -= 1;
+        p.relicEmpowers[id] = mode;
+        this._syncRelicStats(p);
+        Sound.play('levelUp');
+        this._showFloatingText(mode === 'pros' ? '⚡ 赋能:增益强化+35%!' : '🛡️ 赋能:代价减半-50%!', this.width / 2, this.height * 0.45, '#ffd700');
+        this._relicRefresh();
+    }
+
     // HUD「构筑」按钮(冲刺键旁);有未用天赋点 / 新宝石时角标提醒
     _renderBuildButton() {
         if (!this.isRunning) return;
@@ -14065,7 +14334,7 @@ class Game {
         const y = hudH - 82 - 12 - 24 - 12 - s / 2;
         this._hudButton(x - 2, y - 2, s + 4, s + 4, 'build');
         const free = this._treePoints().free;
-        const alert = free > 0 || this.player._newGem;
+        const alert = free > 0 || this.player._newGem || this.player._newRelic;
         ctx.save();
         ctx.fillStyle = alert ? 'rgba(255,215,64,0.16)' : 'rgba(0,0,0,0.55)';
         roundRect(ctx, x, y, s, s, 9);
@@ -14613,7 +14882,12 @@ class Player {
         this.x = x;
         this.y = y;
         this.size = 30;
-        this.relics = [];   // 暗金遗物(RELICS 的 key,最多 Game.RELIC_MAX 件)
+        this.relics = [];   // 暗金遗物(RELICS 的 key,最多 maxRelicSlots 件)
+        this.maxRelicSlots = 1; // 初始 1 个暗金装备栏(天赋树圣物神龛可扩充至 3)
+        this.relicBag = []; // 暗金行囊背包(最多 6 件)
+        this.relicEmpowers = {}; // 暗金赋能状态: { [relicId]: 'pros'(增益+35%) | 'cons'(代价-50%) }
+        this.relicAsh = 0;  // 分解暗金获得的暗金余烬
+        this._newRelic = false; // 新暗金红点提醒
         this._relicHp = 0;  // 遗物叠加在 maxHealth 上的生命增量(_syncRelicStats 对账)
         this.speed = 5;
         // 动态运动学手感引擎:真实物理速度矢量与惯性平滑阻尼

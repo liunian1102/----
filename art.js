@@ -527,7 +527,20 @@ const ArtSVG = (() => {
             `<ellipse cx="50" cy="20" rx="28" ry="5" fill="#ff5252" stroke="${OUT}" stroke-width="2.5"/>` +
             `<path d="M60 22 Q64 30 60 34 Q56 30 60 22 Z" fill="#ff8a80"/>` +
             `<circle cx="50" cy="66" r="4" fill="#e53935" stroke="${OUT}" stroke-width="2"/>` +
-            `<path d="M26 24 Q30 38 38 44" fill="none" stroke="#fff" stroke-opacity="0.5" stroke-width="2.5" stroke-linecap="round"/>`)
+            `<path d="M26 24 Q30 38 38 44" fill="none" stroke="#fff" stroke-opacity="0.5" stroke-width="2.5" stroke-linecap="round"/>`),
+        // 星界罗盘:星芒罗盘与苍穹指针
+        relic_astral_compass: () => isvg(lg('ac', [[0, '#e0f7fa'], [0.5, '#4dd0e1'], [1, '#006064']], 0.5, 1),
+            glowDot(50, 50, 40, '#80d8ff', 0.4) +
+            `<circle cx="50" cy="50" r="38" fill="url(#ac)" stroke="${OUT}" stroke-width="5"/>` +
+            `<circle cx="50" cy="50" r="28" fill="#091b29" stroke="#fff" stroke-opacity="0.6" stroke-width="2"/>` +
+            `<path d="M50 20 L56 46 L80 50 L56 54 L50 80 L44 54 L20 50 L44 46 Z" fill="#ffd740" stroke="${OUT}" stroke-width="2"/>` +
+            `<circle cx="50" cy="50" r="5" fill="#fff"/>`),
+        // 共鸣水晶:悬浮的神秘紫水晶核
+        relic_resonance_crystal: () => isvg(lg('rc', [[0, '#f3e5f5'], [0.5, '#ba68c8'], [1, '#4a148c']], 0.5, 1),
+            glowDot(50, 50, 42, '#ea80fc', 0.5) +
+            `<path d="M50 14 L76 34 L66 84 L50 90 L34 84 L24 34 Z" fill="url(#rc)" stroke="${OUT}" stroke-width="5" stroke-linejoin="round"/>` +
+            `<path d="M50 14 L50 90 M24 34 L76 34 M34 84 L66 84" stroke="#fff" stroke-opacity="0.6" stroke-width="2.5"/>` +
+            `<polygon points="50,22 68,36 50,82 32,36" fill="#e1bee7" opacity="0.45"/>`)
     };
 
     return { enemies, player, boss, items };
@@ -706,7 +719,12 @@ const EmojiSVG = (() => {
         '💣': () => ArtSVG.items.bomb(), '❤': () => ArtSVG.items.heart(), '🏹': () => ArtSVG.items.gear_bow(),
         '🌵': () => ArtSVG.items.gear_thorns(), '💍': () => ArtSVG.items.relic_thunder_ring(), '🧛': () => ArtSVG.items.relic_vampire_fang(),
         '⌚': () => ArtSVG.items.relic_chrono_watch(), '⏱': () => ArtSVG.items.relic_chrono_watch(), '🧥': () => ArtSVG.items.relic_reaper_cloak(),
-        '🦺': () => ArtSVG.items.relic_warmog_vest(), '💀': () => S['☠'](), '⚒': () => S['🔨']()
+        '🦺': () => ArtSVG.items.relic_warmog_vest(), '💀': () => S['☠'](), '⚒': () => S['🔨'](),
+        '🧭': () => ArtSVG.items.relic_astral_compass(), '🔮': () => ArtSVG.items.relic_resonance_crystal(),
+        '📜': () => svg(g1('#fff9c4', '#ffd54f'), P('M20 16 H76 Q84 16 84 24 V76 Q84 84 76 84 H20 Q12 84 12 76 V24 Q12 16 20 16 Z', 'url(#a)', 4.5) + L('M26 32 H70 M26 48 H70 M26 64 H54', 3.5, '#795548')),
+        '🤝': () => svg(g1('#ffe0b2', '#ffb74d'), P('M16 48 L36 30 Q44 24 54 30 L66 40 L50 56 L36 44 L24 56 Z', 'url(#a)', 4) + P('M84 48 L64 30 Q56 24 46 30 L34 40 L50 56 L64 44 L76 56 Z', 'url(#a)', 4)),
+        '⛩': () => svg(g1('#ff8a80', '#c62828'), P('M10 20 H90 V28 H10 Z', 'url(#a)', 4) + P('M16 34 H84 V40 H16 Z', 'url(#a)', 3.5) + P('M24 28 V90 H34 V28 Z', 'url(#a)', 4) + P('M66 28 V90 H76 V28 Z', 'url(#a)', 4) + P('M44 34 H56 V46 H44 Z', '#ffd54f', 3)),
+        '📦': () => svg(g1('#d7ccc8', '#8d6e63'), P('M16 28 L50 12 L84 28 L50 44 Z', 'url(#a)', 4) + P('M16 28 V72 L50 88 V44 Z', '#a1887f', 4) + P('M84 28 V72 L50 88 V44 Z', '#8d6e63', 4) + L('M50 44 V88 M16 28 L50 44 L84 28', 3, '#5d4037'))
     });
     return S;
 })();

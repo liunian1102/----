@@ -187,6 +187,7 @@
                     <button class="build-tab" data-tab="stats">角色</button>
                     <button class="build-tab" data-tab="tree">天赋树 <span id="treePts" class="build-badge"></span></button>
                     <button class="build-tab" data-tab="gems">技能石 <span id="gemNew" class="build-badge"></span></button>
+                    <button class="build-tab" data-tab="relics">暗金圣物 <span id="relicNew" class="build-badge"></span></button>
                 </div>
                 <button id="buildClose" class="build-close" aria-label="关闭">✕</button>
             </div>
@@ -210,6 +211,16 @@
                 <div id="gemInfo" class="gem-info"></div>
                 <div class="panel-subtitle">背包</div>
                 <div id="gemBag" class="gem-bag"></div>
+            </div>
+            <div id="buildRelics" class="build-pane relic-pane" style="display:none">
+                <div class="panel-subtitle">当前装备栏 (天赋树圣物神龛可扩充至 3 件)</div>
+                <div id="relicSlots" class="relic-slots"></div>
+                <div class="relic-bag-head">
+                    <div class="panel-subtitle">暗金行囊</div>
+                    <div id="relicAshCount" class="relic-ash-label">🔥 暗金余烬: 0</div>
+                </div>
+                <div id="relicBag" class="relic-bag"></div>
+                <div id="relicDetails" class="relic-details"></div>
             </div>
         </div>
     </div>
