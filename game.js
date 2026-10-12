@@ -331,7 +331,11 @@ const RELICS = {
     storm_boots:     { name: '风暴之靴', icon: '💨', color: '#18ffff',
         pros: ['移动速度 +20%', '冲刺冷却 -25%'], cons: ['普攻伤害 -15%'], mods: { speed: 0.20, dashCdr: 0.25, autoDmg: -0.15 } },
     blood_chalice:   { name: '鲜血圣杯', icon: '🩸', color: '#ff5252',
-        pros: ['每秒回复 1.5% 最大生命'], cons: ['技能冷却 +20%'], mods: { regenPct: 0.015, cdr: -0.20 } }
+        pros: ['每秒回复 1.5% 最大生命'], cons: ['技能冷却 +20%'], mods: { regenPct: 0.015, cdr: -0.20 } },
+    astral_compass:  { name: '星界罗盘', icon: '🧭', color: '#80d8ff',
+        pros: ['每拾取 3 个道具释放一次星界冲击波(击退并冰冻敌人)'], cons: ['冲刺冷却 +12%'], mods: { astralShock: 1, dashCdr: -0.12 } },
+    resonance_crystal: { name: '共鸣水晶', icon: '🔮', color: '#d500f9',
+        pros: ['技能石共鸣时额外触发连锁雷暴，并延长共鸣持续效果'], cons: ['最大生命 -10%'], mods: { resonanceOverload: 1, maxHpPct: -0.10 } }
 };
 for (const k in RELICS) {
     const r = RELICS[k];
@@ -614,6 +618,15 @@ function statMod(p, key) {
     if (!p) return 0;
     const tk = TREE_STAT_KEY[key];
     return relicMod(p, key) + ((p.tmods && p.tmods[key]) || 0) + (schoolState(p).mods[key] || 0) + ((tk && p.tree && p.tree[tk]) || 0);
+}
+const BASE_RELIC_TYPES = ['thunder_ring', 'vampire_fang', 'chrono_watch', 'reaper_cloak', 'alchemist_stone', 'warmog_vest', 'glass_crown', 'berserk_mask', 'frost_heart', 'gold_idol', 'storm_boots', 'blood_chalice'];
+function getAvailableRelicTypes() {
+    const list = BASE_RELIC_TYPES.slice();
+    if (typeof Metagrowth !== 'undefined') {
+        if (Metagrowth.isUnlocked('relic_astral')) list.push('astral_compass');
+        if (Metagrowth.isUnlocked('relic_resonance')) list.push('resonance_crystal');
+    }
+    return list;
 }
 const RELIC_TYPES = Object.keys(RELICS);
 
@@ -1043,6 +1056,9 @@ const Progress = {
             totalAffixElites: p.totalAffixElites || 0,
             totalGearAwakened: p.totalGearAwakened || 0,
             totalVoidRifts: p.totalVoidRifts || 0,
+            totalAbyssFloors: p.totalAbyssFloors || 0,
+            totalContractsCompleted: p.totalContractsCompleted || 0,
+            starCores: p.starCores !== undefined ? p.starCores : 0,
             classesPlayed: p.classesPlayed || {},
             achievements: p.achievements || {},
             skin: p.skin || 'jade'
@@ -1088,6 +1104,11 @@ const Progress = {
         p.totalAffixElites = (p.totalAffixElites || 0) + (run.affixElites || 0);
         p.totalGearAwakened = (p.totalGearAwakened || 0) + (run.gearAwakened || 0);
         p.totalVoidRifts = (p.totalVoidRifts || 0) + (run.voidRifts || 0);
+        p.totalAbyssFloors = (p.totalAbyssFloors || 0) + (run.abyssFloor || 0);
+        if (run.contractCompleted) {
+            p.totalContractsCompleted = (p.totalContractsCompleted || 0) + 1;
+        }
+        p.starCores = (p.starCores || 0) + (run.starCoresEarned || 0);
         const playedClass = run.cls || 'novice';
         p.classesPlayed[playedClass] = (p.classesPlayed[playedClass] || 0) + 1;
         this.save(p);
@@ -1097,74 +1118,61 @@ const Progress = {
 };
 
 // ══════════════════════════════════════════════════════════════════
-//  🌟 局外星图星盘永久天赋系统 (Constellation Metagrowth)
-//  消耗历史战斗累积的「星之砂」点亮五大星座,永久提升全职业基础战力
+//  🌟 永恒星图 · 纯横向分支解锁系统 (Horizontal Metagrowth Tree)
+//  使用结算产出的「星核 (Star Core)」解锁新机制/新词条/新玩法，无基础数值污染！
 // ══════════════════════════════════════════════════════════════════
 const Metagrowth = {
     KEY: 'blockrun.metagrowth',
-    CONSTELLATIONS: {
-        aquila: {
-            name: '天鹰座 · 初始指引',
-            icon: '🦅',
-            maxLv: 3,
-            costs: [50, 100, 200],
-            descs: [
-                '开局自带 1 颗自选初始技能石(雷暴/强攻/穿透)',
-                '开局自带的技能石直接升至 Lv2',
-                '开局自带的技能石直接升至满级 Lv3,并额外附送 10 潜能点'
-            ]
+    BRANCHES: {
+        relic_astral: {
+            branch: 'relic',
+            name: '星界探秘 · 暗金遗物',
+            icon: '🧭',
+            cost: 30,
+            desc: '在局内暗金遗物掉落池中解锁【星界罗盘】（每拾取 3 个道具释放星界冲击波击退并冰冻敌人）。'
         },
-        scutum: {
-            name: '天盾座 · 星辉守卫',
-            icon: '🛡️',
-            maxLv: 3,
-            costs: [40, 80, 160],
-            descs: [
-                '每次开局或复活自带相当于 15% 基础生命的神圣护盾',
-                '开局与复活护盾提升至 25% 基础生命,护盾上限 +15%',
-                '开局与复活护盾提升至 40% 基础生命,护盾破碎时向全场释放击晕冰爆'
-            ]
+        relic_resonance: {
+            branch: 'relic',
+            name: '共鸣拓荒 · 连锁水晶',
+            icon: '🔮',
+            cost: 45,
+            desc: '在局内暗金遗物掉落池中解锁【共鸣水晶】（技能共鸣时引发连锁天雷，扩大打击面）。'
         },
-        sagitta: {
-            name: '天箭座 · 星芒精准',
-            icon: '🏹',
-            maxLv: 3,
-            costs: [60, 120, 240],
-            descs: [
-                '全局基础暴击率 +5%,投射物飞行速度 +15%',
-                '全局基础暴击率 +10%,暴击伤害 +30%',
-                '全局基础暴击率 +15%,暴击命中时 15% 几率引发贯穿天雷'
-            ]
+        abyss_beacon: {
+            branch: 'abyss',
+            name: '深渊折跃 · 虚空信标',
+            icon: '🌀',
+            cost: 35,
+            desc: '深渊模式折跃门生成时，信标能量会在门旁赠送 1 颗自选强化技能石。'
         },
-        andromeda: {
-            name: '仙女座 · 星尘丰饶',
-            icon: '🌌',
-            maxLv: 3,
-            costs: [40, 80, 160],
-            descs: [
-                '所有道具掉落几率 +15%,基础拾取磁吸范围 +40px',
-                '道具掉落几率 +30%,限时装备持续时间 +3秒,磁吸范围 +80px',
-                '暗金遗物掉落率翻倍,拾取道具时 20% 几率爆出双份!'
-            ]
+        mutation_overload: {
+            branch: 'abyss',
+            name: '秘境过载 · 异象共生',
+            icon: '⚡',
+            cost: 40,
+            desc: '每日秘境突变因子增加专属双刃剑异象词缀，通关后额外获得 50% 星核奖赏。'
         },
-        phoenix: {
-            name: '凤凰座 · 涅槃灵辉',
-            icon: '🪶',
-            maxLv: 3,
-            costs: [80, 160, 320],
-            descs: [
-                '单人守护天使反扑冷却缩减至 75 秒',
-                '单人守护天使反扑冷却缩减至 60 秒,且反扑只需击杀 1 名敌人即可复苏',
-                '守护天使复苏时生命全满并获得 3 秒无敌,联机战术援救速度加快 50%!'
-            ]
+        class_variant: {
+            branch: 'specialization',
+            name: '职业变体 · 专精分支',
+            icon: '⚔️',
+            cost: 50,
+            desc: '解锁五大职业的专精变体特性（战士反击破军、法师寒霜脉冲、刺客暗影引爆、弓手穿云散射、圣骑惩戒光环）。'
+        },
+        legend_contract: {
+            branch: 'specialization',
+            name: '远征契约 · 传奇委托',
+            icon: '📜',
+            cost: 40,
+            desc: '远征契约池加入高阶传奇委托，达成后可获得双倍星核与专属战术成就。'
         }
     },
 
     load() {
         const saved = Store.get(this.KEY, null) || {};
         const state = {};
-        for (const k of Object.keys(this.CONSTELLATIONS)) {
-            state[k] = Math.max(0, Math.min(this.CONSTELLATIONS[k].maxLv, saved[k] || 0));
+        for (const k of Object.keys(this.BRANCHES)) {
+            state[k] = !!saved[k];
         }
         return state;
     },
@@ -1173,48 +1181,212 @@ const Metagrowth = {
         Store.set(this.KEY, state);
     },
 
-    // 历史总星之砂:基于累计总分、击退魔王数、虚空裂隙通关与词缀精英折算
-    getTotalDust() {
-        const p = Progress.load();
-        return Math.floor((p.totalScore || 0) / 400) + (p.bossRepels || 0) * 8
-            + (p.totalVoidRifts || 0) * 15 + Math.floor((p.totalAffixElites || 0) / 5) * 2;
+    isUnlocked(nodeId) {
+        const state = this.load();
+        return !!state[nodeId];
     },
 
-    // 已消耗的星之砂
-    getSpentDust(state) {
+    // 历史总星核: 基于局外累计存档计算 + 基础保底
+    getTotalStarCores() {
+        const p = Progress.load();
+        if (p.starCores !== undefined && p.starCores > 0) return p.starCores;
+        // 兼容旧存档的平滑换算: 基于历史得分与魔王击退折算保底星核
+        const legacyCalc = Math.floor((p.totalScore || 0) / 1000)
+            + (p.bossRepels || 0) * 5
+            + (p.totalVoidRifts || 0) * 8
+            + Math.floor((p.totalAffixElites || 0) / 3) * 2;
+        return Math.max(0, legacyCalc);
+    },
+
+    // 已在星图中消耗的星核
+    getSpentStarCores(state) {
         let spent = 0;
-        for (const [k, lv] of Object.entries(state)) {
-            const def = this.CONSTELLATIONS[k];
-            if (def && lv > 0) {
-                for (let i = 0; i < lv; i++) spent += def.costs[i];
+        for (const [k, unlocked] of Object.entries(state)) {
+            if (unlocked && this.BRANCHES[k]) {
+                spent += this.BRANCHES[k].cost;
             }
         }
         return spent;
     },
 
-    // 当前可用星之砂
-    getAvailableDust() {
+    // 当前可用星核
+    getAvailableStarCores() {
         const state = this.load();
-        return Math.max(0, this.getTotalDust() - this.getSpentDust(state));
+        return Math.max(0, this.getTotalStarCores() - this.getSpentStarCores(state));
     },
 
-    upgrade(k) {
-        const state = this.load();
-        const def = this.CONSTELLATIONS[k];
+    // 点亮某个分支节点
+    unlockNode(nodeId) {
+        const def = this.BRANCHES[nodeId];
         if (!def) return false;
-        const curLv = state[k] || 0;
-        if (curLv >= def.maxLv) return false;
-        const cost = def.costs[curLv];
-        if (this.getAvailableDust() < cost) return false;
-        state[k] = curLv + 1;
+        const state = this.load();
+        if (state[nodeId]) return true; // 已解锁
+        if (this.getAvailableStarCores() < def.cost) return false;
+        state[nodeId] = true;
         this.save(state);
         return true;
     },
 
+    // 免费重置星图（返还全部可用星核）
     reset() {
         const state = {};
-        for (const k of Object.keys(this.CONSTELLATIONS)) state[k] = 0;
+        for (const k of Object.keys(this.BRANCHES)) state[k] = false;
         this.save(state);
+    }
+};
+
+// ══════════════════════════════════════════════════════════════════
+//  📜 远征契约系统 (Expedition Contracts)
+//  每局开局随机 3 选 1，拥有 1 次免费整组重抽机会，当局状态锁定
+// ══════════════════════════════════════════════════════════════════
+const ExpeditionContract = {
+    KEY: 'blockrun.current_contract',
+    POOL: {
+        resonance_triad: {
+            id: 'resonance_triad',
+            name: '三位一体',
+            icon: '✨',
+            type: 'build',
+            desc: '在任一技能槽镶嵌不同颜色的技能石激活符文共鸣',
+            target: 1,
+            rewardDust: 15,
+            check: (game) => (game.player && game.player.resonanceCount >= 1)
+        },
+        boss_duelist: {
+            id: 'boss_duelist',
+            name: '霸者决斗',
+            icon: '👑',
+            type: 'combat',
+            desc: '在生命值不低于 35% 时成功击退方块大魔王 1 次',
+            target: 1,
+            rewardDust: 20,
+            check: (game) => (game.runBossRepels >= 1 && (game.player.currentHealth / Math.max(1, game.player.maxHealth)) >= 0.35)
+        },
+        abyss_pioneer: {
+            id: 'abyss_pioneer',
+            name: '深渊探路者',
+            icon: '🌀',
+            type: 'abyss',
+            desc: '在深渊模式下突破至第 2 层或在普通/噩梦下击破 2 只词缀精英',
+            target: 2,
+            rewardDust: 18,
+            check: (game) => (game.diffMode === 'abyss' ? (game.abyssFloor >= 2) : ((game.affixEliteKills || 0) >= 2))
+        },
+        affix_slayer: {
+            id: 'affix_slayer',
+            name: '词缀狩猎者',
+            icon: '⚔️',
+            type: 'combat',
+            desc: '击败至少 3 只带词缀的精英怪物',
+            target: 3,
+            rewardDust: 20,
+            check: (game) => ((game.affixEliteKills || 0) >= 3)
+        },
+        combo_virtuoso: {
+            id: 'combo_virtuoso',
+            name: '连杀狂热',
+            icon: '🔥',
+            type: 'skill',
+            desc: '当局单次最高连杀数达到 40 连击',
+            target: 40,
+            rewardDust: 16,
+            check: (game) => ((game.player && game.player.maxCombo >= 40) || (game._runMaxCombo >= 40))
+        },
+        rift_sentinel: {
+            id: 'rift_sentinel',
+            name: '裂隙守卫',
+            icon: '🛡️',
+            type: 'exploration',
+            desc: '成功通关 1 次虚空裂隙事件',
+            target: 1,
+            rewardDust: 18,
+            check: (game) => ((game.voidRiftClearedCount || 0) >= 1)
+        },
+        tactical_rescuer: {
+            id: 'tactical_rescuer',
+            name: '战地救援',
+            icon: '🤝',
+            type: 'coop',
+            desc: '联机模式下成功救援倒地队友 1 次 / 单人模式下触发极限反扑复苏',
+            target: 1,
+            rewardDust: 22,
+            check: (game) => {
+                if (game.mpMode) return (game.runRescuesCount || 0) >= 1;
+                return (game.runGuardianRevives || 0) >= 1;
+            }
+        },
+        skill_barrage: {
+            id: 'skill_barrage',
+            name: '法术狂涌',
+            icon: '⚡',
+            type: 'combat',
+            desc: '释放 Q 或 E 技能累计达到 25 次',
+            target: 25,
+            rewardDust: 15,
+            check: (game) => ((game.runSkillCastCount || 0) >= 25)
+        }
+    },
+
+    // 获取当前可用的候选池
+    getAvailablePool(game) {
+        const isCoop = !!(game && game.mpMode);
+        const hasLegend = Metagrowth.isUnlocked('legend_contract');
+        const list = Object.values(this.POOL).filter(c => {
+            if (c.type === 'coop' && !isCoop) return false; // 联机特化
+            if (c.legend && !hasLegend) return false;
+            return true;
+        });
+        return list;
+    },
+
+    // 随机抽取 3 个互不相同的契约
+    rollCandidates(game) {
+        const pool = this.getAvailablePool(game);
+        const shuffled = pool.slice().sort(() => Math.random() - 0.5);
+        return shuffled.slice(0, 3);
+    },
+
+    // 初始化本局候选与状态
+    initSession(game) {
+        const candidates = this.rollCandidates(game);
+        return {
+            candidates: candidates.map(c => c.id),
+            selectedId: candidates[0] ? candidates[0].id : null,
+            rerolled: false, // 免费整组重抽是否已消耗
+            completed: false,
+            claimed: false
+        };
+    },
+
+    // 执行整组重抽（仅限 1 次，整组 3 个一起重换）
+    reroll(session, game) {
+        if (!session || session.rerolled) return false;
+        const pool = this.getAvailablePool(game);
+        // 尽量排除当前候选
+        const currentSet = new Set(session.candidates || []);
+        let altPool = pool.filter(c => !currentSet.has(c.id));
+        if (altPool.length < 3) altPool = pool;
+        const shuffled = altPool.slice().sort(() => Math.random() - 0.5);
+        session.candidates = shuffled.slice(0, 3).map(c => c.id);
+        session.selectedId = session.candidates[0] || null;
+        session.rerolled = true;
+        return true;
+    },
+
+    // 检查并更新契约进度
+    evaluate(game, session) {
+        if (!session || !session.selectedId || session.completed) return session && session.completed;
+        const def = this.POOL[session.selectedId];
+        if (!def) return false;
+        try {
+            if (def.check(game)) {
+                session.completed = true;
+                return true;
+            }
+        } catch (e) {
+            // 安全保护
+        }
+        return false;
     }
 };
 
@@ -1223,25 +1395,31 @@ const Metagrowth = {
 // ══════════════════════════════════════════════════════════════════
 const MutationRift = {
     MUTATIONS: {
-        void_surge:   { name: '虚空狂涌', icon: '🌀', desc: '场上虚空精英刷新率翻倍,但全队技能与奥义冷却 -35%' },
-        magma_ground: { name: '熔岩炽地', icon: '🌋', desc: '场地随机涌出烈焰火柱,全队暴击伤害额外 +80%' },
-        hyper_frenzy: { name: '狂暴极速', icon: '⚡', desc: '敌人与玩家移动速度均提升 35%,冲刺冷却 -50%' },
-        glass_canon:  { name: '死寂决斗', icon: '☠️', desc: '玩家受伤害增加 40%,但攻击力与技能倍率 +75%' }
+        void_surge:        { name: '虚空狂涌', icon: '🌀', desc: '场上虚空精英刷新率翻倍,但全队技能与奥义冷却 -35%' },
+        magma_ground:      { name: '熔岩炽地', icon: '🌋', desc: '场地随机涌出烈焰火柱,全队暴击伤害额外 +80%' },
+        hyper_frenzy:      { name: '狂暴极速', icon: '⚡', desc: '敌人与玩家移动速度均提升 35%,冲刺冷却 -50%' },
+        glass_canon:       { name: '死寂决斗', icon: '☠️', desc: '玩家受伤害增加 40%,但攻击力与技能倍率 +75%' },
+        overclock_surge:   { name: '超频激斗', icon: '⚛️', desc: '全队技能冷却 -40%,但受到伤害 +20%', overload: true },
+        rift_resonance:    { name: '裂隙共振', icon: '🌌', desc: '敌人血量 +25%,但击杀得分与星核掉落翻倍', overload: true }
     },
 
     active: Store.get('blockrun.mutationActive', false),
 
-    // 根据当日日期(YYYY-MM-DD)哈希出固定的 2 个突变因子
+    // 根据当日日期(YYYY-MM-DD)哈希出突变因子(若星图解锁 mutation_overload 则额外并入超频异象)
     getDailyMutations() {
         const d = new Date();
         const dateStr = `${d.getFullYear()}-${d.getMonth() + 1}-${d.getDate()}`;
         let hash = 0;
         for (let i = 0; i < dateStr.length; i++) hash = ((hash << 5) - hash + dateStr.charCodeAt(i)) | 0;
         const keys = Object.keys(this.MUTATIONS);
-        const idx1 = Math.abs(hash) % keys.length;
-        const idx2 = Math.abs((hash >> 4)) % keys.length;
-        const finalIdx2 = (idx1 === idx2) ? (idx1 + 1) % keys.length : idx2;
-        return [keys[idx1], keys[finalIdx2]];
+        const idx1 = Math.abs(hash) % 4;
+        const idx2 = (idx1 + 1 + (Math.abs(hash >> 3) % 3)) % 4;
+        const res = [keys[idx1], keys[idx2]];
+        if (typeof Metagrowth !== 'undefined' && Metagrowth.isUnlocked('mutation_overload')) {
+            const ovIdx = 4 + (Math.abs(hash >> 5) % 2);
+            res.push(keys[ovIdx]);
+        }
+        return res;
     }
 };
 
@@ -1719,6 +1897,8 @@ class Game {
         this.joy = { active: false, id: null, bx: 0, by: 0, x: 0, y: 0 };
         // 技能/闪避按键:'tap' 点按释放(自动瞄准最近敌人)/ 'aim' 按住拖动瞄准,松手释放
         this.skillMode = Store.get('blockrun.skillMode', 'tap') === 'aim' ? 'aim' : 'tap';
+        // 按键布局:'default' 左摇杆右技能 / 'swap' 右摇杆左技能(左右对调)
+        this.layoutMode = Store.get('blockrun.layout', 'default') === 'swap' ? 'swap' : 'default';
         this.showDmgNums = Store.get('blockrun.dmgNums', true) !== false; // 伤害数字开关(暂停面板里切换)
         // 拖拽瞄准状态:hcx/hcy 为按钮中心(HUD 坐标),sx/sy 为按下点(CSS px)
         this.aim = { active: false, id: null, skill: null, hcx: 0, hcy: 0, sx: 0, sy: 0, ox: 0, oy: 0, dx: 0, dy: 0, armed: false, wasArmed: false, cancel: false };
@@ -2346,8 +2526,13 @@ class Game {
         };
         const tryStartJoy = (clientX, clientY, id) => {
             if (this.controlMode !== 'joystick' || this.joy.active) return false;
-            // 摇杆分区:只有屏幕左侧 60% 才生成摇杆;右侧未命中按钮的触摸不生成摇杆
-            if (clientX >= window.innerWidth * 0.6) return false;
+            // 摇杆分区:根据 layoutMode 决定摇杆生成区域
+            // 默认模式:左侧 60% 生成摇杆; 对调模式:右侧 60% 生成摇杆
+            if (this.layoutMode === 'swap') {
+                if (clientX <= window.innerWidth * 0.4) return false;
+            } else {
+                if (clientX >= window.innerWidth * 0.6) return false;
+            }
             if (!this.isRunning || this.isPaused || this.showingPotentialMenu || this.showingClassSelection) return false;
             const { x, y } = toCanvas(clientX, clientY);
             const hit = (b) => b && x >= b.x && x <= b.x + b.w && y >= b.y && y <= b.y + b.h;
@@ -2508,11 +2693,31 @@ class Game {
         this.keys._jy = y;
     }
 
+    // 切换浏览器全屏
+    toggleFullscreen() {
+        try {
+            if (!document.fullscreenElement && !document.webkitFullscreenElement) {
+                const el = document.documentElement;
+                const rfs = el.requestFullscreen || el.webkitRequestFullscreen;
+                if (rfs) rfs.call(el);
+            } else {
+                const efs = document.exitFullscreen || document.webkitExitFullscreen;
+                if (efs) efs.call(document);
+            }
+        } catch (e) {}
+    }
+
     setSkillMode(mode) {
         this.skillMode = mode === 'aim' ? 'aim' : 'tap';
         Store.set('blockrun.skillMode', this.skillMode);
         this.aim.active = false;
     }
+
+    setLayoutMode(mode) {
+        this.layoutMode = mode === 'swap' ? 'swap' : 'default';
+        Store.set('blockrun.layout', this.layoutMode);
+    }
+
 
     setDiffMode(k) {
         if (!DIFF_MODES[k]) return;
@@ -2932,6 +3137,7 @@ class Game {
             af: this.abyssFloor || 1,
             ap: this.abyssPortal ? [q1(this.abyssPortal.x), q1(this.abyssPortal.y), this.abyssPortal.radius] : null,
             tk: this.treasureKills, ek: this.eliteKills, dm: this.diffMode,
+            ct: this.expeditionSession ? [this.expeditionSession.selectedId, this.expeditionSession.completed ? 1 : 0] : null,
             mu: this.mutations || [],
             ef: this._mpTakeNewEffects(),
             fx: this._mpFx.splice(0),
@@ -3246,6 +3452,12 @@ class Game {
             if (myData.skillE) this.player.skillE.cooldown = myData.skillE.cooldown;
             if (myData.class && !this.player.class) {
                 this.player.class = myData.class;
+            }
+            // 同步主机广播的远征契约状态 (用于客机 HUD 渲染)
+            if (snapshot.ct) {
+                if (!this.expeditionSession) this.expeditionSession = { candidates: [snapshot.ct[0]] };
+                this.expeditionSession.selectedId = snapshot.ct[0];
+                this.expeditionSession.completed = !!snapshot.ct[1];
             }
         }
 
@@ -4418,6 +4630,19 @@ class Game {
             ['装备觉醒', `${this.gearAwakenedCount || 0} 次`],
             ['虚空挑战', `${this.voidRiftClearedCount || 0} 次`]
         ];
+        if (this.diffMode === 'abyss') {
+            rows.push(['深渊层数', `第 ${this.abyssFloor || 1} 层`]);
+        }
+        if (this.expeditionSession && this.expeditionSession.selectedId) {
+            const cDef = ExpeditionContract.POOL[this.expeditionSession.selectedId];
+            const cName = cDef ? `${cDef.icon} ${cDef.name}` : '远征委托';
+            const cStatus = this.expeditionSession.completed ? '✓ 已达成' : '未达成';
+            rows.push(['远征契约', `${cName} (${cStatus})`]);
+        }
+        const runStats = this._runStats();
+        if (runStats.starCoresEarned > 0) {
+            rows.push(['星核收益', `+${runStats.starCoresEarned} 颗`]);
+        }
         if (p.relics && p.relics.length > 0) {
             const relicStr = p.relics.map(rk => (RELICS[rk] ? RELICS[rk].name : rk)).join(', ');
             rows.push(['暗金遗物', relicStr]);
@@ -4557,11 +4782,15 @@ class Game {
         this.drawButton(bx, by, hw, bh, '#546e7a', Sound.muted ? '🔇 声音:关' : '🔊 声音:开', 'mute');
         this.drawButton(bx + hw + gap, by, hw, bh, '#546e7a', Music.enabled ? '🎵 音乐:开' : '🎵 音乐:关', 'music');
         by += bh + gap;
-        this.drawButton(bx, by, bw, bh, '#546e7a', this.showDmgNums ? '伤害数字:开' : '伤害数字:关', 'dmgNums');
+        this.drawButton(bx, by, hw, bh, '#546e7a', this.showDmgNums ? '数字:开' : '数字:关', 'dmgNums');
+        const isSwap = this.layoutMode === 'swap';
+        this.drawButton(bx + hw + gap, by, hw, bh, isSwap ? '#3949ab' : '#546e7a', isSwap ? '🔄 布局:对调' : '🕹 布局:默认', 'layout');
         by += bh + gap;
+        const isFs = !!(document.fullscreenElement || document.webkitFullscreenElement);
+        this.drawButton(bx, by, hw, bh, isFs ? '#00897b' : '#546e7a', isFs ? '⛶ 全屏:开' : '⛶ 全屏:关', 'fullscreen');
         const quitText = this.mpMode === 'guest' ? '离开房间' : '结束本局';
-        this.drawButton(bx, by, bw, bh, this._pauseQuitArmed ? '#ff1744' : '#8d3b3b',
-                        this._pauseQuitArmed ? `再点一次${quitText}` : quitText, 'quit');
+        this.drawButton(bx + hw + gap, by, hw, bh, this._pauseQuitArmed ? '#ff1744' : '#8d3b3b',
+                        this._pauseQuitArmed ? `确认${quitText}` : quitText, 'quit');
     }
 
     // 暂停面板点击:按钮 → 对应操作;面板外 → 继续游戏;面板内空白处不处理
@@ -4577,6 +4806,8 @@ class Game {
             else if (btn.choice === 'mute') Sound.toggleMute();
             else if (btn.choice === 'music') Music.toggle();
             else if (btn.choice === 'dmgNums') this.toggleDmgNums();
+            else if (btn.choice === 'layout') this.setLayoutMode(this.layoutMode === 'swap' ? 'default' : 'swap');
+            else if (btn.choice === 'fullscreen') this.toggleFullscreen();
             else if (btn.choice === 'quit') {
                 if (!this._pauseQuitArmed) { this._pauseQuitArmed = true; return; }
                 this._quitRun();
@@ -4753,31 +4984,19 @@ class Game {
         this._recordShown = false;
         this.player.skin = Progress.currentSkin();
 
-        // 🌟 注入局外星图星盘永久天赋 (Constellation Metagrowth)
-        const meta = this.player.metagrowth || Metagrowth.load();
-        this.player.metagrowth = meta;
+        // 统计字段与远征契约指标初始化
+        this.runSkillCastCount = 0;
+        this.runRescuesCount = 0;
+        this.runGuardianRevives = 0;
+        this._runMaxCombo = 0;
 
-        // 1. 天盾座: 开局护盾 (Lv1: 15%, Lv2: 25%, Lv3: 40%)
-        if (meta.scutum > 0) {
-            const shieldRatio = [0.15, 0.25, 0.40][meta.scutum - 1];
-            this.player.shield = Math.round(this.player.maxHealth * shieldRatio);
+        // 📜 初始化/保留本局远征契约状态 (避免刷新页面或重开被重刷)
+        if (!this.expeditionSession) {
+            this.expeditionSession = ExpeditionContract.initSession(this);
         }
 
-        // 2. 天鹰座: 开局自带初始技能石 (Lv1: 1级, Lv2: 2级, Lv3: 满级+10潜能,近战职业智能适配附加伤害石)
-        if (meta.aquila > 0) {
-            const startGem = (this.player.class === 'warrior' || this.player.class === 'paladin') ? 'dmg' : 'chain';
-            this._grantGem(startGem);
-            if (meta.aquila >= 2) this._grantGem(startGem);
-            if (meta.aquila >= 3) {
-                this._grantGem(startGem);
-                this.player.potentialPoints = (this.player.potentialPoints || 0) + 10;
-            }
-        }
-
-        // 3. 凤凰座: 守护天使冷却缩短
-        if (meta.phoenix > 0) {
-            this.player.guardianCooldown = 0;
-        }
+        // 🌟 挂接纯横向星图状态 (无基础数值加成, 纯解锁标志)
+        this.metagrowthState = Metagrowth.load();
 
         // 🌌 注入每日秘境突变因子 (Mutation Rift)
         this.mutations = MutationRift.active ? MutationRift.getDailyMutations() : [];
@@ -4789,11 +5008,29 @@ class Game {
 
     _runStats() {
         const resCount = GEM_SLOTS.filter(s => !!this._gemResonance(this.player, s)).length;
+        const contractDone = !!(this.expeditionSession && this.expeditionSession.completed);
+        let starCoresEarned = 0;
+        if (contractDone) {
+            const def = this.expeditionSession && ExpeditionContract.POOL[this.expeditionSession.selectedId];
+            starCoresEarned += (def ? def.rewardDust : 15);
+        }
+        // 深渊折跃、Boss击退、虚空裂隙产出
+        starCoresEarned += (this.runBossRepels || 0) * 5;
+        starCoresEarned += (this.voidRiftClearedCount || 0) * 8;
+        if (this.diffMode === 'abyss' && this.abyssFloor > 1) {
+            starCoresEarned += (this.abyssFloor - 1) * 3;
+        }
+        if (this.affixEliteKills) {
+            starCoresEarned += Math.floor(this.affixEliteKills / 3) * 2;
+        }
+
         return { score: this.score, time: Math.floor(this.gameTime), level: this.level,
                  bossRepels: this.runBossRepels || 0, cls: this.player.class, dodges: this.player.dodgeCount || 0,
                  treasures: this.treasureKills || 0, elites: this.eliteKills || 0, diff: this.diffMode,
                  affixElites: this.affixEliteKills || 0, gearAwakened: this.gearAwakenedCount || 0, voidRifts: this.voidRiftClearedCount || 0,
-                 resonanceCount: resCount, maxCombo: this.player.maxCombo || 0 };
+                 abyssFloor: this.abyssFloor || 1, resonanceCount: resCount, maxCombo: Math.max(this.player.maxCombo || 0, this._runMaxCombo || 0),
+                 contractCompleted: contractDone, contractId: this.expeditionSession ? this.expeditionSession.selectedId : null,
+                 starCoresEarned };
     }
 
     // 每 tick 调用(host/guest 都走):统计击退魔王,每 0.5s 检查一次成就,推进解锁提示
@@ -4806,6 +5043,13 @@ class Game {
         this._progTimer += DT;
         if (this._progTimer >= 0.5) {
             this._progTimer = 0;
+            // 实时评估远征契约达成状态
+            if (this.expeditionSession && !this.expeditionSession.completed) {
+                if (ExpeditionContract.evaluate(this, this.expeditionSession)) {
+                    this._showFloatingText('📜 远征契约达成!', this.width / 2, this.height * 0.25, '#ffd700');
+                    Sound.play('cdReady');
+                }
+            }
             for (const a of Progress.checkAchievements(this._runStats())) this._pushAchievement(a);
         }
         if (!this._recordShown && this._bestAtStart > 0 && this.score > this._bestAtStart) {
@@ -5971,13 +6215,44 @@ class Game {
             this.effects.push({ type: 'shockwave', x: p.x + p.size / 2, y: p.y + p.size / 2, radius: 5, maxRadius: 30, color: '#ff1744', ttl: 0.2, maxTtl: 0.2 });
         }
 
+        this.runSkillCastCount = (this.runSkillCastCount || 0) + 1;
+        if (this.expeditionSession && !this.expeditionSession.completed) {
+            if (ExpeditionContract.evaluate(this, this.expeditionSession)) {
+                this._showFloatingText('📜 契约达成!', this.width / 2, this.height * 0.25, '#ffd700');
+                Sound.play('cdReady');
+            }
+        }
+
         // 符文共鸣判断
         const res = this._gemResonance(p, slot);
+
+        // 🌟 暗金遗物【共鸣水晶】: 激活共鸣时额外产生连锁天雷
+        if (res && p.relics && p.relics.includes('resonance_crystal')) {
+            const pcx = p.x + p.size / 2, pcy = p.y + p.size / 2;
+            this.effects.push({ type: 'lightning', x: pcx, y: pcy, color: '#d500f9', ttl: 0.35, maxTtl: 0.35 });
+            this.effects.push({ type: 'shockwave', x: pcx, y: pcy, radius: 10, maxRadius: 140, color: '#d500f9', ttl: 0.4, maxTtl: 0.4 });
+            for (const e of this.enemies) {
+                if (Math.hypot(e.x + e.size / 2 - pcx, e.y + e.size / 2 - pcy) <= 140) {
+                    this._applyHitMods(p, e, (p.attack || 20) * 0.8);
+                }
+            }
+        }
 
         this._withCtx(Game.CTX[slot], () => this._dispatchSkill(slot, skill));
         // 施放成功(进入冷却)时脚下展开职业色法阵
         if (skill.cooldown > 0.3) this._castSigil(p, slot === 'q' ? 34 : 44, slot === 'q' ? 6 : 5);
         if (p.legend && p.legend.singularity) p.singularityArmed = true; // 传说天赋「秘法奇点」
+
+        // 🌟 星图横向专精【寒霜脉冲】(法师施放技能后脚下留下冰脉减速冻结敌人)
+        if (p.class === 'mage' && typeof Metagrowth !== 'undefined' && Metagrowth.isUnlocked('class_variant')) {
+            const pcx = p.x + p.size / 2, pcy = p.y + p.size / 2;
+            this.effects.push({ type: 'shockwave', x: pcx, y: pcy, radius: 10, maxRadius: 100, color: '#80d8ff', ttl: 0.45, maxTtl: 0.45 });
+            for (const e of this.enemies) {
+                if (Math.hypot(e.x + e.size / 2 - pcx, e.y + e.size / 2 - pcy) <= 100) {
+                    e.freezeTimer = Math.max(e.freezeTimer || 0, 0.8);
+                }
+            }
+        }
         // 若部分职业技能未显式写 cooldown 则在此统一置冷却，防狂按并保障回响判定
         if (skill.cooldown <= 0 && !(p.class === 'mage' && slot === 'q')) {
             skill.cooldown = skill.maxCooldown || 3;
@@ -7153,6 +7428,14 @@ class Game {
             this.spawnBurstRing(cx, cy, 80, '#e1bee7', 25);
             Sound.play('bossSpawn');
             this._showFloatingText(`🌀 深渊第 ${this.abyssFloor} 层突破! 传送门开启!`, this.width / 2, this.height * 0.28, '#e1bee7');
+
+            // 🌟 星图纯横向解锁【深渊虚空信标】: 传送门旁产生信标能量, 额外赠送 1 颗自选强化技能石
+            if (Metagrowth.isUnlocked('abyss_beacon')) {
+                const gemTypes = ['chain', 'dmg', 'multishot', 'crit', 'freeze'];
+                const chosenGem = gemTypes[Math.floor(Math.random() * gemTypes.length)];
+                this._dropGem(cx + 40, cy, chosenGem);
+                this._showFloatingText('🌀 信标共鸣: 技能石降临!', cx + 40, cy - 20, '#ba68c8');
+            }
         }
 
         // 玩家靠近传送门:生成稳定后踏入进入下一层
@@ -8581,10 +8864,11 @@ class Game {
     // 在 (x,y) 掉落一件永久暗金遗物
     _dropRelic(x, y, kind) {
         if (!kind) {
-            // 优先掉本机玩家还没有的遗物
+            // 优先掉本机玩家还没有的遗物 (基于已解锁的遗物池)
+            const availableTypes = getAvailableRelicTypes();
             const own = this.player.relics || [];
-            const pool = RELIC_TYPES.filter(k => !own.includes(k));
-            const from = pool.length ? pool : RELIC_TYPES;
+            const pool = availableTypes.filter(k => !own.includes(k));
+            const from = pool.length ? pool : availableTypes;
             kind = from[Math.floor(Math.random() * from.length)];
         }
         x = Math.max(15, Math.min(this.width - 45, x));
@@ -8637,12 +8921,27 @@ class Game {
             this.effects.push({ type: 'shockwave', x: cx, y: cy, radius: 8, maxRadius: 50, color: item.color, ttl: 0.45, maxTtl: 0.45 });
         }
 
-        // 仙女座 Lv3: 拾取道具时 20% 几率爆出双份
-        if (!item._duplicated && this.player.metagrowth && this.player.metagrowth.andromeda >= 3 && Math.random() < 0.2) {
-            const dup = new Item(item.x + (Math.random() - 0.5) * 30, item.y + (Math.random() - 0.5) * 30, item.type);
-            dup._duplicated = true;
-            this.items.push(dup);
-            this._showFloatingText('✨ 星尘双生!', dup.x, dup.y - 15, '#ffd700');
+        // 暗金遗物【星界罗盘】: 每拾取 3 个道具释放一次星界冲击波(击退并冰冻敌人)
+        if (this.player && this.player.relics && this.player.relics.includes('astral_compass')) {
+            this.player._astralCount = (this.player._astralCount || 0) + 1;
+            if (this.player._astralCount >= 3) {
+                this.player._astralCount = 0;
+                const px = this.player.x + this.player.size / 2, py = this.player.y + this.player.size / 2;
+                this.effects.push({ type: 'shockwave', x: px, y: py, radius: 10, maxRadius: 180, color: '#80d8ff', ttl: 0.6, maxTtl: 0.6 });
+                this.spawnBurstRing(px, py, 120, '#80d8ff', 24);
+                this._showFloatingText('🧭 星界冲击!', px, py - 30, '#80d8ff');
+                for (const e of this.enemies) {
+                    const ex = e.x + e.size / 2, ey = e.y + e.size / 2;
+                    const d = Math.hypot(ex - px, ey - py);
+                    if (d <= 180) {
+                        e.freezeTimer = Math.max(e.freezeTimer || 0, 1.2);
+                        if (d > 0.001) {
+                            e.x += (ex - px) / d * 45;
+                            e.y += (ey - py) / d * 45;
+                        }
+                    }
+                }
+            }
         }
 
         let label = '';
@@ -10481,6 +10780,17 @@ class Game {
                     }
                 }
             }});
+
+            // 🌟 星图横向专精【暗影引爆】(刺客击杀敌人时引爆暗影匕首散射)
+            if (this.player.class === 'assassin' && typeof Metagrowth !== 'undefined' && Metagrowth.isUnlocked('class_variant')) {
+                const shadowDmg = this._computeAttackDamage(this.player.attack) * 0.6;
+                this.effects.push({ type: 'shockwave', x: ecx, y: ecy, radius: 10, maxRadius: 110, color: '#e040fb', ttl: 0.35, maxTtl: 0.35 });
+                for (let angle = 0; angle < Math.PI * 2; angle += Math.PI / 2) {
+                    const spdx = Math.cos(angle) * 7;
+                    const spdy = Math.sin(angle) * 7;
+                    this.projectiles.push(new Projectile(ecx - 3, ecy - 3, spdx, spdy, shadowDmg, '#e040fb', 6, this.player));
+                }
+            }
         }
         // 分裂者碎成 3 块碎片向外迸开(下一帧再加进 enemies,避免调用方遍历时改数组)
         if (e && e.type === 'splitter' && !e.split) {
@@ -11788,6 +12098,63 @@ class Game {
         ctx.restore();
     }
 
+    // 全屏全景空间背景:铺满整个物理视口(含 letterbox 区域),消除宽屏/带鱼屏下的死黑边
+    _renderScreenBackground() {
+        const ctx = this.ctx;
+        const W = this.canvas.width, H = this.canvas.height;
+        // 深空星河全景渐变
+        const grad = ctx.createLinearGradient(0, 0, 0, H);
+        grad.addColorStop(0, '#060d15');
+        grad.addColorStop(1, '#04080d');
+        ctx.fillStyle = grad;
+        ctx.fillRect(0, 0, W, H);
+
+        // 视口全景科技微光网格
+        ctx.save();
+        ctx.globalAlpha = 0.035;
+        ctx.strokeStyle = '#00c8ff';
+        ctx.lineWidth = 1;
+        const grid = 60 * (this.dpr || 1);
+        ctx.beginPath();
+        for (let x = (this.gameOffsetX % grid); x < W; x += grid) {
+            ctx.moveTo(x, 0); ctx.lineTo(x, H);
+        }
+        for (let y = (this.gameOffsetY % grid); y < H; y += grid) {
+            ctx.moveTo(0, y); ctx.lineTo(W, y);
+        }
+        ctx.stroke();
+        ctx.restore();
+    }
+
+    // 悬浮竞技场高科技能量光幕边界(800×600 逻辑战场边缘)
+    _renderArenaBoundary(ctx) {
+        const W = this.width, H = this.height;
+        const breath = 0.75 + 0.25 * Math.sin(this.bgTime * 2);
+        ctx.save();
+        // 1) 场地外围柔和蓝色能量光晕
+        ctx.strokeStyle = `rgba(0, 200, 255, ${0.28 * breath})`;
+        ctx.lineWidth = 2.5;
+        roundRect(ctx, 1, 1, W - 2, H - 2, 8);
+        ctx.stroke();
+
+        // 2) 4 个科技角标(Corner Brackets)
+        const cLen = 22;
+        ctx.strokeStyle = `rgba(0, 229, 255, ${0.75 * breath})`;
+        ctx.lineWidth = 3;
+        ctx.lineCap = 'square';
+        ctx.beginPath();
+        // 左上
+        ctx.moveTo(2, 2 + cLen); ctx.lineTo(2, 2); ctx.lineTo(2 + cLen, 2);
+        // 右上
+        ctx.moveTo(W - 2 - cLen, 2); ctx.lineTo(W - 2, 2); ctx.lineTo(W - 2, 2 + cLen);
+        // 右下
+        ctx.moveTo(W - 2, H - 2 - cLen); ctx.lineTo(W - 2, H - 2); ctx.lineTo(W - 2 - cLen, H - 2);
+        // 左下
+        ctx.moveTo(2 + cLen, H - 2); ctx.lineTo(2, H - 2); ctx.lineTo(2, H - 2 - cLen);
+        ctx.stroke();
+        ctx.restore();
+    }
+
     renderParticles() {
         // 去 shadowBlur:粒子数量大时 shadow 是主要瓶颈,关闭后大幅提速
         const ctx = this.ctx;
@@ -11919,9 +12286,8 @@ class Game {
     render() {
         const ctx = this.ctx;
 
-        // 铺底色(含 letterbox 区域);底色不透明,无需先 clearRect
-        ctx.fillStyle = '#050a10';
-        ctx.fillRect(0, 0, this.canvas.width, this.canvas.height);
+        // 全屏全景空间背景(覆盖整个 Canvas 视口,消除纯黑边)
+        this._renderScreenBackground();
 
         // 未开始时显示标题界面
         if (!this.isRunning) {
@@ -11942,6 +12308,7 @@ class Game {
         }
 
         this.renderBackground();
+        this._renderArenaBoundary(ctx);
         this._renderMeteorMarks(ctx);
         this._renderToxicPuddles(ctx);
         this._renderAltar(ctx);
@@ -11985,6 +12352,7 @@ class Game {
         this.renderParticles();
         this._renderDmgNums();
 
+        this._renderSelfSilhouette(ctx);
         this._renderSelfMarker();
         this._renderAimGuide();
 
@@ -12008,6 +12376,7 @@ class Game {
             this._renderBossHUD();
             this._renderEventHUD();
             this._renderStatsHUD();
+            this._renderContractHUD();
             this._renderGearHUD();
             this._renderMuteButton();
             this._renderComboHUD();
@@ -12140,9 +12509,10 @@ class Game {
 
     // 登记按键命中区:HUD 坐标 → 逻辑坐标(toCanvas 的输出),hcx/hcy 留给瞄准摇杆头
     _hudButton(x, y, w, h, skill) {
-        const hd = this._hud, gs = this.gameScale;
+        const hd = this._hud || { s: this.gameScale || 1, ox: this.gameOffsetX || 0, oy: this.gameOffsetY || 0, w: this.width, h: this.height };
+        const gs = this.gameScale || 1;
         this.skillButtons.push({
-            x: (hd.ox + x * hd.s - this.gameOffsetX) / gs, y: (hd.oy + y * hd.s - this.gameOffsetY) / gs,
+            x: (hd.ox + x * hd.s - (this.gameOffsetX || 0)) / gs, y: (hd.oy + y * hd.s - (this.gameOffsetY || 0)) / gs,
             w: w * hd.s / gs, h: h * hd.s / gs, skill, hcx: x + w / 2, hcy: y + h / 2
         });
     }
@@ -12183,19 +12553,62 @@ class Game {
         if (!p || p.currentHealth <= 0) return;
         const ctx = this.ctx;
         const cx = p.x + p.size / 2, cy = p.y + p.size / 2;
-        const r = p.size * 0.5 + 22;
+        const r = p.size * 0.5 + 24;
         ctx.save();
         const g = ctx.createRadialGradient(cx, cy, p.size * 0.35, cx, cy, r);
-        g.addColorStop(0, 'rgba(255,225,77,0.28)');
+        g.addColorStop(0, 'rgba(255,225,77,0.35)');
         g.addColorStop(1, 'rgba(255,225,77,0)');
         ctx.fillStyle = g;
         ctx.beginPath();
         ctx.arc(cx, cy, r, 0, Math.PI * 2);
         ctx.fill();
-        ctx.lineWidth = 1.5;
-        ctx.strokeStyle = 'rgba(255,225,77,0.45)';
+        ctx.lineWidth = 2;
+        ctx.strokeStyle = 'rgba(255,225,77,0.6)';
         ctx.beginPath();
         ctx.arc(cx, cy, p.size * 0.5 + 9, 0, Math.PI * 2);
+        ctx.stroke();
+        ctx.restore();
+    }
+
+    // 置顶 X-Ray 透视轮廓(画在粒子、特效和伤害跳字之上):
+    // 怪堆密集、满屏跳字与技能光效时,始终在最顶层提供高对比度的玩家方位与科技四角准星
+    _renderSelfSilhouette(ctx) {
+        const p = this.player;
+        if (!p || p.currentHealth <= 0) return;
+        const cx = p.x + p.size / 2, cy = p.y + p.size / 2;
+        const s = p.size;
+        const pad = 4;
+        const left = p.x - pad, top = p.y - pad, w = s + pad * 2, h = s + pad * 2;
+        const arm = 7; // 四角准星长度
+
+        ctx.save();
+        const breath = 0.75 + 0.25 * Math.sin(performance.now() / 220);
+        // 外层微弱扩散环
+        ctx.strokeStyle = `rgba(255, 225, 77, ${0.45 * breath})`;
+        ctx.lineWidth = 1.5;
+        ctx.beginPath();
+        ctx.arc(cx, cy, s * 0.75 + 2, 0, Math.PI * 2);
+        ctx.stroke();
+
+        // 顶层科技四角准星(先画黑色强对比描边底,再画明亮金黄内芯)
+        ctx.lineCap = 'square';
+        // 1) 黑色外层底纹
+        ctx.strokeStyle = 'rgba(0, 0, 0, 0.9)';
+        ctx.lineWidth = 3.5;
+        ctx.beginPath();
+        // 左上角
+        ctx.moveTo(left, top + arm); ctx.lineTo(left, top); ctx.lineTo(left + arm, top);
+        // 右上角
+        ctx.moveTo(left + w - arm, top); ctx.lineTo(left + w, top); ctx.lineTo(left + w, top + arm);
+        // 右下角
+        ctx.moveTo(left + w, top + h - arm); ctx.lineTo(left + w, top + h); ctx.lineTo(left + w - arm, top + h);
+        // 左下角
+        ctx.moveTo(left + arm, top + h); ctx.lineTo(left, top + h); ctx.lineTo(left, top + h - arm);
+        ctx.stroke();
+
+        // 2) 金黄高亮内芯
+        ctx.strokeStyle = '#ffe14d';
+        ctx.lineWidth = 1.8;
         ctx.stroke();
         ctx.restore();
     }
@@ -12214,35 +12627,35 @@ class Game {
                 const t = (age - delay) / Game.LOCATE_PULSE;
                 if (t < 0 || t >= 1) continue;
                 const e = 1 - (1 - t) * (1 - t);
-                ctx.globalAlpha = 0.9 * (1 - t);
-                ctx.lineWidth = 3 - t * 1.5;
+                ctx.globalAlpha = 0.95 * (1 - t);
+                ctx.lineWidth = 3.5 - t * 1.5;
                 ctx.beginPath();
-                ctx.arc(pcx, pcy, 150 - (150 - p.size * 0.5 - 10) * e, 0, Math.PI * 2);
+                ctx.arc(pcx, pcy, 160 - (160 - p.size * 0.5 - 10) * e, 0, Math.PI * 2);
                 ctx.stroke();
             }
             ctx.restore();
         }
-        const bob = Math.sin(performance.now() / 180) * 3;
+        const bob = Math.sin(performance.now() / 160) * 3.5;
         const cx = p.x + p.size / 2;
-        const tipY = p.y - (p.shield > 0 ? 22 : 16) + bob;   // 避开血条/护盾条
-        const w = 11, h = 12;
+        const tipY = p.y - (p.shield > 0 ? 24 : 18) + bob;   // 避开血条/护盾条
+        const w = 13, h = 15;
         ctx.save();
         ctx.beginPath();
         ctx.moveTo(cx, tipY);
         ctx.lineTo(cx - w, tipY - h);
         ctx.lineTo(cx - w * 0.35, tipY - h);
-        ctx.lineTo(cx - w * 0.35, tipY - h - 7);
-        ctx.lineTo(cx + w * 0.35, tipY - h - 7);
+        ctx.lineTo(cx - w * 0.35, tipY - h - 8);
+        ctx.lineTo(cx + w * 0.35, tipY - h - 8);
         ctx.lineTo(cx + w * 0.35, tipY - h);
         ctx.lineTo(cx + w, tipY - h);
         ctx.closePath();
-        ctx.shadowBlur = 8;
+        ctx.shadowBlur = 10;
         ctx.shadowColor = '#ffe14d';
         ctx.fillStyle = '#ffe14d';
         ctx.fill();
         ctx.shadowBlur = 0;
-        ctx.lineWidth = 1.5;
-        ctx.strokeStyle = 'rgba(40,25,0,0.85)';
+        ctx.lineWidth = 2.2;
+        ctx.strokeStyle = 'rgba(20,10,0,0.95)';
         ctx.stroke();
         ctx.restore();
     }
@@ -12265,7 +12678,9 @@ class Game {
         } else {
             // 只在触屏设备上显示空闲提示,桌面端靠键盘为主
             if (!(('ontouchstart' in window) || navigator.maxTouchPoints > 0)) return;
-            bx = R + 34 * k; by = this.canvas.height - R - 34 * k;
+            const isSwap = this.layoutMode === 'swap';
+            bx = isSwap ? (this.canvas.width - R - 34 * k) : (R + 34 * k);
+            by = this.canvas.height - R - 34 * k;
             kx = bx; ky = by;
             alpha = 0.45;
         }
@@ -12363,7 +12778,37 @@ class Game {
         ctx.restore();
     }
 
-    // 右上角(静音按钮下方)连杀计数:数字随击杀弹跳,下方细条是剩余连杀时间;中断后淡出
+    // 左上角契约信息条(在状态面板右侧/下方):展示当局选定契约目标与达成状态
+    _renderContractHUD() {
+        if (!this.expeditionSession || !this.expeditionSession.selectedId) return;
+        const def = ExpeditionContract.POOL[this.expeditionSession.selectedId];
+        if (!def) return;
+        const ctx = this.ctx;
+        const pad = (this._hud && this._hud.padLeft) ? this._hud.padLeft : 10;
+        const x = pad + 108, y = 10, w = 150, h = 26;
+        const done = !!this.expeditionSession.completed;
+
+        ctx.save();
+        ctx.fillStyle = done ? 'rgba(40, 160, 90, 0.45)' : 'rgba(15, 25, 40, 0.65)';
+        roundRect(ctx, x, y, w, h, 6);
+        ctx.fill();
+        ctx.strokeStyle = done ? '#69f0ae' : '#ffd700';
+        ctx.lineWidth = 1;
+        roundRect(ctx, x, y, w, h, 6);
+        ctx.stroke();
+
+        ctx.font = 'bold 11px Arial';
+        ctx.textBaseline = 'middle';
+        ctx.textAlign = 'left';
+        ctx.fillStyle = done ? '#a7ffeb' : '#ffe57f';
+        ctx.fillText(`${def.icon} ${def.name}`, x + 6, y + h / 2);
+
+        ctx.textAlign = 'right';
+        ctx.font = '10px Arial';
+        ctx.fillStyle = done ? '#69f0ae' : '#ffffff';
+        ctx.fillText(done ? '✓ 已达成' : '+星核', x + w - 6, y + h / 2);
+        ctx.restore();
+    }
     _renderComboHUD() {
         const p = this.player;
         const live = p.combo >= 3 && p.comboTimer > 0;
@@ -13475,12 +13920,17 @@ class Game {
         this._buildRefresh();
     }
 
-    // HUD「构筑」按钮(冲刺键左侧);有未用天赋点 / 新宝石时角标提醒
+    // HUD「构筑」按钮(冲刺键旁);有未用天赋点 / 新宝石时角标提醒
     _renderBuildButton() {
         if (!this.isRunning) return;
         const ctx = this.ctx;
         const s = 40;
-        const x = this._hud.w - 48 - 24 - 14 - s, y = this._hud.h - 82 - 12 - 24 - 12 - s / 2;
+        const isSwap = this.layoutMode === 'swap';
+        const hudW = (this._hud && this._hud.w) ? this._hud.w : this.width;
+        const hudH = (this._hud && this._hud.h) ? this._hud.h : this.height;
+        const padL = (this._hud && this._hud.padLeft) ? this._hud.padLeft : 16;
+        const x = isSwap ? (padL + 48 + 24 + 14) : (hudW - 48 - 24 - 14 - s);
+        const y = hudH - 82 - 12 - 24 - 12 - s / 2;
         this._hudButton(x - 2, y - 2, s + 4, s + 4, 'build');
         const free = this._treePoints().free;
         const alert = free > 0 || this.player._newGem;
@@ -13518,7 +13968,12 @@ class Game {
         const p = this.player;
         const ctx = this.ctx;
         const r = 24;
-        const cx = this._hud.w - 48, cy = this._hud.h - 82 - 12 - r - 12;
+        const isSwap = this.layoutMode === 'swap';
+        const hudW = (this._hud && this._hud.w) ? this._hud.w : this.width;
+        const hudH = (this._hud && this._hud.h) ? this._hud.h : this.height;
+        const padL = (this._hud && this._hud.padLeft) ? this._hud.padLeft : 16;
+        const cx = isSwap ? (padL + 48) : (hudW - 48);
+        const cy = hudH - 82 - 12 - r - 12;
         this._hudButton(cx - r - 4, cy - r - 4, r * 2 + 8, r * 2 + 8, 'dash');
         const dashMax = p.dashCdTotal();
         const ratio = dashMax > 0 ? Math.max(0, Math.min(1, p.dashCooldown / dashMax)) : 0;
@@ -13611,8 +14066,12 @@ class Game {
         const cls = this.player.class;
         const slotW = 56, slotH = 56, slotR = 8;
         const margin = 10;
-        const baseX = this._hud.w - (slotW * 2 + margin * 3);
-        const baseY = this._hud.h - slotH - margin * 2 - 16;
+        const isSwap = this.layoutMode === 'swap';
+        const hudW = (this._hud && this._hud.w) ? this._hud.w : this.width;
+        const hudH = (this._hud && this._hud.h) ? this._hud.h : this.height;
+        const padL = (this._hud && this._hud.padLeft) ? this._hud.padLeft : 16;
+        const baseX = isSwap ? (padL + margin) : (hudW - (slotW * 2 + margin * 3));
+        const baseY = hudH - slotH - margin * 2 - 16;
 
         // 技能命中区每帧由 render 清空后重新登记
         this._hudButton(baseX, baseY, slotW, slotH, 'Q');
@@ -13633,10 +14092,11 @@ class Game {
             const tag = sp ? `${sp.icon} ${sp.name}${this.player.awakened ? ' · 觉醒' : ''}` : CLASS_NAMES[cls];
             ctx.save();
             ctx.font = 'bold 11px Arial';
-            ctx.textAlign = 'right';
+            ctx.textAlign = isSwap ? 'left' : 'right';
             ctx.textBaseline = 'bottom';
             ctx.fillStyle = this.player.awakened ? '#ffe082' : (CLASS_COLORS[cls] || '#ffffff');
-            ctx.fillText(tag, this._hud.w - 24, this._hud.h - 82 - 12 - 24 * 2 - 12 - 4);
+            const tagX = isSwap ? ((this._hud.padLeft || 16) + 24) : (this._hud.w - 24);
+            ctx.fillText(tag, tagX, this._hud.h - 82 - 12 - 24 * 2 - 12 - 4);
             ctx.restore();
         }
 
@@ -13755,8 +14215,10 @@ class Game {
             }
         }
 
-        // 觉醒状态下 R 奥义槽位于 Q 槽左侧,资源条再往左延伸
-        const resX = (this.player.awakened ? (baseX - slotW - margin) : baseX) - 22;
+        // 觉醒状态下 R 奥义槽和资源条位置自适应
+        const resX = isSwap
+            ? ((this.player.awakened ? (baseX + (slotW + margin) * 3) : (baseX + (slotW + margin) * 2)) + 6)
+            : ((this.player.awakened ? (baseX - slotW - margin) : baseX) - 22);
         if (cls === 'mage') {
             this._renderResourceBar(resX, baseY, 14, slotH + 20, this.player.mana, this.player.maxMana, '#00ccff', '#0044aa', '法');
         } else if (cls === 'paladin') {
@@ -13801,9 +14263,9 @@ class Game {
             ctx.restore();
         }
 
-        // 终极觉醒奥义 (R 技能, 角色达到 Lv7 觉醒后解锁,排布在 Q 槽左侧,避免遮挡上方冲刺与构筑按键)
+        // 终极觉醒奥义 (R 技能, 角色达到 Lv7 觉醒后解锁)
         if (this.player.awakened) {
-            const ultX = baseX - slotW - margin;
+            const ultX = isSwap ? (baseX + (slotW + margin) * 2) : (baseX - slotW - margin);
             const ultY = baseY;
             this._hudButton(ultX, ultY, slotW, slotH, 'ult');
 
@@ -14455,8 +14917,23 @@ class Player {
         if (actualDamage > 0) {
             this.lastHitInfo = { src: src || '其他伤害', dmg: actualDamage };
             this.currentHealth = Math.max(0, this.currentHealth - actualDamage);
-            if (this.currentHealth <= 0 && this.game) {
+        if (this.currentHealth <= 0 && this.game) {
                 this.game.fatalBlow = { ...this.lastHitInfo };
+            }
+            // 🌟 星图横向专精【反击破军】(战士受击 35% 几率反震周围敌人)
+            if (this.class === 'warrior' && typeof Metagrowth !== 'undefined' && Metagrowth.isUnlocked('class_variant') && this.game && Math.random() < 0.35) {
+                const pcx = this.x + this.size / 2, pcy = this.y + this.size / 2;
+                this.game.effects.push({ type: 'shockwave', x: pcx, y: pcy, radius: 10, maxRadius: 120, color: '#ff5252', ttl: 0.35, maxTtl: 0.35 });
+                this.game._showFloatingText('破军反击!', pcx, pcy - 20, '#ff5252');
+                for (const e of this.game.enemies) {
+                    const ex = e.x + e.size / 2, ey = e.y + e.size / 2;
+                    const dist = Math.hypot(ex - pcx, ey - pcy);
+                    if (dist <= 120 && dist > 0.001) {
+                        e.x += (ex - pcx) / dist * 35;
+                        e.y += (ey - pcy) / dist * 35;
+                        e.armorDebuffTimer = 3; // 削减其防御
+                    }
+                }
             }
             // 法师被动「奥术屏障」:生命跌破 30% 时张开吸收伤害的屏障
             if (this.class === 'mage' && this.currentHealth > 0 && this.currentHealth < this.maxHealth * 0.3 && !(this.barrierCd > 0)) {
@@ -14527,9 +15004,10 @@ class Player {
     
     render(ctx) {
         this._renderDashGhosts(ctx);
+        // 受击无敌期:不再大幅降低透明度(严防怪堆中半隐形导致找不到自己),保持高清晰度
         const flicker = this.hurtCooldown > 0 && Math.floor(this.hurtCooldown * 20) % 2 === 0;
         ctx.save();
-        ctx.globalAlpha = flicker ? 0.3 : 1;
+        ctx.globalAlpha = flicker ? 0.85 : 1;
 
         const isInvincible = this.invincibleTimer > 0;
         const baseColor = isInvincible ? '#ffeb3b' : this.color;
@@ -17153,43 +17631,43 @@ window.addEventListener('load', () => {
         updateProgressLabel();
     });
 
-    // ── 🌟 星图星盘局外天赋弹窗与每日秘境交互 ──
+    // ── 🌟 星图星盘纯横向局外分支弹窗与每日秘境交互 ──
     const metaOverlay = document.getElementById('metaOverlay');
     const renderMetaPanel = () => {
         if (!metaOverlay) return;
         const dustEl = document.getElementById('starDustCount');
         const listEl = document.getElementById('constellationList');
-        if (dustEl) dustEl.textContent = Metagrowth.getAvailableDust();
+        if (dustEl) dustEl.textContent = Metagrowth.getAvailableStarCores();
         if (!listEl) return;
 
         const state = Metagrowth.load();
         listEl.innerHTML = '';
-        for (const [k, def] of Object.entries(Metagrowth.CONSTELLATIONS)) {
-            const curLv = state[k] || 0;
-            const isMax = curLv >= def.maxLv;
-            const nextCost = isMax ? 0 : def.costs[curLv];
-            const canAfford = !isMax && Metagrowth.getAvailableDust() >= nextCost;
+        for (const [k, def] of Object.entries(Metagrowth.BRANCHES)) {
+            const isUnlocked = !!state[k];
+            const canAfford = !isUnlocked && Metagrowth.getAvailableStarCores() >= def.cost;
 
             const card = document.createElement('div');
             card.className = 'constellation-card';
+            card.style.cssText = 'background: rgba(10,25,45,0.7); border: 1px solid rgba(0,200,255,0.3); border-radius: 8px; padding: 10px 14px; display: flex; justify-content: space-between; align-items: center; gap: 12px; margin-bottom: 8px;';
             card.innerHTML = `
-                <div class="constellation-icon">${def.icon}</div>
-                <div class="constellation-info">
-                    <div class="constellation-header">
-                        <span class="constellation-name">${def.name}</span>
-                        <span class="constellation-level">Lv.${curLv}/${def.maxLv}</span>
+                <div style="font-size: 24px; min-width: 32px; text-align: center;">${def.icon}</div>
+                <div style="flex: 1;">
+                    <div style="display: flex; align-items: center; gap: 8px;">
+                        <span style="font-weight: bold; color: #e0f7fa; font-size: 14px;">${def.name}</span>
+                        <span style="font-size: 11px; padding: 2px 6px; border-radius: 4px; background: ${isUnlocked ? 'rgba(76,175,80,0.3)' : 'rgba(255,215,0,0.15)'}; color: ${isUnlocked ? '#81c784' : '#ffd54f'};">
+                            ${isUnlocked ? '已点亮' : `需 ${def.cost} 星核`}
+                        </span>
                     </div>
-                    <div class="constellation-desc">${def.descs[Math.max(0, curLv - 1)]}</div>
-                    ${!isMax ? `<div class="constellation-next">下一级: ${def.descs[curLv]} (消耗 ${nextCost} 星之砂)</div>` : ''}
+                    <div style="font-size: 12px; color: #b0bec5; margin-top: 4px; line-height: 1.4;">${def.desc}</div>
                 </div>
-                <button class="mp-btn ${canAfford ? 'mp-btn-primary' : 'mp-btn-ghost'} constellation-btn" data-k="${k}" ${(!canAfford || isMax) ? 'disabled' : ''}>
-                    ${isMax ? '已满级' : `点亮 (${nextCost})`}
+                <button class="mp-btn ${canAfford ? 'mp-btn-primary' : 'mp-btn-ghost'} meta-branch-btn" data-k="${k}" ${(!canAfford || isUnlocked) ? 'disabled' : ''} style="width: auto; min-width: 80px; padding: 5px 12px; font-size: 12px;">
+                    ${isUnlocked ? '✓ 已解锁' : `点亮 (${def.cost})`}
                 </button>
             `;
-            const btn = card.querySelector('.constellation-btn');
-            if (btn && !isMax) {
+            const btn = card.querySelector('.meta-branch-btn');
+            if (btn && !isUnlocked) {
                 btn.addEventListener('click', () => {
-                    if (Metagrowth.upgrade(k)) {
+                    if (Metagrowth.unlockNode(k)) {
                         Sound.play('levelUp');
                         renderMetaPanel();
                     }
@@ -17221,6 +17699,73 @@ window.addEventListener('load', () => {
         });
     }
 
+    // ── 📜 远征契约委托弹窗交互 (随机 3 选 1 + 免费整组重抽 1 次) ──
+    const contractOverlay = document.getElementById('contractOverlay');
+    const openContractBtn = document.getElementById('openContract');
+    const contractConfirmBtn = document.getElementById('contractConfirmBtn');
+    const contractRerollBtn = document.getElementById('contractRerollBtn');
+    const contractListEl = document.getElementById('contractCandidateList');
+
+    const renderContractPanel = () => {
+        if (!contractOverlay || !contractListEl) return;
+        if (!game.expeditionSession) {
+            game.expeditionSession = ExpeditionContract.initSession(game);
+        }
+        const session = game.expeditionSession;
+        contractListEl.innerHTML = '';
+
+        if (contractRerollBtn) {
+            contractRerollBtn.disabled = !!session.rerolled;
+            contractRerollBtn.textContent = session.rerolled ? '🎲 已消耗重抽' : '🎲 换一组 (剩余 1 次)';
+            contractRerollBtn.style.opacity = session.rerolled ? '0.5' : '1';
+        }
+
+        const candidateIds = session.candidates || [];
+        for (const cid of candidateIds) {
+            const def = ExpeditionContract.POOL[cid];
+            if (!def) continue;
+            const isSelected = session.selectedId === cid;
+            const item = document.createElement('div');
+            item.className = 'contract-candidate-item';
+            item.style.cssText = `background: ${isSelected ? 'rgba(0,150,136,0.25)' : 'rgba(20,30,50,0.6)'}; border: 1.5px solid ${isSelected ? '#64ffda' : 'rgba(255,255,255,0.15)'}; border-radius: 8px; padding: 12px; cursor: pointer; transition: all 0.2s;`;
+            item.innerHTML = `
+                <div style="display: flex; justify-content: space-between; align-items: center; margin-bottom: 4px;">
+                    <div style="font-weight: bold; color: ${isSelected ? '#64ffda' : '#fff'}; font-size: 14px;">${def.icon} ${def.name}</div>
+                    <div style="font-size: 12px; color: #ffd54f;">奖励 +${def.rewardDust} 星核</div>
+                </div>
+                <div style="font-size: 12px; color: #cfd8dc; line-height: 1.4;">${def.desc}</div>
+            `;
+            item.addEventListener('click', () => {
+                session.selectedId = cid;
+                renderContractPanel();
+            });
+            contractListEl.appendChild(item);
+        }
+    };
+
+    if (openContractBtn) {
+        openContractBtn.addEventListener('click', () => {
+            renderContractPanel();
+            if (contractOverlay) contractOverlay.style.display = 'flex';
+        });
+    }
+
+    if (contractRerollBtn) {
+        contractRerollBtn.addEventListener('click', () => {
+            if (game.expeditionSession && !game.expeditionSession.rerolled) {
+                ExpeditionContract.reroll(game.expeditionSession, game);
+                Sound.play('cdReady');
+                renderContractPanel();
+            }
+        });
+    }
+
+    if (contractConfirmBtn) {
+        contractConfirmBtn.addEventListener('click', () => {
+            if (contractOverlay) contractOverlay.style.display = 'none';
+        });
+    }
+
     // ── 🌌 每日秘境突变因子切换 ──
     const mutationBtn = document.getElementById('mutationToggle');
     const mutationLabel = document.getElementById('mutationLabel');
@@ -17246,25 +17791,29 @@ window.addEventListener('load', () => {
         updateMutationUI();
     }
 
-    // ── 操控方式(移动 + 技能按键):进入游戏前询问(可记住),大厅按钮随时更改 ──
+    // ── 操控方式(移动 + 技能按键 + 按键布局):进入游戏前询问(可记住),大厅按钮随时更改 ──
     const controlOverlay = document.getElementById('controlOverlay');
     const controlRemember = document.getElementById('controlRemember');
     const moveOpts = controlOverlay.querySelectorAll('[data-group=move] .control-opt');
     const skillOpts = controlOverlay.querySelectorAll('[data-group=skill] .control-opt');
+    const layoutOpts = controlOverlay.querySelectorAll('[data-group=layout] .control-opt');
     let controlThen = null;
-    let pickMove = game.controlMode, pickSkill = game.skillMode;
+    let pickMove = game.controlMode, pickSkill = game.skillMode, pickLayout = game.layoutMode;
     const updateControlLabel = () => {
         document.getElementById('controlLabel').textContent =
-            (game.controlMode === 'tap' ? '点触移动' : '虚拟摇杆') + ' · ' + (game.skillMode === 'aim' ? '拖拽瞄准' : '点按释放');
+            (game.controlMode === 'tap' ? '点触移动' : '虚拟摇杆') + ' · ' +
+            (game.skillMode === 'aim' ? '拖拽瞄准' : '点按释放') +
+            (game.layoutMode === 'swap' ? ' · 左右对调' : '');
     };
     updateControlLabel();
     const syncOpts = () => {
         moveOpts.forEach(o => o.classList.toggle('selected', o.dataset.mode === pickMove));
         skillOpts.forEach(o => o.classList.toggle('selected', o.dataset.mode === pickSkill));
+        layoutOpts.forEach(o => o.classList.toggle('selected', o.dataset.mode === pickLayout));
     };
     const openControl = (then) => {
         controlThen = then;
-        pickMove = game.controlMode; pickSkill = game.skillMode;
+        pickMove = game.controlMode; pickSkill = game.skillMode; pickLayout = game.layoutMode;
         controlRemember.checked = !!Store.get('blockrun.controlRemember', false);
         document.getElementById('controlConfirm').textContent = then ? '开始游戏' : '确定';
         syncOpts();
@@ -17278,9 +17827,11 @@ window.addEventListener('load', () => {
     };
     moveOpts.forEach(o => o.addEventListener('click', () => { pickMove = o.dataset.mode; syncOpts(); }));
     skillOpts.forEach(o => o.addEventListener('click', () => { pickSkill = o.dataset.mode; syncOpts(); }));
+    layoutOpts.forEach(o => o.addEventListener('click', () => { pickLayout = o.dataset.mode; syncOpts(); }));
     document.getElementById('controlConfirm').addEventListener('click', () => {
         game.setControlMode(pickMove);
         game.setSkillMode(pickSkill);
+        game.setLayoutMode(pickLayout);
         Store.set('blockrun.controlRemember', controlRemember.checked);
         updateControlLabel();
         controlOverlay.style.display = 'none';
@@ -17308,6 +17859,13 @@ window.addEventListener('load', () => {
         const dm = diffDef(game.diffPref);
         setStatus(`难度:${dm.name} · ${dm.desc}`);
     });
+
+    const fsToggleBtn = document.getElementById('fullscreenToggle');
+    if (fsToggleBtn) {
+        fsToggleBtn.addEventListener('click', () => {
+            game.toggleFullscreen();
+        });
+    }
 
     // ── 沉浸式横屏全屏开关(仅触屏设备显示) ──
     const immersiveBtn = document.getElementById('immersiveToggle');

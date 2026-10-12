@@ -35,12 +35,16 @@
                     <button id="openProgress" class="mp-btn mp-btn-ghost">成就与外观</button>
                 </div>
                 <div class="mp-extra-row">
-                    <button id="openMetagrowth" class="mp-btn mp-btn-ghost" style="border-color:#ffd700; color:#ffe082;">🌟 星图天赋</button>
-                    <button id="mutationToggle" class="mp-btn mp-btn-ghost" style="border-color:#ba68c8; color:#e1bee7;">🌌 每日秘境:<span id="mutationLabel">关</span></button>
+                    <button id="openContract" class="mp-btn mp-btn-ghost" style="border-color:#ffd700; color:#ffe082;">📜 远征契约</button>
+                    <button id="openMetagrowth" class="mp-btn mp-btn-ghost" style="border-color:#80d8ff; color:#b3e5fc;">🌟 永恒星图</button>
                 </div>
-                <button id="openControl" class="mp-btn mp-btn-ghost mp-control-btn">操控方式:<span id="controlLabel">摇杆</span></button>
+                <div class="mp-extra-row">
+                    <button id="mutationToggle" class="mp-btn mp-btn-ghost" style="border-color:#ba68c8; color:#e1bee7;">🌌 每日秘境:<span id="mutationLabel">关</span></button>
+                    <button id="openControl" class="mp-btn mp-btn-ghost mp-control-btn">操控:<span id="controlLabel">摇杆</span></button>
+                </div>
                 <div class="mp-extra-row">
                     <button id="diffToggle" class="mp-btn mp-btn-ghost">难度:<span id="diffLabel">普通</span></button>
+                    <button id="fullscreenToggle" class="mp-btn mp-btn-ghost">⛶ 全屏</button>
                     <button id="immersiveToggle" class="mp-btn mp-btn-ghost" style="display:none">横屏全屏:<span id="immersiveLabel">开</span></button>
                 </div>
             </div>
@@ -115,6 +119,19 @@
                     <span>按住按键拖向想要的方向,松手释放;轻点仍自动瞄准</span>
                 </button>
             </div>
+            <div class="control-group-title">按键布局 (左右位置)</div>
+            <div class="control-options" data-group="layout">
+                <button class="control-opt" data-mode="default">
+                    <span class="control-icon">🎮</span>
+                    <b>左摇杆 / 右技能</b>
+                    <span>左半屏摇杆移动,右下角释放技能与冲刺</span>
+                </button>
+                <button class="control-opt" data-mode="swap">
+                    <span class="control-icon">🔄</span>
+                    <b>右摇杆 / 左技能</b>
+                    <span>右半屏摇杆移动,左下角释放技能与冲刺(对调)</span>
+                </button>
+            </div>
             <label class="control-remember"><input type="checkbox" id="controlRemember"> 记住选择,下次不再询问</label>
             <button id="controlConfirm" class="mp-btn mp-btn-primary control-confirm">确定</button>
             <div class="control-note">键盘 WASD / 方向键、空格、Q / E 始终可用,之后可在大厅「操控方式」里更改</div>
@@ -134,13 +151,28 @@
         </div>
     </div>
 
-    <!-- 🌟 星图星盘局外天赋面板 -->
+    <!-- 📜 远征契约弹窗: 每局随机 3 选 1 + 1 次免费整组重抽 -->
+    <div id="contractOverlay" class="panel-overlay" style="display:none">
+        <div class="panel-card" style="max-width: 580px;">
+            <h3 class="panel-title" style="color: #ffd700;">📜 远征契约委托</h3>
+            <div style="font-size: 13px; color: #cfd8dc; margin-bottom: 12px; line-height: 1.5;">
+                接受一条远征委托，当局达成可赚取用于星图纯横向解锁的「星核」。每局拥有 <b>1 次免费整组重抽</b> 机会。
+            </div>
+            <div id="contractCandidateList" style="display: flex; flex-direction: column; gap: 10px; margin-bottom: 15px;"></div>
+            <div style="display: flex; gap: 10px; justify-content: flex-end;">
+                <button id="contractRerollBtn" class="mp-btn mp-btn-ghost" style="width: auto; padding: 6px 14px;">🎲 换一组 (剩余 1 次)</button>
+                <button id="contractConfirmBtn" class="mp-btn mp-btn-primary" style="width: auto; padding: 6px 18px;">确认并开始</button>
+            </div>
+        </div>
+    </div>
+
+    <!-- 🌟 星图星盘纯横向局外分支面板 -->
     <div id="metaOverlay" class="panel-overlay" style="display:none">
-        <div class="panel-card" style="max-width: 600px;">
-            <h3 class="panel-title" style="color: #ffd700;">🌟 永恒星图 · 局外天赋</h3>
+        <div class="panel-card" style="max-width: 620px;">
+            <h3 class="panel-title" style="color: #ffd700;">🌟 永恒星图 · 纯横向分支解锁</h3>
             <div style="display: flex; justify-content: space-between; align-items: center; margin-bottom: 12px; font-size: 13px; color: #e0e0e0;">
-                <div>拥有星之砂: <span id="starDustCount" style="color: #ffd700; font-weight: bold; font-size: 16px;">0</span> 粒</div>
-                <button id="resetMeta" class="mp-btn mp-btn-ghost" style="padding: 4px 10px; font-size: 12px; width: auto;">免费洗点</button>
+                <div>拥有星核: <span id="starDustCount" style="color: #ffd700; font-weight: bold; font-size: 16px;">0</span> 颗 <span style="font-size: 11px; color:#90a4ae;">(纯横向新机制，无数值加成)</span></div>
+                <button id="resetMeta" class="mp-btn mp-btn-ghost" style="padding: 4px 10px; font-size: 12px; width: auto;">免费重置</button>
             </div>
             <div id="constellationList" class="constellation-list" style="display: grid; grid-template-columns: 1fr; gap: 10px; max-height: 52vh; overflow-y: auto; margin-bottom: 15px;"></div>
             <button id="closeMeta" class="mp-btn mp-btn-primary">返回大厅</button>

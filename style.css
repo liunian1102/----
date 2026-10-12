@@ -617,7 +617,7 @@ kbd {
     padding: 10px 6px;
     font-size: 0.85em;
 }
-.control-card { text-align: center; }
+.control-card { text-align: center; max-height: 90vh; overflow-y: auto; }
 .control-group-title {
     color: rgba(200, 232, 255, 0.7);
     font-size: 0.8em;
