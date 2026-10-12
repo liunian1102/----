@@ -9,6 +9,11 @@ const CLASS_BASE_CD = {
     paladin:  { q: 4, e: 12 }
 };
 
+// 刺客技能蓄力消耗门槛
+const ASSASSIN_Q_COST = 25; // 闪现斩最低需要 25 蓄力
+const ASSASSIN_E_COST = 20; // 连刺最低需要 20 蓄力
+const ASSASSIN_COMBO_DURATION = 1.5; // 暗影连斩窗口(秒)
+
 // 选择职业时叠加的基础属性偏移,强化职业特色
 //  - warrior 攻高防低血厚
 //  - archer  攻偏高、自动攻击投射物倍率高
@@ -10365,13 +10370,24 @@ class Game {
     }
 
     _assassinQ(skill) {
+        const p = this.player;
+        const inCombo = (p.assassinComboTimer || 0) > 0;
+
+        // ── 蓄力门槛检查 ──
+        // 连斩窗口内免除消耗门槛；否则需要至少 ASSASSIN_Q_COST 点蓄力
+        if (!inCombo && p.assassinCharge < ASSASSIN_Q_COST) {
+            const pcx = p.x + p.size / 2;
+            this._showFloatingText('蓄力不足', pcx, p.y - 20, '#ce93d8');
+            return; // 不进入冷却，不瞬移
+        }
+
         const targets = this._findClosestEnemies(1);
         if (targets.length === 0) return;
         const target = targets[0];
         const tcx = target.x + target.size / 2;
         const tcy = target.y + target.size / 2;
-        const pcx = this.player.x + this.player.size / 2;
-        const pcy = this.player.y + this.player.size / 2;
+        const pcx = p.x + p.size / 2;
+        const pcy = p.y + p.size / 2;
         const dx = tcx - pcx, dy = tcy - pcy;
         const dist = Math.sqrt(dx * dx + dy * dy);
         this.spawnParticles(pcx, pcy, '#aa44ff', 10, 2, 5, 2, 4, 0.05);
@@ -10379,16 +10395,25 @@ class Game {
         if (dist > 0) {
             const nx = dx / dist, ny = dy / dist;
             // 落点钳在场地内(目标贴边时会被闪到场外)
-            this.player.x = Math.max(0, Math.min(this.width - this.player.size, target.x - nx * (target.size + this.player.size * 0.5)));
-            this.player.y = Math.max(0, Math.min(this.height - this.player.size, target.y - ny * (target.size + this.player.size * 0.5)));
+            p.x = Math.max(0, Math.min(this.width - p.size, target.x - nx * (target.size + p.size * 0.5)));
+            p.y = Math.max(0, Math.min(this.height - p.size, target.y - ny * (target.size + p.size * 0.5)));
         }
-        const chargeMult = this._consumeAssassinCharge();
-        const dmg = this._computeAttackDamage(this.player.attack) * 2.5 * this._getSkillMultiplier(skill.level) * (this.player.assassinSkillDmgMult || 1) * chargeMult;
-        const p = this.player;
+
+        // ── 蓄力消耗与伤害倍率 ──
+        // 连斩窗口内：保底按 30 蓄力计算倍率（1.6×），不额外清空蓄力
+        let chargeMult;
+        if (inCombo) {
+            chargeMult = 1 + Math.max(30, p.assassinCharge) * 0.02;
+            p.assassinCharge = 0; // 连斩同样清空蓄力，避免永久堆叠
+        } else {
+            chargeMult = this._consumeAssassinCharge();
+        }
+
+        const dmg = this._computeAttackDamage(p.attack) * 2.5 * this._getSkillMultiplier(skill.level) * (p.assassinSkillDmgMult || 1) * chargeMult;
         const kills0 = p.killCount || 0;
         this._dealDamage(target, dmg);
-        const newPcx = this.player.x + this.player.size / 2;
-        const newPcy = this.player.y + this.player.size / 2;
+        const newPcx = p.x + p.size / 2;
+        const newPcy = p.y + p.size / 2;
         this.effects.push({ type: 'afterimage', x1: pcx, y1: pcy, x2: newPcx, y2: newPcy, s: p.size, n: 6, color: '#aa44ff', ttl: 0.35, maxTtl: 0.35 });
         this.effects.push({ type: 'xslash', x: tcx, y: tcy, len: 34, w: 11, rot: Math.atan2(dy, dx), color: '#dd88ff', ttl: 0.32, maxTtl: 0.32 });
         // 影舞者觉醒:落点范围斩击
@@ -10397,24 +10422,45 @@ class Game {
             this._hitAround(newPcx, newPcy, r, dmg * 0.6);
             this.effects.push({ type: 'meleeSwing', x: newPcx, y: newPcy, radius: r, startAngle: 0, endAngle: Math.PI * 2, color: '#b388ff', ttl: 0.25, maxTtl: 0.25 });
         }
-        // 刺客被动「收割」:Q 击杀返还一半冷却;影舞者直接刷新
+
+        // ── 斩杀结算：激活「暗影连斩」或返还冷却 ──
         if ((p.killCount || 0) > kills0) {
             if (p.spec === 'shadow') {
+                // 影舞者：CD 刷新 + 激活连斩窗口（可续约）
                 skill.cooldown = 0.15;
+                p.assassinComboTimer = ASSASSIN_COMBO_DURATION;
                 if (p.awakened) p.hurtCooldown = Math.max(p.hurtCooldown, 0.6);
-                this._showFloatingText('刷新!', newPcx, newPcy - 34, '#e1bee7');
+                this._showFloatingText('⚡ 连斩!', newPcx, newPcy - 34, '#e1bee7');
             } else {
+                // 普通专精：返还 50% CD + 补充 15 蓄力
                 skill.cooldown = skill.maxCooldown * 0.5;
+                p.assassinCharge = Math.min(p.maxAssassinCharge, (p.assassinCharge || 0) + 15);
+                this._showFloatingText('收割!', newPcx, newPcy - 34, '#ce93d8');
             }
             this.spawnParticles(newPcx, newPcy, '#cc88ff', 8, 2, 4, 2, 4, 0.05);
             return;
+        }
+
+        // ── 斩杀失败：连斩中断，清空连斩状态 ──
+        if (inCombo) {
+            p.assassinComboTimer = 0;
+            this._showFloatingText('连斩中断!', newPcx, newPcy - 28, '#ff5252');
         }
         this.spawnParticles(newPcx, newPcy, '#cc88ff', 8, 2, 4, 2, 4, 0.05);
         skill.cooldown = skill.maxCooldown;
     }
 
     _assassinE(skill) {
-        const baseTargets = 3 + (this.player.assassinExtraTargets || 0);
+        const p = this.player;
+
+        // ── 蓄力门槛检查 ──
+        if ((p.assassinCharge || 0) < ASSASSIN_E_COST) {
+            const pcx = p.x + p.size / 2;
+            this._showFloatingText('蓄力不足', pcx, p.y - 20, '#ce93d8');
+            return; // 不进入冷却
+        }
+
+        const baseTargets = 3 + (p.assassinExtraTargets || 0);
         const targets = this._findClosestEnemies(baseTargets);
         if (targets.length === 0) return;
         const chargeMult = this._consumeAssassinCharge();
@@ -10424,7 +10470,7 @@ class Game {
                 delay: idx * 0.1,
                 fn: () => {
                     if (t.currentHealth <= 0) return;
-                    const dmg = this._computeAttackDamage(this.player.attack) * 1.0 * this._getSkillMultiplier(skill.level) * (this.player.assassinSkillDmgMult || 1) * chargeMult;
+                    const dmg = this._computeAttackDamage(p.attack) * 1.0 * this._getSkillMultiplier(skill.level) * (p.assassinSkillDmgMult || 1) * chargeMult;
                     this._dealDamage(t, dmg);
                     const tx = t.x + t.size / 2;
                     const ty = t.y + t.size / 2;
@@ -11033,10 +11079,10 @@ class Game {
                 choice: 3, name: '刺客', icon: '☄', color: '#aa66ff',
                 tag: '移速  蓄力  爆发',
                 tagColor: '#ce93d8',
-                flavor: '被动·收割：20% 暴击，闪现斩击杀返还一半冷却；移动积累蓄力',
+                flavor: '被动·收割：20% 暴击；移动积累蓄力，满25蓄力后可释放技能',
                 stats: ['移动速度 +1.5', '远程自动攻击'],
-                q: { name: '闪现斩', cd: '4s', desc: '瞬移至目标身旁并造成高额伤害' },
-                e: { name: '连刺',   cd: '6s', desc: '连续攻击3个最近敌人，依次结算' }
+                q: { name: '闪现斩', cd: '4s', desc: '消耗≥25蓄力瞬移突刺；击杀目标激活1.5秒免费连斩' },
+                e: { name: '连刺',   cd: '6s', desc: '消耗≥20蓄力，连续攻击3个最近敌人，依次结算' }
             },
             {
                 choice: 4, name: '弓手', icon: '◎', color: '#aaff44',
@@ -14231,6 +14277,37 @@ class Game {
             this._renderResourceBar(resX, baseY, 14, slotH + 20, this.player.assassinCharge, this.player.maxAssassinCharge, '#ce93d8', '#4a148c', '蓄');
         }
 
+        // 刺客连斩窗口激活时：Q 槽流光紫金高亮
+        if (cls === 'assassin' && (this.player.assassinComboTimer || 0) > 0) {
+            const qSlotX = slots[0].x;
+            ctx.save();
+            this._hudGlow(ctx, qSlotX - 3, baseY - 3, slotW + 6, slotH + 6, slotR + 2, 18, '#e040fb', 1, 0, 3);
+            ctx.strokeStyle = '#e040fb';
+            ctx.lineWidth = 3;
+            roundRect(ctx, qSlotX - 3, baseY - 3, slotW + 6, slotH + 6, slotR + 2);
+            ctx.stroke();
+            ctx.fillStyle = '#e040fb';
+            ctx.font = 'bold 10px Arial';
+            ctx.textAlign = 'center';
+            ctx.textBaseline = 'bottom';
+            ctx.fillText(`⚡${this.player.assassinComboTimer.toFixed(1)}s`, qSlotX + slotW / 2, baseY - 4);
+            ctx.restore();
+        }
+        // 刺客 Q 蓄力不足时：Q 槽角标提示
+        if (cls === 'assassin' && (this.player.assassinComboTimer || 0) <= 0 && this.player.assassinCharge < ASSASSIN_Q_COST) {
+            const qSlotX = slots[0].x;
+            ctx.save();
+            ctx.fillStyle = 'rgba(0,0,0,0.45)';
+            roundRect(ctx, qSlotX, baseY, slotW, slotH, slotR);
+            ctx.fill();
+            ctx.fillStyle = '#ce93d8';
+            ctx.font = 'bold 9px Arial';
+            ctx.textAlign = 'center';
+            ctx.textBaseline = 'bottom';
+            ctx.fillText(`${ASSASSIN_Q_COST}⚡`, qSlotX + slotW / 2, baseY + slotH - 2);
+            ctx.restore();
+        }
+
         // 法师 Q 开关激活时,在 Q 槽周围加发光指示 + 显示每次普攻消耗
         if (cls === 'mage' && this.player.qToggleActive) {
             const qSlotX = slots[0].x;
@@ -14519,6 +14596,7 @@ class Player {
         this.lastChargeX = x;
         this.lastChargeY = y;
         this.chargeGainMult = 1;
+        this.assassinComboTimer = 0; // 暗影连斩窗口剩余时间
 
         this.stunTimer = 0;
 
@@ -14665,6 +14743,11 @@ class Player {
             const moved = Math.sqrt(dxc * dxc + dyc * dyc);
             if (moved > 0 && moved <= 80) {
                 this.assassinCharge = Math.min(this.maxAssassinCharge, this.assassinCharge + moved * 0.1 * (this.chargeGainMult || 1));
+            }
+            // 暗影连斩窗口倒计时
+            if ((this.assassinComboTimer || 0) > 0) {
+                this.assassinComboTimer -= DT;
+                if (this.assassinComboTimer < 0) this.assassinComboTimer = 0;
             }
         }
         this.lastChargeX = this.x;
