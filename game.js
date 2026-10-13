@@ -3820,9 +3820,9 @@ class Game {
             p.mana = Math.min(p.maxMana, p.mana + p.manaRegen * DT);
         if (p.class === 'paladin') {
             if (p.faith < p.maxFaith) p.faith = Math.min(p.maxFaith, p.faith + p.faithRegen * DT);
-            const cap = p.maxHealth * (p.shieldCapRatio || 0.1);
+            const cap = p.maxHealth * (p.shieldCapRatio || 0.15);
             if (p.hurtCooldown > 0) p.lastHitAt = this.gameTime; // guest 本机不结算伤害,用受击无敌帧近似「刚挨打」
-            if (p.shield < cap && p.outOfCombat(Player.PALADIN_SHIELD_DELAY)) p.shield = Math.min(cap, p.shield + p.maxHealth * 0.02 * DT);
+            if (p.shield < cap && p.outOfCombat(Player.PALADIN_SHIELD_DELAY)) p.shield = Math.min(cap, p.shield + p.maxHealth * 0.035 * DT);
         }
         if (p.skillQ.cooldown > 0) p.skillQ.cooldown -= DT;
         if (p.skillE.cooldown > 0) p.skillE.cooldown -= DT;
@@ -5540,6 +5540,7 @@ class Game {
 
     // 以 (fromX, fromY) 为源点向外击退
     _knockbackFrom(target, fromX, fromY, force) {
+        if (!target) return;
         this._knockbackDir(target, target.x + target.size / 2 - fromX, target.y + target.size / 2 - fromY, force);
     }
 
@@ -5792,9 +5793,9 @@ class Game {
         }
         // 圣骑士护盾回复(上限 = maxHealth * shieldCapRatio);挨打后 PALADIN_SHIELD_DELAY 秒内不回,持续缠斗时护盾会被打空
         if (this.player.class === 'paladin') {
-            const cap = this.player.maxHealth * (this.player.shieldCapRatio || 0.10);
+            const cap = this.player.maxHealth * (this.player.shieldCapRatio || 0.15);
             if (this.player.shield < cap && this.player.outOfCombat(Player.PALADIN_SHIELD_DELAY)) {
-                const regen = this.player.maxHealth * 0.02; // /秒(2% maxHP)
+                const regen = this.player.maxHealth * 0.035; // /秒(3.5% maxHP)
                 this.player.shield = Math.min(cap, this.player.shield + regen * DT);
             }
         }
@@ -6260,7 +6261,9 @@ class Game {
     // 技能位 slot 上宝石 id 的当前数值(没镶或不生效 = 0)
     _gv(p, slot, id) {
         if (!slot || !p || p.gemLog === undefined) return 0;
-        const lv = this._gemMap(p)[slot][id];
+        const m = this._gemMap(p);
+        const s = m && m[slot];
+        const lv = s && s[id];
         return lv ? GEMS[id].val[lv - 1] : 0;
     }
 
@@ -9108,25 +9111,27 @@ class Game {
     
     checkCollisions() {
         for (let i = this.enemies.length - 1; i >= 0; i--) {
-            if (this.checkCollision(this.player, this.enemies[i])) {
+            const e = this.enemies[i];
+            if (!e) continue;
+            if (this.checkCollision(this.player, e)) {
                 // 冲刺中直接穿过敌人(不碰撞、不推开),碰上即算完美闪避
-                const harmless = this.enemies[i].contactDamage() <= 0; // 宝藏方块碰了不疼
+                const harmless = e.contactDamage() <= 0; // 宝藏方块碰了不疼
                 if (this.player.dashTimer > 0) { if (!harmless) this._canHurt(this.player); continue; }
                 // 受击无敌帧：冷却期内不再结算玩家受伤，避免重叠时血量瞬间被掏空
                 if (this.player.hurtCooldown <= 0 && !harmless) {
-                    this.player.takeDamage(this.enemies[i].contactDamage(), ENEMY_NAMES[this.enemies[i].type] || '敌人碰撞', this.enemies[i].pctDamage());
+                    this.player.takeDamage(e.contactDamage(), ENEMY_NAMES[e.type] || '敌人碰撞', e.pctDamage());
                     this.player.hurtCooldown = 0.6 + (this.player.hurtCooldownBonus || 0);
                     this.player.gainRage(15 + (this.player.rageOnHurtBonus || 0));
                     this.spawnHitParticles(this.player.x + this.player.size / 2, this.player.y + this.player.size / 2, '#ff4444', 8);
-                    this._knockbackFrom(this.enemies[i], this.player.x + this.player.size / 2, this.player.y + this.player.size / 2, 5);
+                    this._knockbackFrom(e, this.player.x + this.player.size / 2, this.player.y + this.player.size / 2, 5);
                 }
-                this._withSrc('body', () => this.enemies[i].takeDamage(this.player.attack));
+                this._withSrc('body', () => e.takeDamage(this.player.attack));
                 
                 // 简单的碰撞后分离，避免持续碰撞
-                const dx = this.player.x - this.enemies[i].x;
-                const dy = this.player.y - this.enemies[i].y;
+                const dx = this.player.x - e.x;
+                const dy = this.player.y - e.y;
                 const distance = Math.sqrt(dx * dx + dy * dy);
-                const minDistance = (this.player.size + this.enemies[i].size) / 2;
+                const minDistance = (this.player.size + e.size) / 2;
                 
                 if (distance < minDistance && distance > 0) {
                     const pushFactor = 10;
@@ -9145,17 +9150,20 @@ class Game {
                     this.player.x = newPlayerX;
                     this.player.y = newPlayerY;
                     
-                    // 敌人位置调整
-                    this.enemies[i].x -= pushX;
-                    this.enemies[i].y -= pushY;
+                    // 敌人位置调整(仅在敌人存活且存在时调整)
+                    if (e && e.currentHealth > 0) {
+                        e.x -= pushX;
+                        e.y -= pushY;
+                    }
                 }
                 
                 this._checkLocalDeath(); // 复活后给一小段无敌避免连死
                 
-                if (this.enemies[i] && this.enemies[i].currentHealth <= 0) {
-                    this.spawnHitParticles(this.enemies[i].x + this.enemies[i].size / 2, this.enemies[i].y + this.enemies[i].size / 2, this.enemies[i].color, 12);
-                    this._onEnemyKilled(this.enemies[i]);
-                    this.enemies.splice(i, 1);
+                if (e && e.currentHealth <= 0) {
+                    this.spawnHitParticles(e.x + e.size / 2, e.y + e.size / 2, e.color, 12);
+                    this._onEnemyKilled(e);
+                    const idx = this.enemies.indexOf(e);
+                    if (idx >= 0) this.enemies.splice(idx, 1);
                 }
             }
         }
@@ -11349,7 +11357,7 @@ class Game {
         if (p.spec === 'protector') dmg += p.maxHealth * 0.03 + p.shield * 0.3;
         this._withSrc('a', () => {
             const hits = this._hitAround(pcx, pcy, range, dmg);
-            p.faith = Math.min(p.maxFaith, p.faith + 3 * hits);
+            p.faith = Math.min(p.maxFaith, p.faith + 4 * hits);
             this.effects.push({ type: 'meleeSwing', x: pcx, y: pcy, radius: range, startAngle: 0, endAngle: Math.PI * 2, color: '#ffd54f', ttl: 0.22, maxTtl: 0.22 });
             if (p.spec === 'crusader' && p.awakened) {
                 p.hammerCount = (p.hammerCount || 0) + 1;
@@ -15543,7 +15551,7 @@ class Player {
 
         // 圣骑士护盾(持续生成,上限 maxHealth × shieldCapRatio)
         this.shield = 0;
-        this.shieldCapRatio = 0.10;
+        this.shieldCapRatio = 0.15;
 
         // 刺客移动蓄力
         this.assassinCharge = 0;

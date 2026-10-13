@@ -46,28 +46,44 @@ global.CanvasRenderingContext2D = class {
     getLineDash() { return []; }
 };
 
-const dummyElem = {
-    style: { setProperty() {}, removeProperty() {} },
-    dataset: {},
-    classList: { add: () => {}, remove: () => {}, toggle: () => {}, contains: () => false },
-    innerText: '',
-    innerHTML: '',
-    addEventListener: () => {},
-    appendChild: () => {},
-    setAttribute: () => {},
-    offsetWidth: 800,
-    offsetHeight: 600,
-    clientWidth: 800,
-    clientHeight: 600,
-    width: 800,
-    height: 600,
-    textContent: '',
-    firstChild: { textContent: '' },
-    lastChild: { textContent: '' },
-    children: [],
-    getContext: () => new global.CanvasRenderingContext2D(),
-    getBoundingClientRect: () => ({ left: 0, top: 0, width: 800, height: 600 })
-};
+function createDummyElem() {
+    const el = {
+        style: { setProperty() {}, removeProperty() {}, background: '', color: '', display: '' },
+        dataset: {},
+        classList: { add: () => {}, remove: () => {}, toggle: () => {}, contains: () => false },
+        innerText: '',
+        innerHTML: '',
+        addEventListener: () => {},
+        appendChild: (child) => { el.children.push(child); return child; },
+        append: (...children) => { el.children.push(...children); },
+        setAttribute: () => {},
+        offsetWidth: 800,
+        offsetHeight: 600,
+        clientWidth: 800,
+        clientHeight: 600,
+        width: 800,
+        height: 600,
+        textContent: '',
+        firstChild: null,
+        lastChild: null,
+        children: [],
+        getContext: () => new global.CanvasRenderingContext2D(),
+        getBoundingClientRect: () => ({ left: 0, top: 0, width: 800, height: 600 })
+    };
+    // 预分配多层子元素插槽,支持如 row.children[0].style.background 等安全访问
+    for (let i = 0; i < 6; i++) {
+        el.children.push({
+            style: { setProperty() {}, removeProperty() {}, background: '', color: '' },
+            textContent: '',
+            children: []
+        });
+    }
+    el.firstChild = el.children[0];
+    el.lastChild = el.children[el.children.length - 1];
+    return el;
+}
+
+const dummyElem = createDummyElem();
 
 global.window = global;
 global.window.addEventListener = () => {};
@@ -83,8 +99,8 @@ global.clearInterval = () => {};
 global.document = {
     getElementById: (id) => dummyElem,
     querySelectorAll: () => [],
-    createElement: () => dummyElem,
-    createElementNS: (ns, tag) => dummyElem,
+    createElement: (tag) => createDummyElem(),
+    createElementNS: (ns, tag) => createDummyElem(),
     body: dummyElem,
     hidden: false,
     addEventListener: () => {}
