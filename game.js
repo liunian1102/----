@@ -1049,8 +1049,54 @@ const ACHIEVEMENTS = [
     { id: 'total20k',   icon: '💎', name: '积少成多', desc: '累计得分 20000',            check: (r, p) => p.totalScore + r.score >= 20000 },
     // 构筑与连杀专精新成就
     { id: 'resonanceMaster', icon: '✨', name: '符文共鸣', desc: '单局激活一次技能槽符文共鸣', check: (r, p) => (r.resonanceCount || 0) >= 1 },
-    { id: 'comboMaster',     icon: '🔥', name: '百连绝杀', desc: '单局达成 100 连杀',         check: r => (r.maxCombo || 0) >= 100 }
+    { id: 'comboMaster',     icon: '🔥', name: '百连绝杀', desc: '单局达成 100 连杀',         check: r => (r.maxCombo || 0) >= 100 },
+    // 传奇试炼多维挑战成就
+    { id: 'trialFirst',      icon: '⚡', name: '星界破界者', desc: '单局内成功通关任意 1 次传奇试炼', check: r => (r.trialsCleared || 0) >= 1 },
+    { id: 'trialMaster',     icon: '👑', name: '四圣试炼王', desc: '单局内成功通关至少 2 次传奇试炼', check: r => (r.trialsCleared || 0) >= 2 }
 ];
+
+// ══════════════════════════════════════════════════════════════════
+//  🌟 传奇试炼 · 多维机制挑战 (Astral Crucible / Multi-vector Trials)
+// ══════════════════════════════════════════════════════════════════
+const ASTRAL_TRIALS = {
+    matrix: {
+        id: 'matrix',
+        name: '绝境回避 · 激光矩阵',
+        icon: '⚡',
+        color: '#00e5ff',
+        duration: 25,
+        targetDesc: '存活 25 秒且承受擦碰不超过 3 次',
+        desc: '封印普攻，身法与冲刺极限闪避！'
+    },
+    dps: {
+        id: 'dps',
+        name: '极限压榨 · 巨神破盾',
+        icon: '💥',
+        color: '#ff5252',
+        duration: 20,
+        targetDesc: '20 秒内击碎虚空晶核的巨额护盾',
+        desc: '倾泻所有爆发火力，摧毁护盾并承受震波！'
+    },
+    trick: {
+        id: 'trick',
+        name: '借刀引爆 · 连携破甲',
+        icon: '💣',
+        color: '#ffab00',
+        duration: 32,
+        targetDesc: '引诱自爆怪炸碎 3 只无敌重甲傀儡',
+        desc: '傀儡免疫直接攻击，唯有自爆冲击可撕裂重甲！'
+    },
+    duel: {
+        id: 'duel',
+        name: '背水一战 · 幻影死斗',
+        icon: '⚔️',
+        color: '#e040fb',
+        duration: 28,
+        targetDesc: '锁血 1 点绝境下斩杀 2 只极速幻影刺客',
+        desc: '生命降为 1 点，但攻击力暴增 250%、冷却暴降 60%！'
+    }
+};
+const TRIAL_KEYS = ['matrix', 'dps', 'trick', 'duel'];
 
 // 玩家方块外观;need 为解锁条件:累计分数(totalScore)或某个成就(ach)
 const SKINS = [
@@ -1077,6 +1123,7 @@ const Progress = {
             totalVoidRifts: p.totalVoidRifts || 0,
             totalAbyssFloors: p.totalAbyssFloors || 0,
             totalContractsCompleted: p.totalContractsCompleted || 0,
+            totalTrialsCleared: p.totalTrialsCleared || 0,
             starCores: p.starCores !== undefined ? p.starCores : 0,
             classesPlayed: p.classesPlayed || {},
             achievements: p.achievements || {},
@@ -1127,6 +1174,7 @@ const Progress = {
         if (run.contractCompleted) {
             p.totalContractsCompleted = (p.totalContractsCompleted || 0) + 1;
         }
+        p.totalTrialsCleared = (p.totalTrialsCleared || 0) + (run.trialsCleared || 0);
         p.starCores = (p.starCores || 0) + (run.starCoresEarned || 0);
         const playedClass = run.cls || 'novice';
         p.classesPlayed[playedClass] = (p.classesPlayed[playedClass] || 0) + 1;
@@ -3155,6 +3203,8 @@ class Game {
             hz: (this.hazards || []).map(h => [h.id, q1(h.x), q1(h.y), h.type, h.hp, q1(h.timer || 0)]),
             af: this.abyssFloor || 1,
             ap: this.abyssPortal ? [q1(this.abyssPortal.x), q1(this.abyssPortal.y), this.abyssPortal.radius] : null,
+            ob: this.trialObelisk ? [q1(this.trialObelisk.x), q1(this.trialObelisk.y), this.trialObelisk.radius, q1(this.trialObelisk.timer), q2(this.trialObelisk.charge), this.trialObelisk.trialType] : null,
+            tr: this.activeTrial ? [this.activeTrial.type, q1(this.activeTrial.timer), this.activeTrial.hitsTaken || 0] : null,
             tk: this.treasureKills, ek: this.eliteKills, dm: this.diffMode,
             ct: this.expeditionSession ? [this.expeditionSession.selectedId, this.expeditionSession.completed ? 1 : 0] : null,
             mu: this.mutations || [],
@@ -3577,6 +3627,29 @@ class Game {
             this.abyssPortal = { x: snapshot.ap[0], y: snapshot.ap[1], radius: snapshot.ap[2] || 45 };
         } else {
             this.abyssPortal = null;
+        }
+
+        // 同步传奇星界试炼方尖碑与试炼状态
+        if (snapshot.ob) {
+            this.trialObelisk = {
+                x: snapshot.ob[0], y: snapshot.ob[1], radius: snapshot.ob[2],
+                timer: snapshot.ob[3], maxTimer: 45, charge: snapshot.ob[4],
+                needTime: 1.2, trialType: snapshot.ob[5]
+            };
+        } else {
+            this.trialObelisk = null;
+        }
+        if (snapshot.tr) {
+            const def = ASTRAL_TRIALS[snapshot.tr[0]];
+            this.activeTrial = {
+                type: snapshot.tr[0],
+                def: def || { name: '传奇试炼', color: '#ffd700', duration: 25, targetDesc: '' },
+                timer: snapshot.tr[1],
+                maxTimer: def ? def.duration : 25,
+                hitsTaken: snapshot.tr[2] || 0
+            };
+        } else {
+            this.activeTrial = null;
         }
     }
 
@@ -4326,6 +4399,141 @@ class Game {
         ctx.restore();
     }
 
+    // ── ⚡ 传奇星界试炼方尖碑渲染 ──
+    _renderTrialObelisk(ctx) {
+        if (!this.trialObelisk) return;
+        const ob = this.trialObelisk;
+        const def = ASTRAL_TRIALS[ob.trialType] || { name: '传奇试炼', color: '#ffd700', icon: '⚡' };
+        const t = this.bgTime || 0;
+        const pulse = 0.5 + 0.5 * Math.sin(t * 4);
+
+        ctx.save();
+        ctx.translate(ob.x, ob.y);
+
+        // 外层能量符文圈
+        ctx.shadowBlur = 18 + 8 * pulse;
+        ctx.shadowColor = def.color;
+        ctx.strokeStyle = def.color;
+        ctx.lineWidth = 2.5;
+        ctx.setLineDash([8, 6]);
+        ctx.lineDashOffset = -t * 25;
+        ctx.beginPath();
+        ctx.arc(0, 0, ob.radius, 0, Math.PI * 2);
+        ctx.stroke();
+        ctx.setLineDash([]);
+
+        // 引导充能进度扇形/圆环
+        if (ob.charge > 0) {
+            const chargeRatio = Math.min(1, ob.charge / ob.needTime);
+            ctx.strokeStyle = '#ffffff';
+            ctx.lineWidth = 4;
+            ctx.beginPath();
+            ctx.arc(0, 0, ob.radius + 3, -Math.PI / 2, -Math.PI / 2 + Math.PI * 2 * chargeRatio);
+            ctx.stroke();
+        }
+
+        // 方尖碑中心基底晶核
+        ctx.fillStyle = 'rgba(20, 15, 35, 0.85)';
+        ctx.beginPath();
+        ctx.arc(0, 0, ob.radius * 0.72, 0, Math.PI * 2);
+        ctx.fill();
+
+        // 内部旋转多边形/方尖碑核心
+        ctx.save();
+        ctx.rotate(t * 1.5);
+        ctx.fillStyle = def.color;
+        ctx.globalAlpha = 0.85;
+        const polySize = 14 + 2 * pulse;
+        ctx.beginPath();
+        ctx.moveTo(0, -polySize * 1.4);
+        ctx.lineTo(polySize, 0);
+        ctx.lineTo(0, polySize * 1.4);
+        ctx.lineTo(-polySize, 0);
+        ctx.closePath();
+        ctx.fill();
+        ctx.restore();
+
+        // 悬浮文字与提示
+        ctx.shadowBlur = 5;
+        ctx.shadowColor = '#000000';
+        ctx.textAlign = 'center';
+        ctx.textBaseline = 'middle';
+        ctx.font = 'bold 13px Arial';
+        ctx.fillStyle = '#ffffff';
+        ctx.fillText(`${def.icon} ${def.name}`, 0, -ob.radius - 16);
+
+        ctx.font = '11px Arial';
+        ctx.fillStyle = ob.charge > 0 ? '#ffd700' : 'rgba(255, 255, 255, 0.8)';
+        ctx.fillText(ob.charge > 0 ? `引导破封中 ${(ob.charge / ob.needTime * 100).toFixed(0)}%` : `走入光圈引导 (${Math.ceil(ob.timer)}s)`, 0, ob.radius + 16);
+
+        ctx.restore();
+    }
+
+    // ── ⚡ 传奇试炼激活 HUD 渲染 ──
+    _renderActiveTrialHUD() {
+        if (!this.activeTrial) return;
+        const tr = this.activeTrial;
+        const def = tr.def;
+        const ctx = this.ctx;
+        const cx = this._hud ? this._hud.w / 2 : this.width / 2;
+        const topY = 48;
+        const boxW = 280, boxH = 46;
+
+        ctx.save();
+        ctx.translate(cx, topY);
+
+        // 背景卡片
+        ctx.fillStyle = 'rgba(12, 16, 32, 0.85)';
+        ctx.strokeStyle = def.color;
+        ctx.lineWidth = 1.5;
+        roundRect(ctx, -boxW / 2, 0, boxW, boxH, 8);
+        ctx.fill();
+        ctx.stroke();
+
+        // 标题与倒计时
+        ctx.textAlign = 'left';
+        ctx.textBaseline = 'top';
+        ctx.font = 'bold 13px Arial';
+        ctx.fillStyle = def.color;
+        ctx.fillText(`⚡ 传奇试炼 · ${def.name}`, -boxW / 2 + 10, 6);
+
+        ctx.textAlign = 'right';
+        ctx.font = 'bold 13px Arial';
+        ctx.fillStyle = '#ffffff';
+        ctx.fillText(`⏱️ ${Math.max(0, tr.timer).toFixed(1)}s`, boxW / 2 - 10, 6);
+
+        // 倒计时进度条
+        const barW = boxW - 20, barH = 5;
+        const timeRatio = Math.max(0, Math.min(1, tr.timer / tr.maxTimer));
+        ctx.fillStyle = 'rgba(255, 255, 255, 0.15)';
+        roundRect(ctx, -boxW / 2 + 10, 24, barW, barH, 2);
+        ctx.fill();
+        ctx.fillStyle = def.color;
+        roundRect(ctx, -boxW / 2 + 10, 24, barW * timeRatio, barH, 2);
+        ctx.fill();
+
+        // 状态文字描述
+        ctx.textAlign = 'left';
+        ctx.font = '11px Arial';
+        ctx.fillStyle = '#e0e0e0';
+        let statusText = def.targetDesc;
+        if (tr.type === 'matrix') {
+            statusText = `承受擦碰: ${tr.hitsTaken || 0} / 3 次 (上限 3)`;
+        } else if (tr.type === 'dps') {
+            const hp = tr.core ? Math.max(0, tr.core.currentHealth) : 0;
+            statusText = `晶核剩余护盾: ${hp}`;
+        } else if (tr.type === 'trick') {
+            const left = tr.golems ? tr.golems.filter(g => g.currentHealth > 0).length : 0;
+            statusText = `剩余重甲傀儡: ${left} / 3`;
+        } else if (tr.type === 'duel') {
+            const left = tr.phantoms ? tr.phantoms.filter(p => p.currentHealth > 0).length : 0;
+            statusText = `剩余幻影刺客: ${left} (生命值强制为 1!)`;
+        }
+        ctx.fillText(statusText, -boxW / 2 + 10, 32);
+
+        ctx.restore();
+    }
+
     // 职业状态光环:觉醒玩家身边转动的职业色虚线环;弓手站定专注时脚下一圈瞄准刻度
     _renderClassAura(p, cls, awakened, still) {
         if (!cls) return;
@@ -4692,6 +4900,9 @@ class Game {
             ['装备觉醒', `${this.gearAwakenedCount || 0} 次`],
             ['虚空挑战', `${this.voidRiftClearedCount || 0} 次`]
         ];
+        if (this.trialsCleared > 0) {
+            rows.push(['传奇试炼', `${this.trialsCleared} 次突破`]);
+        }
         if (this.diffMode === 'abyss') {
             rows.push(['深渊层数', `第 ${this.abyssFloor || 1} 层`]);
         }
@@ -4998,6 +5209,8 @@ class Game {
             this._updateTacticalPings();
             this._updateHazards();
             this._updateAbyssMode();
+            this._updateTrialObelisk();
+            this._updateActiveTrial();
             this._tickPendingActions();
             this.checkCollisions();
             this._checkLocalDeath(); // 兜底:任何来源把血量打到 0 都能结算复活/扣命
@@ -5085,6 +5298,10 @@ class Game {
         if (this.affixEliteKills) {
             starCoresEarned += Math.floor(this.affixEliteKills / 3) * 2;
         }
+        // 传奇星界试炼产出
+        if (this.trialsCleared) {
+            starCoresEarned += (this.trialsCleared || 0) * 15;
+        }
 
         return { score: this.score, time: Math.floor(this.gameTime), level: this.level,
                  bossRepels: this.runBossRepels || 0, cls: this.player.class, dodges: this.player.dodgeCount || 0,
@@ -5092,6 +5309,7 @@ class Game {
                  affixElites: this.affixEliteKills || 0, gearAwakened: this.gearAwakenedCount || 0, voidRifts: this.voidRiftClearedCount || 0,
                  abyssFloor: this.abyssFloor || 1, resonanceCount: resCount, maxCombo: Math.max(this.player.maxCombo || 0, this._runMaxCombo || 0),
                  contractCompleted: contractDone, contractId: this.expeditionSession ? this.expeditionSession.selectedId : null,
+                 trialsCleared: this.trialsCleared || 0,
                  starCoresEarned };
     }
 
@@ -5099,7 +5317,10 @@ class Game {
     _progressTick() {
         if (!this.runUnlocked) this._initRunProgress();
         if (this.bossState !== this._progBossPrev) {
-            if (this.bossState === 'retreating') this.runBossRepels++;
+            if (this.bossState === 'retreating') {
+                this.runBossRepels++;
+                this._checkSpawnTrialObelisk();
+            }
             this._progBossPrev = this.bossState;
         }
         this._progTimer += DT;
@@ -7373,10 +7594,12 @@ class Game {
         this.effects.push({ type: 'shockwave', x: this.boss.x + 40, y: this.boss.y + 40, radius: 5, maxRadius: 200, color: '#ff1744', ttl: 0.8, maxTtl: 0.8 });
         this.spawnParticles(this.boss.x + 40, this.boss.y + 40, '#ff1744', 30, 2, 6, 3, 6, 0.03);
         const tier = this.boss.tier, voidForm = this.boss.isVoid;
-        this._showFloatingText(`${this.boss.title}${tier > 1 ? ' Lv' + tier : ''}!`, this.width / 2, this.height * 0.4, voidForm ? '#ea80fc' : '#ff1744');
+        // 登场横幅与技能习得移至屏幕上部安全区(避开魔王本体头像与正中央战斗走位区)
+        const bannerY = Math.round(this.height * 0.22);
+        this._showFloatingText(`${this.boss.title}${tier > 1 ? ' Lv' + tier : ''}!`, this.width / 2, bannerY, voidForm ? '#ea80fc' : '#ff1744');
         const learned = voidForm ? (tier === 3 ? '虚空闪现 · 虚空坍缩' : null) : { 2: '激光扫射', 3: '召唤爪牙' }[tier];
         if (learned) {
-            this.effects.push({ type: 'floatText', text: `${voidForm ? '虚空形态' : '魔王习得新招'}「${learned}」`, x: this.width / 2, y: this.height * 0.4 + 30,
+            this.effects.push({ type: 'floatText', text: `${voidForm ? '虚空形态' : '魔王习得新招'}「${learned}」`, x: this.width / 2, y: bannerY + 28,
                 color: '#ea80fc', ttl: 2.6, maxTtl: 2.6 });
         }
     }
@@ -7441,6 +7664,12 @@ class Game {
         this.gearAwakenedCount = 0;
         this.voidRiftClearedCount = 0;
         this._lastEventType = null;
+        // ⚡ 传奇星界试炼系统 (Astral Crucible)
+        this.trialObelisk = null;       // { x, y, radius, timer, maxTimer, charge, needTime, trialType }
+        this.activeTrial = null;        // 当前激活的试炼控制器对象
+        this.trialsCleared = 0;         // 本局通关试炼总次数
+        this.trialHistory = {};         // 通关过的试炼类型集合 { matrix: true, ... }
+        this.trialCooldown = 0;         // 上次试炼完成/失败后的冷却防频发
     }
 
     _updateEvents() {
@@ -7564,7 +7793,314 @@ class Game {
         }
     }
 
-    // 更新剧毒精英死后留下的腐蚀洼地
+    // ══════════════════════════════════════════════════════════════════
+    //  ⚡ 传奇星界试炼系统 (The Astral Crucible / Multi-vector Trials)
+    // ══════════════════════════════════════════════════════════════════
+    _checkSpawnTrialObelisk() {
+        if (this.trialObelisk || this.activeTrial) return;
+        if (this.trialCooldown > 0) return;
+        if (this.level < AWAKEN_LEVEL) return;
+        if (this.boss && this.bossState === 'active') return;
+        this._spawnTrialObelisk();
+    }
+
+    _spawnTrialObelisk() {
+        if (this.trialObelisk || this.activeTrial) return;
+        // 优先从未通关的试炼中抽取
+        const unplayed = TRIAL_KEYS.filter(k => !this.trialHistory || !this.trialHistory[k]);
+        const chosen = unplayed.length > 0 ? unplayed[Math.floor(Math.random() * unplayed.length)] : TRIAL_KEYS[Math.floor(Math.random() * TRIAL_KEYS.length)];
+        const def = ASTRAL_TRIALS[chosen];
+        if (!def) return;
+
+        // 挑选距离玩家适中的空旷位置
+        const players = this._livingPlayers(), m = 130;
+        let cx = this.width / 2, cy = this.height / 2;
+        for (let i = 0; i < 16; i++) {
+            const rx = m + Math.random() * (this.width - m * 2);
+            const ry = m + Math.random() * (this.height - m * 2);
+            if (players.every(p => Math.hypot(p.x + p.size / 2 - rx, p.y + p.size / 2 - ry) > 150)) {
+                cx = rx; cy = ry; break;
+            }
+        }
+
+        this.trialObelisk = {
+            x: cx,
+            y: cy,
+            radius: 46,
+            timer: 45,
+            maxTimer: 45,
+            charge: 0,
+            needTime: 1.2,
+            trialType: chosen,
+            spawnTimer: 0.6
+        };
+
+        this.effects.push({ type: 'shockwave', x: cx, y: cy, radius: 10, maxRadius: 160, color: def.color, ttl: 0.6, maxTtl: 0.6 });
+        this.spawnBurstRing(cx, cy, 75, def.color, 26);
+        Sound.play('bossSpawn');
+        this._showFloatingText(`⚡ 传奇试炼方尖碑降临:【${def.name}】! 踏入光圈引导破封!`, this.width / 2, this.height * 0.28, def.color);
+    }
+
+    _updateTrialObelisk() {
+        if (!this.trialObelisk) {
+            if (this.trialCooldown > 0) this.trialCooldown -= DT;
+            return;
+        }
+        const ob = this.trialObelisk;
+        if (ob.spawnTimer > 0) ob.spawnTimer -= DT;
+
+        ob.timer -= DT;
+        if (ob.timer <= 0) {
+            this.spawnParticles(ob.x, ob.y, '#9e9e9e', 22, 1.5, 4, 1.5, 3, 0.03);
+            this._showFloatingText('★ 试炼方尖碑能量耗尽并消散...', ob.x, ob.y - 20, '#9e9e9e');
+            this.trialObelisk = null;
+            this.trialCooldown = 25;
+            return;
+        }
+
+        let touching = false;
+        for (const pl of this._livingPlayers()) {
+            const dist = Math.hypot(pl.x + pl.size / 2 - ob.x, pl.y + pl.size / 2 - ob.y);
+            if (dist <= ob.radius + pl.size / 2) {
+                touching = true;
+                break;
+            }
+        }
+
+        if (touching) {
+            ob.charge += DT;
+            if (Math.random() < 0.3) {
+                const col = (ASTRAL_TRIALS[ob.trialType] || {}).color || '#ffd700';
+                this.spawnParticles(ob.x, ob.y, col, 3, 1, 3, 1, 2, 0.05);
+            }
+            if (ob.charge >= ob.needTime) {
+                const type = ob.trialType;
+                this.trialObelisk = null;
+                this._startAstralTrial(type);
+            }
+        } else {
+            ob.charge = Math.max(0, ob.charge - DT * 0.9);
+        }
+    }
+
+    _startAstralTrial(type) {
+        const def = ASTRAL_TRIALS[type];
+        if (!def) return;
+        this.activeTrial = {
+            type,
+            def,
+            timer: def.duration,
+            maxTimer: def.duration,
+            hitsTaken: 0,
+            spawnTimer: 0,
+            origHp: this.player ? this.player.currentHealth : 100
+        };
+
+        const cx = this.width / 2, cy = this.height / 2;
+        this.effects.push({ type: 'shockwave', x: cx, y: cy, radius: 15, maxRadius: this.width * 0.95, color: def.color, ttl: 0.7, maxTtl: 0.7 });
+        this.screenShake = Math.max(this.screenShake, 0.4);
+        Sound.play('riftWin');
+        this._showFloatingText(`⚔️ 开启【${def.name}】! 目标:${def.targetDesc}`, cx, this.height * 0.25, def.color);
+
+        // 震退清场普通杂怪
+        for (const e of this.enemies) {
+            e.takeDamage(120);
+        }
+
+        if (type === 'matrix') {
+            this.activeTrial.spawnTimer = 0.5;
+        } else if (type === 'dps') {
+            const diff = this.difficulty || 1.0;
+            const coreHp = Math.round(7500 * Math.max(1, diff * 0.9));
+            const core = new Enemy(this.width / 2 - 25, this.height / 2 - 25, 'giant', diff);
+            core.maxHealth = coreHp;
+            core.currentHealth = coreHp;
+            core.isTrialCore = true;
+            core.size = 55;
+            core.speed = 0;
+            this.enemies.push(core);
+            this.activeTrial.core = core;
+            this.activeTrial.pulseTimer = 3.5;
+        } else if (type === 'trick') {
+            const diff = this.difficulty || 1.0;
+            const positions = [
+                { x: this.width * 0.3, y: this.height * 0.4 },
+                { x: this.width * 0.7, y: this.height * 0.4 },
+                { x: this.width * 0.5, y: this.height * 0.65 }
+            ];
+            this.activeTrial.golems = [];
+            for (let i = 0; i < 3; i++) {
+                const g = new Enemy(positions[i].x, positions[i].y, 'giant', diff);
+                g.maxHealth = 400;
+                g.currentHealth = 400;
+                g.isImmuneGolem = true;
+                g.speed = 1.0;
+                this.enemies.push(g);
+                this.activeTrial.golems.push(g);
+            }
+            this.activeTrial.bomberTimer = 1.0;
+        } else if (type === 'duel') {
+            const diff = this.difficulty || 1.0;
+            this.player.currentHealth = 1;
+            this.player.inDuelTrial = true;
+            this.activeTrial.phantoms = [];
+            for (let i = 0; i < 2; i++) {
+                const angle = i * Math.PI;
+                const px = this.width / 2 + Math.cos(angle) * 220;
+                const py = this.height / 2 + Math.sin(angle) * 160;
+                const phantom = new Enemy(px, py, 'dasher', diff);
+                phantom.maxHealth = Math.round(900 * diff);
+                phantom.currentHealth = phantom.maxHealth;
+                phantom.isTrialPhantom = true;
+                phantom.speed *= 1.35;
+                this.enemies.push(phantom);
+                this.activeTrial.phantoms.push(phantom);
+            }
+        }
+    }
+
+    _updateActiveTrial() {
+        if (!this.activeTrial) return;
+        const tr = this.activeTrial;
+        tr.timer -= DT;
+
+        if (tr.type === 'matrix') {
+            tr.spawnTimer -= DT;
+            if (tr.spawnTimer <= 0) {
+                tr.spawnTimer = 1.6;
+                const isHoriz = Math.random() < 0.5;
+                const lx = isHoriz ? 0 : 50 + Math.random() * (this.width - 100);
+                const ly = isHoriz ? 50 + Math.random() * (this.height - 100) : 0;
+                const targetPl = this.player;
+                const angle = Math.atan2(targetPl.y + targetPl.size / 2 - ly, targetPl.x + targetPl.size / 2 - lx);
+                this.enemyBullets.push(new EnemyBullet(lx, ly, Math.cos(angle) * 5.2, Math.sin(angle) * 5.2));
+                if (Math.random() < 0.4) {
+                    for (let a = 0; a < Math.PI * 2; a += Math.PI / 2) {
+                        this.enemyBullets.push(new EnemyBullet(this.width / 2, this.height / 2, Math.cos(a + tr.timer) * 4.2, Math.sin(a + tr.timer) * 4.2));
+                    }
+                }
+            }
+            if (tr.timer <= 0) {
+                this._endAstralTrial(true);
+                return;
+            }
+        } else if (tr.type === 'dps') {
+            const core = tr.core;
+            if (!core || core.currentHealth <= 0) {
+                this._endAstralTrial(true);
+                return;
+            }
+            tr.pulseTimer -= DT;
+            if (tr.pulseTimer <= 0) {
+                tr.pulseTimer = 3.5;
+                const cx = core.x + core.size / 2, cy = core.y + core.size / 2;
+                this.effects.push({ type: 'shockwave', x: cx, y: cy, radius: 10, maxRadius: 180, color: '#ff5252', ttl: 0.5, maxTtl: 0.5 });
+                for (const pl of this._livingPlayers()) {
+                    const dist = Math.hypot(pl.x + pl.size / 2 - cx, pl.y + pl.size / 2 - cy);
+                    if (dist < 180) {
+                        const a = Math.atan2(pl.y + pl.size / 2 - cy, pl.x + pl.size / 2 - cx);
+                        pl.x += Math.cos(a) * 40;
+                        pl.y += Math.sin(a) * 40;
+                    }
+                }
+            }
+            if (tr.timer <= 0) {
+                this._endAstralTrial(false);
+                return;
+            }
+        } else if (tr.type === 'trick') {
+            tr.golems = tr.golems.filter(g => g.currentHealth > 0 && this.enemies.includes(g));
+            if (tr.golems.length === 0) {
+                this._endAstralTrial(true);
+                return;
+            }
+            tr.bomberTimer -= DT;
+            if (tr.bomberTimer <= 0) {
+                tr.bomberTimer = 2.6;
+                const pos = this._edgeSpawnPos();
+                const b = this._newEnemy(pos.x, pos.y, 'bomber');
+                if (b) {
+                    b.speed *= 1.25;
+                    this.enemies.push(b);
+                }
+            }
+            if (tr.timer <= 0) {
+                this._endAstralTrial(false);
+                return;
+            }
+        } else if (tr.type === 'duel') {
+            tr.phantoms = tr.phantoms.filter(p => p.currentHealth > 0 && this.enemies.includes(p));
+            if (tr.phantoms.length === 0) {
+                this._endAstralTrial(true);
+                return;
+            }
+            if (tr.timer <= 0) {
+                this._endAstralTrial(false);
+                return;
+            }
+        }
+    }
+
+    _endAstralTrial(success) {
+        if (!this.activeTrial) return;
+        const tr = this.activeTrial;
+        const def = tr.def;
+        this.activeTrial = null;
+        this.trialCooldown = 30;
+
+        // 清理试炼怪
+        this.enemies = this.enemies.filter(e => !e.isTrialCore && !e.isImmuneGolem && !e.isTrialPhantom);
+
+        if (this.player && this.player.inDuelTrial) {
+            this.player.inDuelTrial = false;
+        }
+
+        if (success) {
+            this.trialsCleared = (this.trialsCleared || 0) + 1;
+            if (!this.trialHistory) this.trialHistory = {};
+            this.trialHistory[tr.type] = true;
+
+            const cx = this.width / 2, cy = this.height / 2;
+            this.effects.push({ type: 'shockwave', x: cx, y: cy, radius: 15, maxRadius: this.width * 0.95, color: '#ffd700', ttl: 0.8, maxTtl: 0.8 });
+            this.spawnBurstRing(cx, cy, 140, '#ffd700', 35);
+            this.spawnParticles(cx, cy, def.color, 45, 3, 10, 3, 7, 0.04);
+            this.screenShake = Math.max(this.screenShake, 0.45);
+            Sound.play('riftWin');
+
+            // 15 颗星核入账
+            const p = Progress.load();
+            p.starCores = (p.starCores || 0) + 15;
+            p.totalTrialsCleared = (p.totalTrialsCleared || 0) + 1;
+            Progress.save(p);
+
+            // 战利品大爆仓
+            this._dropRelic(cx - 40, cy);
+            this._dropGem(cx + 40, cy);
+            this._dropGear(cx, cy - 35);
+            this.items.push(new Item(cx - 20, cy + 35, 'exp_book', 'epic'));
+            this.items.push(new Item(cx + 20, cy + 35, 'potion', 'rare'));
+
+            if (this.player) {
+                this.player.astralBuffTimer = 60;
+                this.player.currentHealth = this.player.maxHealth;
+            }
+            this._showFloatingText(`👑 传奇试炼突破! +15星核 遗物/技能石/史诗装备大爆仓!`, cx, this.height * 0.3, '#ffd700');
+            this.score += 1500 * (this.scoreMult || 1);
+        } else {
+            const cx = this.player ? this.player.x + this.player.size / 2 : this.width / 2;
+            const cy = this.player ? this.player.y + this.player.size / 2 : this.height / 2;
+            this.effects.push({ type: 'shockwave', x: cx, y: cy, radius: 10, maxRadius: 160, color: '#9e9e9e', ttl: 0.5, maxTtl: 0.5 });
+            if (this.player) {
+                this.player.currentHealth = Math.max(1, Math.floor(this.player.maxHealth * 0.25));
+                this.player.hurtCooldown = 1.8;
+                this.player.invincibleTimer = 0;
+            }
+            this.screenShake = Math.max(this.screenShake, 0.3);
+            Sound.play('hurt');
+            this._showFloatingText(`⚠️ 试炼受挫！残血紧急突围！`, cx, cy - 30, '#ff5252');
+        }
+    }
+
     _updateToxicPuddles() {
         if (!this.toxicPuddles || !this.toxicPuddles.length) return;
         for (let i = this.toxicPuddles.length - 1; i >= 0; i--) {
@@ -8468,7 +9004,12 @@ class Game {
             if (o === e || o.currentHealth <= 0) continue;
             const ox = o.x + o.size / 2, oy = o.y + o.size / 2;
             if (Math.hypot(ox - cx, oy - cy) > r + o.size / 2) continue;
-            this._withSrc(armed ? 'none' : 'other', () => o.takeDamage(dmg));
+            if (o.isImmuneGolem) {
+                o.takeDamage(200, true);
+                this._showFloatingText('💥 破甲殉爆重创!', ox, oy - 20, '#ffab00');
+            } else {
+                this._withSrc(armed ? 'none' : 'other', () => o.takeDamage(dmg));
+            }
             this._knockbackFrom(o, cx, cy, 6);
         }
     }
@@ -8774,8 +9315,8 @@ class Game {
     }
     
     spawnEnemies() {
-        // 魔王活跃 / 击退中,停刷普通敌人
-        if (this.bossState === 'active' || this.bossState === 'retreating') return;
+        // 魔王活跃 / 击退中 / 传奇试炼中,停刷普通敌人
+        if (this.bossState === 'active' || this.bossState === 'retreating' || this.activeTrial) return;
         // 怪潮事件:刷怪概率 ×3、数量上限 +25
         const horde = this.event && this.event.type === 'horde';
         const earlyCap = Math.floor(Game.EARLY_CAP0 + this.gameTime * Game.EARLY_CAP_RATE);
@@ -9422,6 +9963,14 @@ class Game {
         return 1.0;
     }
 
+    // 目标是否已正式进入战场且存活(完全在场地边界外的敌人尚未进场，不可被瞄准/自动攻击锁定)
+    _isTargetable(e) {
+        if (!e || e.currentHealth <= 0) return false;
+        const sz = e.size || 20;
+        if (e.x + sz <= 0 || e.x >= this.width || e.y + sz <= 0 || e.y >= this.height) return false;
+        return true;
+    }
+
     _findClosestEnemies(count) {
         // 包含魔王(若存在且活跃),让技能能锁定魔王
         // count <= 0 返回空; count=1 走 O(n) 单次扫描; count > 1 单次遍历维护长度为 count 的有序数组(插入排序),每个敌人只算一次 d2
@@ -9440,6 +9989,7 @@ class Game {
         };
 
         const processTarget = (e) => {
+            if (!this._isTargetable(e)) return;
             const dx = e.x - px, dy = e.y - py;
             const d2 = dx * dx + dy * dy;
             const cone = hasAim ? (this._inAimCone(e) ? 0 : 1) : 0;
@@ -9486,16 +10036,17 @@ class Game {
             const list = this._findClosestEnemies(2);
             return list.length ? list[0] : null;
         }
-        // O(n) 找最近敌人(含活跃魔王),无敌人返回 null
+        // O(n) 找最近敌人(含活跃魔王),未进场/场外敌人不锁定,无敌人返回 null
         let closest = null;
         let bestD = Infinity;
         const px = this.player.x, py = this.player.y;
         for (const e of this.enemies) {
+            if (!this._isTargetable(e)) continue;
             const dx = e.x - px, dy = e.y - py;
             const d = dx * dx + dy * dy;
             if (d < bestD) { bestD = d; closest = e; }
         }
-        if (this.boss && this.bossState === 'active') {
+        if (this.boss && this.bossState === 'active' && this._isTargetable(this.boss)) {
             const dx = this.boss.x - px, dy = this.boss.y - py;
             const d = dx * dx + dy * dy;
             if (d < bestD) { bestD = d; closest = this.boss; }
@@ -11416,6 +11967,8 @@ class Game {
         this._refreshSkillCds(p);
         p.currentHealth = p.maxHealth;
         if (p.spec === 'protector') p.paladinAuraDurationBonus = (p.paladinAuraDurationBonus || 0) + 3;
+        // ⚡ 觉醒达成:向战场降临传奇试炼方尖碑
+        if (this._checkSpawnTrialObelisk) this._checkSpawnTrialObelisk();
     }
 
     // 进阶(两张专精卡)/ 觉醒(一张确认卡)界面,复用职业选择的输入通道(buttons + handleClassChoice)
@@ -12456,6 +13009,7 @@ class Game {
         this._renderTacticalPings(ctx);
         this._renderHazards(ctx);
         this._renderAbyssPortal(ctx);
+        this._renderTrialObelisk(ctx);
 
         // 本机玩家脚下光圈 + 各种光环铺在地面层;方块本体放到敌人/道具之后画,不会被遮住找不到自己
         this._updateLocatePulse();
@@ -12518,6 +13072,7 @@ class Game {
             this._renderGearHUD();
             this._renderMuteButton();
             this._renderComboHUD();
+            this._renderActiveTrialHUD();
             this._renderAchToasts();
         });
 
@@ -12916,14 +13471,17 @@ class Game {
         ctx.restore();
     }
 
-    // 左上角契约信息条(在状态面板右侧/下方):展示当局选定契约目标与达成状态
+    // 左上角契约信息条(在状态面板右侧/下方):展示当局选定契约目标与达成状态;魔王战时自动移至状态面板下方,避免与魔王血条或全屏警报重叠
     _renderContractHUD() {
         if (!this.expeditionSession || !this.expeditionSession.selectedId) return;
         const def = ExpeditionContract.POOL[this.expeditionSession.selectedId];
         if (!def) return;
         const ctx = this.ctx;
         const pad = (this._hud && this._hud.padLeft) ? this._hud.padLeft : 10;
-        const x = pad + 108, y = 10, w = 150, h = 26;
+        const isBossActive = this.bossState === 'warning' || this.bossState === 'active';
+        const x = isBossActive ? pad : (pad + 108);
+        const y = isBossActive ? 72 : 10;
+        const w = 150, h = 26;
         const done = !!this.expeditionSession.completed;
 
         ctx.save();
@@ -13058,15 +13616,28 @@ class Game {
             ctx.shadowBlur = 24;
             ctx.shadowColor = '#ff1744';
             ctx.strokeRect(5, 5, scrW - 10, scrH - 10);
-            // 中央大字
-            ctx.fillStyle = `rgba(255, 23, 68, ${alpha + 0.3})`;
-            ctx.font = `bold ${Math.min(56, scrW * 0.12)}px Arial`;
+
+            // 顶部居中警报徽标(居中在 scrH * 0.20 安全区,避开左上角契约条与屏幕正中央玩家)
+            const topY = Math.max(50, Math.min(150, Math.round(scrH * 0.20)));
+            const bannerW = Math.min(260, Math.max(200, Math.round(scrW * 0.35)));
+            const bannerH = 38;
+            ctx.fillStyle = 'rgba(20, 4, 8, 0.85)';
+            roundRect(ctx, scrW / 2 - bannerW / 2, topY - bannerH / 2, bannerW, bannerH, 10);
+            ctx.fill();
+            ctx.strokeStyle = `rgba(255, 23, 68, ${alpha + 0.25})`;
+            ctx.lineWidth = 2;
+            roundRect(ctx, scrW / 2 - bannerW / 2, topY - bannerH / 2, bannerW, bannerH, 10);
+            ctx.stroke();
+
+            ctx.fillStyle = `rgba(255, 64, 96, ${Math.min(1, alpha + 0.45)})`;
+            ctx.font = `bold ${Math.min(16, scrW * 0.04)}px Arial`;
             ctx.textAlign = 'center';
             ctx.textBaseline = 'middle';
-            ctx.fillText('魔王降临', scrW / 2, scrH * 0.42);
+            ctx.fillText('⚠️ 魔王降临倒计时', scrW / 2 - 20, topY);
+
             ctx.fillStyle = '#ffffff';
-            ctx.font = `bold ${Math.min(72, scrW * 0.16)}px Arial`;
-            ctx.fillText(`${Math.ceil(this.bossWarningTimer)}`, scrW / 2, scrH * 0.55);
+            ctx.font = `bold ${Math.min(22, scrW * 0.055)}px Arial`;
+            ctx.fillText(`${Math.ceil(this.bossWarningTimer)}`, scrW / 2 + bannerW / 2 - 24, topY);
             ctx.restore();
         } else if (this.bossState === 'active' && this.boss) {
             ctx.save();
@@ -14336,7 +14907,7 @@ class Game {
         const free = this._treePoints().free;
         const alert = free > 0 || this.player._newGem || this.player._newRelic;
         ctx.save();
-        ctx.fillStyle = alert ? 'rgba(255,215,64,0.16)' : 'rgba(0,0,0,0.55)';
+        ctx.fillStyle = alert ? 'rgba(255,215,64,0.18)' : 'rgba(10,18,30,0.45)';
         roundRect(ctx, x, y, s, s, 9);
         ctx.fill();
         ctx.lineWidth = 2;
@@ -14384,7 +14955,7 @@ class Game {
         if (ready) this._hudGlow(ctx, cx - r, cy - r, r * 2, r * 2, r, 14, col, 1, 0.18);
         ctx.beginPath();
         ctx.arc(cx, cy, r, 0, Math.PI * 2);
-        ctx.fillStyle = ready ? 'rgba(128,216,255,0.18)' : 'rgba(0,0,0,0.6)';
+        ctx.fillStyle = ready ? 'rgba(128,216,255,0.18)' : 'rgba(10,18,30,0.45)';
         ctx.fill();
         ctx.lineWidth = 2;
         ctx.strokeStyle = ready ? 'rgba(128,216,255,0.85)' : '#555555';
@@ -14522,7 +15093,7 @@ class Game {
 
             if (ready) this._hudGlow(ctx, s.x, baseY, slotW, slotH, slotR, 16, s.color, 1, 0.2, 2);
             ctx.shadowBlur = 0;
-            ctx.fillStyle = ready ? `${s.color}33` : 'rgba(0,0,0,0.6)';
+            ctx.fillStyle = ready ? `${s.color}33` : 'rgba(10,18,30,0.45)';
             roundRect(ctx, s.x, baseY, slotW, slotH, slotR);
             ctx.fill();
 
@@ -15281,6 +15852,23 @@ class Player {
 
     takeDamage(damage, src = '其他伤害', pct = 0) {
         if (this.invincibleTimer > 0 || this.dashTimer > 0) return 0;
+        // ⚡ 传奇星界试炼机制拦截与背水保护
+        if (this.game && this.game.activeTrial) {
+            const tr = this.game.activeTrial;
+            if (tr.type === 'matrix') {
+                tr.hitsTaken = (tr.hitsTaken || 0) + 1;
+                this.game._showFloatingText(`擦碰 ${tr.hitsTaken}/3!`, this.x + this.size / 2, this.y - 12, '#ff1744');
+                if (tr.hitsTaken >= 3) {
+                    this.game._endAstralTrial(false);
+                    return 0;
+                }
+                this.invincibleTimer = 0.8;
+            } else if (this.inDuelTrial) {
+                this.game._showFloatingText('背水破防!', this.x + this.size / 2, this.y - 12, '#ff1744');
+                this.game._endAstralTrial(false);
+                return 0;
+            }
+        }
         // 最后一次挨打(含被闪避/护盾挡下)的游戏时间:脱战回盾、狂徒铠甲脱战回血都按它判断
         if (this.game) this.lastHitAt = this.game.gameTime;
         const t = this.tree || {};
@@ -15565,7 +16153,7 @@ class Enemy {
         this.x = x;
         this.y = y;
         this.type = type;
-        this.difficulty = difficulty;
+        this.difficulty = difficulty || 1.0;
         this.size = 30;
         this.speed = 2;
         this.maxHealth = 50;
@@ -16181,7 +16769,15 @@ class Enemy {
         }
     }
     
-    takeDamage(damage) {
+    takeDamage(damage, fromExplosion = false) {
+        // ⚡ 借刀引爆试炼:重甲傀儡免疫常规直接攻击,仅自爆冲击可撕裂重甲
+        if (this.isImmuneGolem) {
+            if (!fromExplosion) {
+                this.flash();
+                return 0;
+            }
+            damage += this.defense; // 真实破甲穿透,撕裂重甲
+        }
         // 潜伏者钻在地下时只吃三成伤害,破土后的硬直才是集火窗口
         if (this.type === 'burrower' && this.state !== 2) damage *= 0.3;
         let actualDamage = Math.max(1, damage - this.defense);
@@ -17306,8 +17902,9 @@ class BlockBoss {
             }
         } else if (this.atk === 'laser') {
             const L = BlockBoss.LASER_LEN, hw = BlockBoss.LASER_HALF;
-            // 光束很长,裁到场地内,免得在竖屏的上下黑边里露出来
-            ctx.beginPath(); ctx.rect(0, 0, 800, 600); ctx.clip();
+            const gw = (this.game && this.game.width) || 800, gh = (this.game && this.game.height) || 600;
+            // 裁到有效游戏场地内,避免在非标准视口或黑边区生硬露头
+            ctx.beginPath(); ctx.rect(0, 0, gw, gh); ctx.clip();
             if (this.atkPhase === 0) {
                 // 前摇:标出扫射扇形范围 + 逐渐变粗的瞄准线
                 const arc = Math.PI * (this.enraged ? 0.8 : 0.6);
@@ -17322,7 +17919,7 @@ class BlockBoss {
                 ctx.lineWidth = 1.5;
                 ctx.beginPath(); ctx.moveTo(cx, cy); ctx.lineTo(cx + Math.cos(-sa + 2 * this.atkAngle) * L, cy + Math.sin(-sa + 2 * this.atkAngle) * L); ctx.stroke();
             } else {
-                // 光束本体:外层紫色 + 内层白芯,纯填充不开 shadowBlur
+                // 光束本体:外层紫色 + 内层白芯
                 const ang = BlockBoss.laserAngle(this);
                 const flick = 0.85 + Math.random() * 0.15;
                 ctx.translate(cx, cy);
@@ -17333,6 +17930,12 @@ class BlockBoss {
                 ctx.fillRect(0, -hw, L, hw * 2);
                 ctx.fillStyle = 'rgba(255, 255, 255, 0.9)';
                 ctx.fillRect(0, -hw * 0.35, L, hw * 0.7);
+
+                // 发射源高能凝聚辉光,衔接魔王本体与激光束起始端
+                ctx.fillStyle = 'rgba(255, 255, 255, 0.85)';
+                ctx.beginPath();
+                ctx.arc(0, 0, hw * 1.5, 0, Math.PI * 2);
+                ctx.fill();
             }
         } else if (this.atk === 'summon' && this.atkPhase === 0) {
             // 召唤法阵:旋转的虚线圈逐渐收拢、填满
