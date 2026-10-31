@@ -1,0 +1,29 @@
+name: CI Test Suite
+
+on:
+  push:
+    branches: [ master ]
+  pull_request:
+    branches: [ master ]
+  workflow_dispatch:
+
+jobs:
+  test:
+    name: Run Unit Tests
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: 检出仓库代码 (Checkout Code)
+        uses: actions/checkout@v4
+
+      - name: 安装 Node.js 环境 (Setup Node.js)
+        uses: actions/setup-node@v4
+        with:
+          node-version: 20
+          cache: 'npm'
+
+      - name: 安装依赖 (Install Dependencies)
+        run: npm ci
+
+      - name: 执行单元测试 (Run Tests)
+        run: npm test
