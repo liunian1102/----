@@ -234,7 +234,17 @@ const ArtSVG = (() => {
             shape('M30 38 L45 42 L38 48 Z', '#f8bbff', 1.5) + shape('M70 38 L55 42 L62 48 Z', '#f8bbff', 1.5) +
             `<path d="M38 57 h24 v6 h-24 z" fill="#e1bee7" stroke="${OUT}" stroke-width="2"/>` +
             line('M44 57 L44 63', 1.8) + line('M50 57 L50 63', 1.8) + line('M56 57 L56 63', 1.8) +
-            `<path d="M8 74 Q50 64 92 74" fill="none" stroke="#b388ff" stroke-opacity="0.45" stroke-width="2.5"/>`)
+            `<path d="M8 74 Q50 64 92 74" fill="none" stroke="#b388ff" stroke-opacity="0.45" stroke-width="2.5"/>`),
+
+        // 棱镜哨卫:青紫双色折射八面体晶核 + 中央聚焦棱镜眼
+        prism: () => svg(bodyDefs('#80d8ff', '#311b92') +
+            `<radialGradient id="plens" cx="0.45" cy="0.4" r="0.6"><stop offset="0" stop-color="#ffffff"/><stop offset="0.45" stop-color="#00e5ff"/><stop offset="1" stop-color="#d500f9"/></radialGradient>`,
+            cube(18) +
+            `<polygon points="50,6 92,50 50,94 8,50" fill="#00e5ff" fill-opacity="0.28" stroke="#e0f7fa" stroke-width="2.5"/>` +
+            line('M8 50 H92 M50 6 V94', 2, 'rgba(224,247,250,0.55)') +
+            `<circle cx="50" cy="50" r="19" fill="#0d0628" stroke="${OUT}" stroke-width="3.5"/>` +
+            `<circle cx="50" cy="50" r="13" fill="url(#plens)" stroke="#ffffff" stroke-width="2"/>` +
+            `<circle cx="45" cy="45" r="4" fill="#ffffff" opacity="0.9"/>`)
     };
 
     // ── 玩家:友好的小方块英雄,头顶一对嫩芽(配色随皮肤) ──
@@ -250,13 +260,14 @@ const ArtSVG = (() => {
 
     // ── 方块大魔王:皇冠 + 恶魔角 + 发光怒目 + 獠牙 ──
     // form = 'void':虚空魔王(深蓝黑身体、青色眼睛、紫晶冠、乌角)
+    // form = 'frost':冰霜泰坦(极寒冰蓝身体、冰晶皇冠、寒霜巨角、凛冬冰瞳)
     const boss = (enraged, form) => {
-        const v = form === 'void';
-        const c1 = v ? (enraged ? '#7b1fa2' : '#3949ab') : enraged ? '#ff6e6e' : '#9e7bff';
-        const c2 = v ? '#05010f' : enraged ? '#3a0010' : '#1a0033';
-        const eyeC = v ? (enraged ? '#ff80ff' : '#18ffff') : enraged ? '#ffea00' : '#ff1744';
-        const crown = v ? ['#f3e5f5', '#8e24aa'] : ['#fff59d', '#ff8f00'];
-        const horn = v ? ['#b39ddb', '#120024'] : ['#f5f0e1', '#6d4c41'];
+        const v = form === 'void', f = form === 'frost';
+        const c1 = v ? (enraged ? '#7b1fa2' : '#3949ab') : f ? (enraged ? '#00b0ff' : '#40c4ff') : enraged ? '#ff6e6e' : '#9e7bff';
+        const c2 = v ? '#05010f' : f ? (enraged ? '#002244' : '#001529') : enraged ? '#3a0010' : '#1a0033';
+        const eyeC = v ? (enraged ? '#ff80ff' : '#18ffff') : f ? (enraged ? '#ffffff' : '#84ffff') : enraged ? '#ffea00' : '#ff1744';
+        const crown = v ? ['#f3e5f5', '#8e24aa'] : f ? ['#e0f7fa', '#00acc1'] : ['#fff59d', '#ff8f00'];
+        const horn = v ? ['#b39ddb', '#120024'] : f ? ['#e1f5fe', '#0277bd'] : ['#f5f0e1', '#6d4c41'];
         return svg(bodyDefs(c1, c2) +
             `<linearGradient id="gold" x1="0" y1="0" x2="0" y2="1"><stop offset="0" stop-color="${crown[0]}"/><stop offset="1" stop-color="${crown[1]}"/></linearGradient>` +
             `<linearGradient id="horn" x1="0" y1="0" x2="0" y2="1"><stop offset="0" stop-color="${horn[0]}"/><stop offset="1" stop-color="${horn[1]}"/></linearGradient>`,
@@ -540,7 +551,21 @@ const ArtSVG = (() => {
             glowDot(50, 50, 42, '#ea80fc', 0.5) +
             `<path d="M50 14 L76 34 L66 84 L50 90 L34 84 L24 34 Z" fill="url(#rc)" stroke="${OUT}" stroke-width="5" stroke-linejoin="round"/>` +
             `<path d="M50 14 L50 90 M24 34 L76 34 M34 84 L66 84" stroke="#fff" stroke-opacity="0.6" stroke-width="2.5"/>` +
-            `<polygon points="50,22 68,36 50,82 32,36" fill="#e1bee7" opacity="0.45"/>`)
+            `<polygon points="50,22 68,36 50,82 32,36" fill="#e1bee7" opacity="0.45"/>`),
+        // 涅槃凤羽:燃烧的赤金神圣凰羽
+        relic_phoenix_feather: () => isvg(lg('pf', [[0, '#fff9c4'], [0.45, '#ff9100'], [1, '#d50000']], 0.8, 1),
+            glowDot(50, 50, 38, '#ff9100', 0.5) +
+            `<path d="M22 86 C26 52 48 22 82 12 C76 44 56 72 22 86 Z" fill="url(#pf)" stroke="${OUT}" stroke-width="5" stroke-linejoin="round"/>` +
+            line('M20 88 Q50 52 80 14', 3.5, '#fffde7') +
+            `<circle cx="62" cy="34" r="7" fill="#fff59d" stroke="#ff3d00" stroke-width="2.5"/>` +
+            glint(74, 22, 5)),
+        // 虚空魔镜:镶嵌紫晶符文的折射棱镜魔镜
+        relic_void_mirror: () => isvg(lg('vm', [[0, '#ede7f6'], [0.5, '#9575cd'], [1, '#311b92']], 0.5, 1) + lg('vg', [[0, '#84ffff'], [0.5, '#b388ff'], [1, '#4a148c']], 1, 1),
+            glowDot(50, 50, 38, '#b388ff', 0.45) +
+            `<polygon points="50,8 84,28 84,72 50,92 16,72 16,28" fill="url(#vm)" stroke="${OUT}" stroke-width="5" stroke-linejoin="round"/>` +
+            `<polygon points="50,18 74,33 74,67 50,82 26,67 26,33" fill="url(#vg)" stroke="#ffffff" stroke-width="2"/>` +
+            line('M34 62 L66 34 M42 68 L70 44', 3, 'rgba(255,255,255,0.8)') +
+            glint(50, 34, 6))
     };
 
     return { enemies, player, boss, items };
@@ -616,6 +641,11 @@ const EmojiSVG = (() => {
         '🌊': () => svg(g1('#80d8ff', '#01579b'),
             P('M5 58 C18 36 38 30 54 42 C45 44 43 56 54 60 C68 66 84 54 95 40 V93 H5 Z', 'url(#a)') +
             L('M10 76 Q30 68 50 76 T90 74', 3.5, 'rgba(255,255,255,0.7)')),
+        '🌫': () => svg(g1('#b0bec5', '#455a64'),
+            LL('M14 34 Q50 26 86 34', 6, '#eceff1') +
+            LL('M8 50 Q50 42 92 50', 7, '#cfd8dc') +
+            LL('M12 66 Q50 58 88 66', 6, '#b0bec5') +
+            LL('M20 80 Q50 74 80 80', 5, '#90a4ae')),
         '🌋': () => svg(g1('#8d6e63', '#3e2723'),
             `<circle cx="38" cy="16" r="10" fill="#9e9e9e" opacity="0.8"/><circle cx="56" cy="10" r="8" fill="#bdbdbd" opacity="0.8"/>` +
             P('M6 92 L36 34 H64 L94 92 Z', 'url(#a)') + P('M36 34 H64 L58 48 L52 42 L46 54 L40 44 Z', '#ff5722', 3.5)),
@@ -724,7 +754,9 @@ const EmojiSVG = (() => {
         '📜': () => svg(g1('#fff9c4', '#ffd54f'), P('M20 16 H76 Q84 16 84 24 V76 Q84 84 76 84 H20 Q12 84 12 76 V24 Q12 16 20 16 Z', 'url(#a)', 4.5) + L('M26 32 H70 M26 48 H70 M26 64 H54', 3.5, '#795548')),
         '🤝': () => svg(g1('#ffe0b2', '#ffb74d'), P('M16 48 L36 30 Q44 24 54 30 L66 40 L50 56 L36 44 L24 56 Z', 'url(#a)', 4) + P('M84 48 L64 30 Q56 24 46 30 L34 40 L50 56 L64 44 L76 56 Z', 'url(#a)', 4)),
         '⛩': () => svg(g1('#ff8a80', '#c62828'), P('M10 20 H90 V28 H10 Z', 'url(#a)', 4) + P('M16 34 H84 V40 H16 Z', 'url(#a)', 3.5) + P('M24 28 V90 H34 V28 Z', 'url(#a)', 4) + P('M66 28 V90 H76 V28 Z', 'url(#a)', 4) + P('M44 34 H56 V46 H44 Z', '#ffd54f', 3)),
-        '📦': () => svg(g1('#d7ccc8', '#8d6e63'), P('M16 28 L50 12 L84 28 L50 44 Z', 'url(#a)', 4) + P('M16 28 V72 L50 88 V44 Z', '#a1887f', 4) + P('M84 28 V72 L50 88 V44 Z', '#8d6e63', 4) + L('M50 44 V88 M16 28 L50 44 L84 28', 3, '#5d4037'))
+        '📦': () => svg(g1('#d7ccc8', '#8d6e63'), P('M16 28 L50 12 L84 28 L50 44 Z', 'url(#a)', 4) + P('M16 28 V72 L50 88 V44 Z', '#a1887f', 4) + P('M84 28 V72 L50 88 V44 Z', '#8d6e63', 4) + L('M50 44 V88 M16 28 L50 44 L84 28', 3, '#5d4037')),
+        '🏰': () => svg(g1('#90a4ae', '#37474f'), P('M12 90 V38 H20 V26 H28 V38 H36 V26 H44 V38 H56 V26 H64 V38 H72 V26 H80 V38 H88 V90 Z', 'url(#a)', 4) + P('M38 90 V64 A12 12 0 0 1 62 64 V90 Z', '#263238', 3.5) + L('M26 52 H34 M66 52 H74', 4, '#ffd54f')),
+        '🧱': () => svg(g1('#a1887f', '#4e342e'), P('M10 18 H90 V82 H10 Z', 'url(#a)', 4) + L('M10 40 H90 M10 62 H90 M36 18 V40 M68 18 V40 M50 40 V62 M32 62 V82 M70 62 V82', 3.5, '#263238'))
     });
     return S;
 })();

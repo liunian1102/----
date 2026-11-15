@@ -135,12 +135,14 @@ button:active {
 .mp-overlay {
     position: fixed;
     inset: 0;
-    background: radial-gradient(ellipse at center, rgba(5, 15, 30, 0.97) 0%, rgba(3, 8, 16, 0.99) 100%);
+    background:
+        radial-gradient(circle at 50% 24%, rgba(0, 200, 255, 0.14) 0%, transparent 55%),
+        radial-gradient(ellipse at center, rgba(5, 15, 30, 0.94) 0%, rgba(3, 8, 16, 0.98) 100%);
     display: flex;
     justify-content: center;
     align-items: center;
     z-index: 100;
-    backdrop-filter: blur(4px);
+    backdrop-filter: blur(8px);
     overflow-y: auto;
     -webkit-overflow-scrolling: touch;
     box-sizing: border-box;
@@ -148,26 +150,29 @@ button:active {
 }
 
 .mp-card {
-    background: linear-gradient(160deg, #0d1f35 0%, #091624 100%);
-    border: 1px solid rgba(0, 200, 255, 0.25);
-    border-radius: 20px;
-    padding: 40px 36px;
-    width: min(420px, 92vw);
+    background: linear-gradient(165deg, rgba(15, 34, 58, 0.95) 0%, rgba(8, 20, 34, 0.98) 100%);
+    border: 1px solid rgba(0, 210, 255, 0.32);
+    border-radius: 22px;
+    padding: 32px 30px 28px;
+    width: min(468px, 94vw);
     max-height: calc(100dvh - 32px);
     overflow-y: auto;
     box-sizing: border-box;
     margin: auto;
-    box-shadow: 0 0 60px rgba(0, 200, 255, 0.1), 0 20px 60px rgba(0, 0, 0, 0.6);
+    box-shadow:
+        0 0 70px rgba(0, 200, 255, 0.14),
+        0 24px 64px rgba(0, 0, 0, 0.72),
+        inset 0 1px 0 rgba(255, 255, 255, 0.12);
     text-align: center;
 }
 
 .mp-title {
-    color: #00c8ff;
-    font-size: 2.4em;
+    color: #00d8ff;
+    font-size: 2.45em;
     font-weight: 800;
     letter-spacing: 6px;
-    text-shadow: 0 0 24px rgba(0, 200, 255, 0.7), 0 0 48px rgba(0, 200, 255, 0.3);
-    margin-bottom: 6px;
+    text-shadow: 0 0 24px rgba(0, 200, 255, 0.75), 0 0 48px rgba(0, 200, 255, 0.32);
+    margin-bottom: 4px;
 }
 
 /* 页面文字里的 emoji 换成的图标(art.js EmojiArt.patchDom),与文字等高 */
@@ -187,7 +192,7 @@ img.emo {
     align-items: flex-end;
     gap: 6px;
     height: 64px;
-    margin: -6px 0 4px;
+    margin: -6px 0 6px;
 }
 .mp-heroes img {
     width: 48px;
@@ -208,18 +213,19 @@ img.emo {
 }
 
 .mp-subtitle {
-    color: rgba(0, 200, 255, 0.45);
-    font-size: 0.85em;
+    color: rgba(140, 224, 255, 0.65);
+    font-size: 0.84em;
     letter-spacing: 3px;
-    margin-bottom: 32px;
+    margin-bottom: 16px;
 }
 
 .mp-best {
     color: #ffd700;
-    font-size: 0.85em;
-    margin: -20px 0 24px;
+    font-size: 0.86em;
+    margin: -6px 0 8px;
     min-height: 1em;
-    opacity: 0.8;
+    opacity: 0.92;
+    font-variant-numeric: tabular-nums;
 }
 
 .mp-best:empty {
@@ -229,26 +235,67 @@ img.emo {
 .mp-buttons {
     display: flex;
     flex-direction: column;
-    gap: 12px;
+    gap: 10px;
+}
+
+.mp-main-actions {
+    display: flex;
+    flex-direction: column;
+    gap: 9px;
 }
 
 .mp-btn {
     width: 100%;
-    padding: 14px;
-    font-size: 1em;
-    border-radius: 10px;
-    letter-spacing: 2px;
+    padding: 13px 14px;
+    font-size: 0.98em;
+    border-radius: 11px;
+    letter-spacing: 1.5px;
 }
 
 .mp-btn-primary {
-    background: linear-gradient(135deg, #1aad6e 0%, #0d875a 100%);
-    border-color: rgba(0, 255, 150, 0.4);
+    background: linear-gradient(135deg, #16b877 0%, #0b8a5b 100%);
+    border-color: rgba(0, 255, 160, 0.5);
+    box-shadow: 0 4px 16px rgba(0, 200, 120, 0.25), inset 0 1px 0 rgba(255, 255, 255, 0.2);
 }
 
 .mp-btn-primary:hover {
-    background: linear-gradient(135deg, #21c87e 0%, #14a06e 100%);
-    border-color: rgba(0, 255, 150, 0.7);
-    box-shadow: 0 4px 20px rgba(0, 0, 0, 0.5), 0 0 16px rgba(0, 255, 150, 0.35);
+    background: linear-gradient(135deg, #21cf88 0%, #12a36e 100%);
+    border-color: rgba(80, 255, 190, 0.85);
+    box-shadow: 0 6px 22px rgba(0, 0, 0, 0.5), 0 0 18px rgba(0, 255, 150, 0.42);
+}
+
+.mp-btn-single {
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    gap: 10px;
+    font-size: 1.08em;
+    font-weight: 800;
+    padding: 15px 18px;
+    letter-spacing: 2px;
+}
+
+.mp-key-hint {
+    font-size: 0.68em;
+    font-weight: 600;
+    letter-spacing: 0.5px;
+    padding: 2px 7px;
+    border-radius: 6px;
+    background: rgba(0, 0, 0, 0.28);
+    border: 1px solid rgba(255, 255, 255, 0.28);
+    color: rgba(255, 255, 255, 0.9);
+}
+
+.mp-btn-secondary-cta {
+    background: linear-gradient(135deg, rgba(26, 122, 173, 0.42) 0%, rgba(13, 92, 135, 0.42) 100%);
+    border: 1px solid rgba(0, 200, 255, 0.42);
+    color: #dff6ff;
+    font-weight: 700;
+}
+
+.mp-btn-secondary-cta:hover {
+    background: linear-gradient(135deg, rgba(33, 150, 200, 0.62) 0%, rgba(20, 112, 160, 0.62) 100%);
+    border-color: rgba(0, 220, 255, 0.75);
 }
 
 .mp-btn-secondary {
@@ -256,23 +303,92 @@ img.emo {
     border-color: rgba(0, 200, 255, 0.4);
     width: auto;
     white-space: nowrap;
-    padding: 14px 20px;
+    padding: 13px 20px;
     flex-shrink: 0;
 }
 
 .mp-btn-ghost {
-    background: transparent;
-    border: 1px solid rgba(0, 200, 255, 0.2);
-    color: rgba(200, 232, 255, 0.6);
-    font-size: 0.9em;
+    background: rgba(0, 180, 255, 0.04);
+    border: 1px solid rgba(0, 200, 255, 0.22);
+    color: rgba(210, 238, 255, 0.78);
+    font-size: 0.88em;
     letter-spacing: 1px;
 }
 
 .mp-btn-ghost:hover {
-    border-color: rgba(0, 200, 255, 0.5);
-    color: rgba(200, 232, 255, 0.9);
-    background: rgba(0, 200, 255, 0.05);
-    box-shadow: none;
+    border-color: rgba(0, 215, 255, 0.58);
+    color: #ffffff;
+    background: rgba(0, 200, 255, 0.11);
+    box-shadow: 0 2px 10px rgba(0, 200, 255, 0.12);
+}
+
+.mp-section-divider {
+    display: flex;
+    align-items: center;
+    gap: 10px;
+    margin: 4px 0 2px;
+    color: rgba(160, 215, 255, 0.48);
+    font-size: 0.74em;
+    letter-spacing: 2px;
+    text-transform: uppercase;
+}
+.mp-section-divider::before,
+.mp-section-divider::after {
+    content: '';
+    flex: 1;
+    height: 1px;
+    background: linear-gradient(90deg, transparent, rgba(0, 200, 255, 0.24), transparent);
+}
+
+.mp-feature-grid,
+.mp-extra-row.mp-feature-grid {
+    display: grid;
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+    gap: 8px;
+}
+.mp-feature-grid .mp-btn,
+.mp-extra-row.mp-feature-grid .mp-btn {
+    padding: 11px 10px;
+    font-size: 0.88em;
+    letter-spacing: 1px;
+    white-space: nowrap;
+}
+.mp-btn-contract {
+    border-color: rgba(255, 215, 0, 0.48);
+    color: #ffe082;
+    background: rgba(255, 215, 0, 0.06);
+}
+.mp-btn-contract:hover {
+    border-color: rgba(255, 215, 0, 0.85);
+    background: rgba(255, 215, 0, 0.14);
+    color: #fff3c4;
+}
+.mp-btn-meta {
+    border-color: rgba(128, 216, 255, 0.48);
+    color: #b3e5fc;
+    background: rgba(128, 216, 255, 0.06);
+}
+.mp-btn-meta:hover {
+    border-color: rgba(128, 216, 255, 0.85);
+    background: rgba(128, 216, 255, 0.14);
+    color: #e1f5fe;
+}
+.mp-btn-mutation {
+    border-color: rgba(186, 104, 200, 0.48);
+    color: #e1bee7;
+    background: rgba(186, 104, 200, 0.06);
+}
+.mp-btn-mutation:hover {
+    border-color: rgba(206, 147, 216, 0.85);
+    background: rgba(186, 104, 200, 0.14);
+}
+.mp-btn-ach {
+    border-color: rgba(79, 195, 247, 0.35);
+    color: #cfefff;
+}
+.mp-btn-tips {
+    border-color: rgba(129, 199, 132, 0.35);
+    color: #c8f7dc;
 }
 
 .mp-join-row {
@@ -436,9 +552,15 @@ img.emo {
 
 /* ── 局外成长:大厅摘要 / 新手指南 / 成就与外观 ── */
 .mp-progress {
-    color: rgba(200, 232, 255, 0.55);
+    color: rgba(200, 232, 255, 0.68);
     font-size: 0.8em;
-    margin: -14px 0 20px;
+    margin: 0 0 14px;
+    padding: 6px 12px;
+    border-radius: 999px;
+    background: rgba(0, 200, 255, 0.06);
+    border: 1px solid rgba(0, 200, 255, 0.14);
+    display: inline-block;
+    font-variant-numeric: tabular-nums;
 }
 .mp-progress:empty { display: none; }
 
@@ -448,7 +570,8 @@ img.emo {
 }
 .mp-extra-row .mp-btn {
     padding: 10px 6px;
-    font-size: 0.85em;
+    font-size: 0.84em;
+    letter-spacing: 0.5px;
 }
 
 .game-over p.run-unlocks {
@@ -585,32 +708,167 @@ kbd {
 .ach-list {
     display: flex;
     flex-direction: column;
-    gap: 6px;
+    gap: 8px;
     margin-bottom: 18px;
 }
 .ach-item {
+    position: relative;
+    overflow: hidden;
     display: flex;
     align-items: center;
-    gap: 10px;
-    padding: 7px 10px;
-    border-radius: 9px;
+    gap: 12px;
+    padding: 9px 12px;
+    border-radius: 11px;
     background: rgba(255, 255, 255, 0.03);
     border: 1px solid rgba(255, 255, 255, 0.06);
     font-size: 0.82em;
+    transition: transform 0.2s ease, border-color 0.2s ease, box-shadow 0.2s ease;
+}
+.ach-item .ach-main {
+    flex: 1;
+    min-width: 0;
 }
 .ach-item .ach-icon {
+    position: relative;
     font-size: 1.3em;
-    width: 26px;
+    width: 38px;
+    height: 38px;
+    flex-shrink: 0;
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
     text-align: center;
 }
+.ach-item .ach-icon-glyph {
+    position: relative;
+    z-index: 2;
+    line-height: 1;
+}
 .ach-item .ach-name { color: #fff; font-weight: 700; }
-.ach-item .ach-desc { color: rgba(200, 232, 255, 0.55); }
+.ach-item .ach-desc { color: rgba(200, 232, 255, 0.58); margin-top: 2px; }
 .ach-item.done {
-    border-color: rgba(255, 213, 79, 0.4);
+    border-color: rgba(255, 213, 79, 0.42);
     background: rgba(255, 213, 79, 0.06);
+    cursor: pointer;
 }
 .ach-item.done .ach-name { color: #ffd54f; }
 .ach-item:not(.done) .ach-icon { filter: grayscale(1); opacity: 0.4; }
+
+/* 新解锁成就: 闪烁呼吸光晕 + 流光扫掠 + SVG 微动效 */
+.ach-item.ach-new {
+    border-color: rgba(255, 224, 102, 0.82);
+    background: linear-gradient(135deg, rgba(255, 215, 64, 0.16) 0%, rgba(255, 160, 0, 0.07) 60%, rgba(0, 229, 255, 0.08) 100%);
+    animation: achBreathGlow 2.4s ease-in-out infinite;
+}
+.ach-item.ach-new::after {
+    content: '';
+    position: absolute;
+    top: 0;
+    left: -120%;
+    width: 75%;
+    height: 100%;
+    background: linear-gradient(110deg, transparent 15%, rgba(255, 249, 196, 0.26) 50%, transparent 85%);
+    transform: skewX(-20deg);
+    pointer-events: none;
+    animation: achShimmerSweep 3.4s ease-in-out infinite;
+}
+.ach-item.ach-new .ach-name {
+    color: #fff59d;
+    text-shadow: 0 0 10px rgba(255, 215, 64, 0.55);
+}
+.ach-icon-halo-svg {
+    position: absolute;
+    inset: -3px;
+    width: calc(100% + 6px);
+    height: calc(100% + 6px);
+    z-index: 1;
+    pointer-events: none;
+    overflow: visible;
+}
+.ach-icon-halo-svg .ach-halo-pulse {
+    transform-origin: 22px 22px;
+    animation: achHaloPulse 1.8s ease-in-out infinite alternate;
+}
+.ach-new-badge {
+    margin-left: auto;
+    display: inline-flex;
+    align-items: center;
+    gap: 4px;
+    flex-shrink: 0;
+    position: relative;
+    z-index: 2;
+}
+.ach-micro-svg {
+    width: 52px;
+    height: 26px;
+    overflow: visible;
+    flex-shrink: 0;
+    filter: drop-shadow(0 0 6px rgba(255, 215, 64, 0.45));
+}
+.ach-micro-svg .ach-svg-ripple {
+    transform-origin: 15px 14px;
+    animation: achRippleExpand 2.2s ease-out infinite;
+}
+.ach-micro-svg .ach-svg-check {
+    stroke-dasharray: 24;
+    stroke-dashoffset: 0;
+    animation: achCheckDraw 0.75s cubic-bezier(0.22, 1, 0.36, 1) both;
+}
+.ach-micro-svg .ach-svg-spark {
+    transform-box: fill-box;
+    transform-origin: center;
+    animation: achSparkTwinkle 1.6s ease-in-out infinite;
+}
+.ach-micro-svg .ach-svg-spark.s2 { animation-delay: 0.45s; }
+.ach-micro-svg .ach-svg-spark.s3 { animation-delay: 0.9s; }
+.ach-new-tag {
+    display: inline-block;
+    padding: 2px 7px;
+    border-radius: 999px;
+    font-size: 0.72em;
+    font-weight: 800;
+    letter-spacing: 0.5px;
+    color: #1a1200;
+    background: linear-gradient(135deg, #fff59d 0%, #ffd740 55%, #ffab00 100%);
+    box-shadow: 0 0 10px rgba(255, 215, 64, 0.55);
+    white-space: nowrap;
+}
+.ach-item.ach-burst-replay .ach-svg-check {
+    animation: none;
+}
+
+@keyframes achBreathGlow {
+    0%, 100% {
+        border-color: rgba(255, 213, 79, 0.55);
+        box-shadow: 0 0 10px rgba(255, 215, 64, 0.16), inset 0 0 10px rgba(255, 215, 64, 0.06);
+    }
+    50% {
+        border-color: rgba(255, 241, 118, 0.98);
+        box-shadow: 0 0 22px rgba(255, 215, 64, 0.42), 0 0 6px rgba(255, 255, 255, 0.25), inset 0 0 16px rgba(255, 215, 64, 0.16);
+    }
+}
+@keyframes achShimmerSweep {
+    0% { left: -120%; opacity: 0; }
+    15% { opacity: 1; }
+    55% { left: 140%; opacity: 1; }
+    100% { left: 140%; opacity: 0; }
+}
+@keyframes achHaloPulse {
+    0% { transform: scale(0.92); opacity: 0.65; }
+    100% { transform: scale(1.1); opacity: 1; }
+}
+@keyframes achRippleExpand {
+    0% { transform: scale(0.85); opacity: 0.85; }
+    80%, 100% { transform: scale(1.48); opacity: 0; }
+}
+@keyframes achCheckDraw {
+    0% { stroke-dashoffset: 24; opacity: 0.2; }
+    100% { stroke-dashoffset: 0; opacity: 1; }
+}
+@keyframes achSparkTwinkle {
+    0%, 100% { transform: scale(0.45) rotate(0deg); opacity: 0.35; }
+    50% { transform: scale(1.18) rotate(20deg); opacity: 1; }
+}
 
 /* ── 操控方式选择 ── */
 .mp-control-btn {
@@ -692,11 +950,26 @@ kbd {
     display: flex;
     align-items: center;
     justify-content: space-between;
-    padding: 8px 10px;
+    padding: 8px 12px;
     border-bottom: 1px solid rgba(0, 200, 255, 0.15);
     flex: none;
+    gap: 8px;
 }
-.build-tabs { display: flex; gap: 6px; }
+.build-tabs { display: flex; gap: 6px; flex-wrap: wrap; }
+.build-head-right {
+    display: flex;
+    align-items: center;
+    gap: 10px;
+}
+.build-shortcut-hint {
+    font-size: 0.75em;
+    color: rgba(200, 232, 255, 0.5);
+    letter-spacing: 0.5px;
+    white-space: nowrap;
+}
+@media (max-width: 640px) {
+    .build-shortcut-hint { display: none; }
+}
 .build-card .build-close, .build-card .tree-zoom button, .build-card .sock, .build-card .gem-card, .build-card .build-tab {
     box-shadow: none;
     text-shadow: none;
@@ -730,13 +1003,14 @@ kbd {
     display: inline-block;
     min-width: 18px;
     padding: 0 5px;
-    margin-left: 2px;
+    margin-left: 4px;
     border-radius: 9px;
     background: #ffd740;
     color: #1a1200;
     font-size: 0.75em;
     line-height: 18px;
     text-align: center;
+    font-variant-numeric: tabular-nums;
 }
 .build-badge:empty { display: none; }
 .build-card .build-close {
@@ -862,11 +1136,70 @@ kbd {
 .tree-search-row { display: flex; align-items: center; gap: 8px; }
 .tree-search { flex: 1; min-width: 0; padding: 6px 10px; border-radius: 8px; border: 1px solid rgba(0, 200, 255, 0.35); background: #0b1624; color: #e6f4ff; font-size: 14px; }
 .tree-search:focus { outline: none; border-color: #ffd740; }
-.tree-search-count { flex: none; font-size: 12px; color: #9fb3c8; white-space: nowrap; }
+.tree-search-count { flex: none; font-size: 12px; color: #9fb3c8; white-space: nowrap; font-variant-numeric: tabular-nums; }
+.tree-quick-tags {
+    display: flex;
+    flex-wrap: wrap;
+    gap: 5px;
+}
+.build-card .tree-qtag {
+    padding: 4px 8px;
+    font-size: 0.74em;
+    font-weight: 600;
+    letter-spacing: 0.5px;
+    border-radius: 6px;
+    background: rgba(0, 200, 255, 0.06);
+    border: 1px solid rgba(0, 200, 255, 0.22);
+    color: rgba(200, 232, 255, 0.8);
+    box-shadow: none;
+    text-shadow: none;
+    transform: none;
+}
+.build-card .tree-qtag:hover {
+    background: rgba(0, 200, 255, 0.15);
+    border-color: rgba(0, 229, 255, 0.55);
+    color: #ffffff;
+    transform: none;
+}
+.build-card .tree-qtag.active {
+    background: rgba(255, 215, 64, 0.16);
+    border-color: #ffd740;
+    color: #ffd740;
+}
 #treeSvg .tl.path { stroke: rgba(255, 215, 64, 0.75); stroke-dasharray: 10 8; stroke-width: 6; }
 @keyframes treePulse { 50% { stroke-opacity: 0.35; } }
 
 .gem-pane { overflow-y: auto; padding: 12px 14px 16px; }
+.gem-bag-head {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    flex-wrap: wrap;
+    gap: 8px;
+    margin: 12px 0 8px;
+}
+.gem-bag-head .panel-subtitle {
+    margin: 0;
+}
+.gem-bag-tip {
+    font-weight: 400;
+    font-size: 0.84em;
+    letter-spacing: 0.5px;
+    color: rgba(200, 232, 255, 0.55);
+}
+.gem-quick-btns {
+    display: flex;
+    gap: 6px;
+}
+.build-card .gem-action-btn {
+    width: auto;
+    white-space: nowrap;
+    padding: 6px 14px;
+    font-size: 0.8em;
+    border-radius: 8px;
+    letter-spacing: 0.5px;
+    box-shadow: none;
+}
 
 /* 角色面板:属性 / 技能 / 装备遗物 / 天赋 / 本局 */
 .stats-pane { overflow-y: auto; padding: 12px 14px 16px; color: #c8e8ff; }
@@ -1218,6 +1551,27 @@ kbd {
     overflow: hidden;
     background: rgba(255, 255, 255, 0.08);
 }
+.dmg-break .db-chart {
+    margin-top: 8px;
+    padding: 6px 8px 4px;
+    border-radius: 8px;
+    background: rgba(10, 18, 32, 0.55);
+    border: 1px solid rgba(120, 190, 255, 0.14);
+}
+.dmg-break .db-chart:empty { display: none; }
+.dmg-break .db-d3-svg {
+    display: block;
+    width: 100%;
+    height: auto;
+    max-height: 128px;
+    overflow: visible;
+}
+.dmg-break .db-bar-rect {
+    transition: opacity 0.15s ease;
+}
+.dmg-break .db-bar-group:hover .db-bar-rect {
+    opacity: 0.86;
+}
 .dmg-break .db-list {
     display: grid;
     grid-template-columns: repeat(2, minmax(0, 1fr));
@@ -1237,6 +1591,8 @@ kbd {
     .run-summary { grid-template-columns: repeat(6, minmax(0, 1fr)); width: min(640px, calc(100vw - 32px)); gap: 6px; margin: 2px 0 8px; }
     .run-summary .rs-item { padding: 4px 4px; }
     .dmg-break { width: min(640px, calc(100vw - 32px)); margin-bottom: 6px; }
+    .dmg-break .db-chart { margin-top: 5px; padding: 4px 6px 2px; }
+    .dmg-break .db-d3-svg { max-height: 92px; }
     .dmg-break .db-list { grid-template-columns: repeat(3, minmax(0, 1fr)); }
     .game-over-btns { margin-top: 8px; }
 }
@@ -1267,8 +1623,14 @@ kbd {
 }
 .rotate-title { font-size: 1.3em; font-weight: bold; color: #4dd0e1; }
 .rotate-sub { font-size: 0.9em; opacity: 0.8; }
-.rotate-hint .mp-btn { width: auto; padding: 12px 28px; }
-.rotate-note { font-size: 0.75em; opacity: 0.55; max-width: 280px; line-height: 1.5; }
+.rotate-actions {
+    display: flex;
+    flex-wrap: wrap;
+    justify-content: center;
+    gap: 10px;
+}
+.rotate-hint .mp-btn { width: auto; padding: 12px 24px; }
+.rotate-note { font-size: 0.78em; opacity: 0.65; max-width: 300px; line-height: 1.5; }
 
 /* ── 难度标签(结算) ── */
 .diff-tag {
@@ -1391,4 +1753,645 @@ kbd {
         padding: 9px;
     }
 }
+
+/* ── 远征契约 & 永恒星图弹窗样式 ── */
+.contract-modal-card {
+    max-width: 540px;
+    width: 92%;
+    max-height: 86vh;
+    display: flex;
+    flex-direction: column;
+}
+.meta-modal-card {
+    max-width: 580px;
+    width: 92%;
+    max-height: 86vh;
+    display: flex;
+    flex-direction: column;
+}
+.panel-title-gold {
+    color: #ffd700;
+    text-shadow: 0 0 18px rgba(255, 215, 0, 0.5);
+}
+.modal-lead {
+    text-align: center;
+    color: #b3e5fc;
+    font-size: 0.86em;
+    margin-bottom: 12px;
+    line-height: 1.45;
+}
+.contract-candidate-list {
+    flex: 1;
+    overflow-y: auto;
+    display: flex;
+    flex-direction: column;
+    gap: 8px;
+    padding-right: 4px;
+}
+.contract-candidate-item {
+    border: 1px solid rgba(255, 255, 255, 0.14);
+    background: rgba(15, 28, 46, 0.78);
+    border-radius: 11px;
+    padding: 11px 13px;
+    cursor: pointer;
+    transition: border-color 0.18s ease, background 0.18s ease, box-shadow 0.18s ease;
+}
+.contract-candidate-item:hover {
+    border-color: rgba(255, 215, 0, 0.55);
+    background: rgba(24, 42, 68, 0.88);
+}
+.contract-candidate-item.selected {
+    border-color: #ffd700;
+    background: rgba(255, 215, 0, 0.12);
+    box-shadow: 0 0 14px rgba(255, 215, 0, 0.2);
+}
+.modal-footer-actions {
+    display: flex;
+    gap: 10px;
+    margin-top: 14px;
+    justify-content: flex-end;
+}
+.modal-btn-auto {
+    width: auto;
+    padding: 9px 18px;
+}
+.meta-toolbar {
+    display: flex;
+    justify-content: space-between;
+    align-items: center;
+    gap: 10px;
+    margin-bottom: 12px;
+    padding: 8px 12px;
+    background: rgba(0, 200, 255, 0.08);
+    border: 1px solid rgba(0, 200, 255, 0.18);
+    border-radius: 10px;
+}
+.star-dust-count {
+    font-size: 1.1em;
+    font-weight: 800;
+    color: #ffd700;
+    font-variant-numeric: tabular-nums;
+}
+.meta-subnote {
+    font-size: 0.76em;
+    color: #90caf9;
+    margin-top: 2px;
+}
+.meta-reset-btn {
+    width: auto;
+    padding: 6px 12px;
+    font-size: 0.8em;
+}
 .diff-tag:empty { display: none; }
+
+/* ── 移动竖屏深度体验适配 (Portrait & Narrow Viewport Ergonomics) ── */
+@media (max-width: 640px), (orientation: portrait) and (max-width: 768px) {
+    .mp-overlay,
+    .panel-overlay,
+    .game-over {
+        padding-top: max(12px, env(safe-area-inset-top));
+        padding-bottom: max(12px, env(safe-area-inset-bottom));
+        padding-left: max(10px, env(safe-area-inset-left));
+        padding-right: max(10px, env(safe-area-inset-right));
+    }
+
+    .mp-card {
+        width: min(440px, 100%);
+        padding: 20px 16px;
+        max-height: calc(100dvh - 24px);
+    }
+    .mp-heroes {
+        margin-bottom: 8px;
+    }
+    .mp-title {
+        font-size: 2.05em;
+        margin-bottom: 4px;
+    }
+    .mp-subtitle {
+        margin-bottom: 10px;
+    }
+    .mp-progress {
+        margin-bottom: 10px;
+        font-size: 0.76em;
+        padding: 5px 10px;
+    }
+    .mp-buttons {
+        gap: 8px;
+    }
+    .mp-extra-row {
+        gap: 6px;
+    }
+    .mp-extra-row .mp-btn {
+        padding: 9px 5px;
+        font-size: 0.81em;
+    }
+
+    /* 构筑面板竖屏全屏沉浸抽屉式布局 */
+    .build-overlay {
+        padding: max(6px, env(safe-area-inset-top)) 6px max(6px, env(safe-area-inset-bottom));
+    }
+    .build-card {
+        width: 100%;
+        height: calc(100dvh - 12px);
+        border-radius: 14px;
+    }
+    .build-head {
+        padding: 7px 8px;
+        gap: 6px;
+    }
+    .build-tabs {
+        flex-wrap: nowrap;
+        overflow-x: auto;
+        scrollbar-width: none;
+        gap: 5px;
+        flex: 1;
+        min-width: 0;
+    }
+    .build-tabs::-webkit-scrollbar {
+        display: none;
+    }
+    .build-card .build-tab {
+        padding: 7px 11px;
+        font-size: 0.84em;
+        letter-spacing: 0.5px;
+        white-space: nowrap;
+        flex-shrink: 0;
+    }
+    .build-card .build-close {
+        width: 34px;
+        height: 34px;
+        flex-shrink: 0;
+    }
+
+    /* 天赋树竖屏上下黄金分割: 上方 54% 星盘画布 + 下方 46% 节点详情与单行快筛标签 */
+    .tree-pane {
+        flex-direction: column;
+    }
+    .tree-view {
+        flex: 1 1 54%;
+        min-height: 210px;
+    }
+    .tree-side {
+        width: 100%;
+        max-height: 46%;
+        border-left: none;
+        border-top: 1px solid rgba(0, 200, 255, 0.16);
+        padding: 8px 10px 10px;
+        gap: 6px;
+    }
+    .tree-quick-tags {
+        flex-wrap: nowrap;
+        overflow-x: auto;
+        scrollbar-width: none;
+        padding-bottom: 2px;
+    }
+    .tree-quick-tags::-webkit-scrollbar {
+        display: none;
+    }
+    .build-card .tree-qtag {
+        flex-shrink: 0;
+        padding: 4px 9px;
+    }
+    .tree-info {
+        padding: 8px 10px;
+        min-height: 0;
+    }
+    .tree-info .ti-act {
+        padding: 9px;
+    }
+
+    /* 技能石与暗金圣物面板竖屏紧凑触控排布 */
+    .gem-pane,
+    .relic-pane,
+    .stats-pane {
+        padding: 10px 10px 14px;
+    }
+    .gem-row {
+        padding: 8px 10px;
+        gap: 6px 10px;
+    }
+    .build-card .sock {
+        width: 48px;
+        height: 48px;
+    }
+    .gem-bag,
+    .relic-bag {
+        grid-template-columns: repeat(2, minmax(0, 1fr));
+    }
+    .relic-slots {
+        gap: 6px;
+    }
+    .relic-slot-item {
+        padding: 8px 6px;
+        min-height: 74px;
+    }
+
+    /* 成就列表项在窄屏竖屏下的自适应紧凑排版 */
+    .ach-item {
+        gap: 9px;
+        padding: 8px 10px;
+    }
+    .ach-micro-svg {
+        width: 44px;
+        height: 24px;
+    }
+    .ach-new-tag {
+        padding: 2px 6px;
+        font-size: 0.68em;
+    }
+    .contract-modal-card,
+    .meta-modal-card {
+        width: 96%;
+        max-height: calc(100dvh - 24px);
+    }
+    .modal-footer-actions {
+        justify-content: stretch;
+    }
+    .modal-footer-actions .mp-btn {
+        flex: 1;
+    }
+}
+
+/* ── 传说进化与超武觉醒配方图鉴 ── */
+.evo-codex-card {
+    margin-top: 8px;
+}
+.evo-codex-grid {
+    display: grid;
+    grid-template-columns: repeat(auto-fill, minmax(220px, 1fr));
+    gap: 7px;
+}
+.evo-recipe-item {
+    background: rgba(10, 22, 38, 0.72);
+    border: 1px solid rgba(120, 175, 220, 0.2);
+    border-left: 3px solid var(--ec, #ffd700);
+    border-radius: 8px;
+    padding: 7px 9px;
+    display: flex;
+    flex-direction: column;
+    gap: 4px;
+    transition: border-color 0.2s, box-shadow 0.2s;
+}
+.evo-recipe-item.in-progress {
+    border-color: rgba(128, 216, 255, 0.42);
+    background: rgba(14, 30, 52, 0.82);
+}
+.evo-recipe-item.ready {
+    border-color: rgba(255, 215, 64, 0.75);
+    background: linear-gradient(135deg, rgba(45, 34, 8, 0.65), rgba(14, 28, 48, 0.88));
+    box-shadow: 0 0 12px rgba(255, 215, 64, 0.16);
+}
+.evo-recipe-item.unlocked {
+    border-color: rgba(105, 240, 174, 0.75);
+    background: linear-gradient(135deg, rgba(10, 44, 32, 0.7), rgba(12, 28, 46, 0.9));
+    box-shadow: 0 0 14px rgba(105, 240, 174, 0.18);
+}
+.evo-recipe-head {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    gap: 6px;
+}
+.evo-recipe-title {
+    display: flex;
+    align-items: center;
+    gap: 5px;
+    font-size: 0.88em;
+    color: #fff;
+}
+.evo-recipe-status {
+    font-size: 0.72em;
+    padding: 1px 6px;
+    border-radius: 4px;
+    background: rgba(255, 255, 255, 0.08);
+    color: rgba(200, 232, 255, 0.75);
+    white-space: nowrap;
+}
+.evo-recipe-status.in-progress {
+    background: rgba(64, 196, 255, 0.18);
+    color: #80d8ff;
+}
+.evo-recipe-status.ready {
+    background: rgba(255, 215, 64, 0.24);
+    color: #ffe57f;
+    font-weight: bold;
+}
+.evo-recipe-status.unlocked {
+    background: rgba(105, 240, 174, 0.24);
+    color: #69f0ae;
+    font-weight: bold;
+}
+.evo-recipe-desc {
+    font-size: 0.76em;
+    color: rgba(200, 232, 255, 0.74);
+    line-height: 1.35;
+}
+.evo-req-list {
+    display: flex;
+    flex-wrap: wrap;
+    gap: 4px;
+    margin-top: 2px;
+}
+.evo-req-chip {
+    display: inline-flex;
+    align-items: center;
+    gap: 3px;
+    font-size: 0.73em;
+    padding: 2px 6px;
+    border-radius: 5px;
+    background: rgba(255, 255, 255, 0.06);
+    border: 1px solid rgba(255, 255, 255, 0.12);
+    color: rgba(200, 232, 255, 0.75);
+}
+.evo-req-chip b {
+    color: #fff;
+    font-weight: 600;
+}
+.evo-req-chip.met {
+    background: rgba(105, 240, 174, 0.15);
+    border-color: rgba(105, 240, 174, 0.55);
+    color: #b9f6ca;
+}
+.evo-req-chip.met b {
+    color: #69f0ae;
+}
+.evo-gear-grid {
+    display: grid;
+    grid-template-columns: repeat(auto-fill, minmax(220px, 1fr));
+    gap: 6px;
+}
+.evo-gear-item {
+    display: flex;
+    align-items: center;
+    gap: 8px;
+    padding: 6px 8px;
+    border-radius: 7px;
+    background: rgba(10, 22, 38, 0.68);
+    border: 1px solid rgba(120, 175, 220, 0.18);
+    border-left: 3px solid var(--gc, #80d8ff);
+}
+.evo-gear-item.ready {
+    border-color: rgba(255, 215, 64, 0.65);
+}
+.evo-gear-item.unlocked {
+    border-color: rgba(105, 240, 174, 0.75);
+    background: rgba(10, 42, 32, 0.65);
+}
+.evo-gear-info {
+    flex: 1;
+    min-width: 0;
+}
+.evo-gear-line {
+    display: flex;
+    align-items: center;
+    flex-wrap: wrap;
+    gap: 4px;
+    font-size: 0.82em;
+    color: #e1f5fe;
+}
+.evo-arrow {
+    color: rgba(200, 232, 255, 0.55);
+}
+.evo-target {
+    color: #ffd54f;
+}
+.evo-gear-info small {
+    display: block;
+    font-size: 0.74em;
+    color: rgba(200, 232, 255, 0.68);
+    margin-top: 1px;
+}
+
+/* ====== 构筑与养成体验升级 (Roadmap Item 2) ====== */
+.meta-toolbar-btns {
+    display: flex;
+    align-items: center;
+    gap: 8px;
+    flex-wrap: wrap;
+}
+.meta-progress-label {
+    margin-left: 8px;
+    padding: 2px 8px;
+    border-radius: 999px;
+    background: rgba(128, 216, 255, 0.14);
+    border: 1px solid rgba(128, 216, 255, 0.35);
+    color: #80d8ff;
+    font-size: 0.85em;
+    font-weight: 600;
+}
+
+/* 天赋树流派一键导航与个人方案存取 */
+.tree-presets {
+    display: flex;
+    flex-direction: column;
+    gap: 6px;
+    padding: 8px 10px;
+    margin-bottom: 6px;
+    border-radius: 10px;
+    background: linear-gradient(135deg, rgba(8, 22, 40, 0.88), rgba(14, 34, 58, 0.78));
+    border: 1px solid rgba(120, 185, 240, 0.24);
+}
+.tree-preset-head {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    gap: 8px;
+    flex-wrap: wrap;
+}
+.tree-preset-label {
+    font-size: 0.78em;
+    font-weight: 700;
+    color: #b3e5fc;
+    letter-spacing: 0.03em;
+}
+.tree-preset-saved-ops {
+    display: flex;
+    align-items: center;
+    gap: 6px;
+}
+.tree-preset-mini {
+    background: rgba(128, 216, 255, 0.12);
+    border: 1px solid rgba(128, 216, 255, 0.38);
+    color: #b3e5fc;
+    border-radius: 6px;
+    padding: 3px 9px;
+    font-size: 0.75em;
+    font-weight: 600;
+    cursor: pointer;
+    transition: all 0.16s ease;
+}
+.tree-preset-mini:hover:not(:disabled) {
+    background: rgba(128, 216, 255, 0.25);
+    border-color: #80d8ff;
+    color: #fff;
+}
+.tree-preset-mini:disabled {
+    opacity: 0.42;
+    cursor: not-allowed;
+}
+.tree-preset-row {
+    display: grid;
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+    gap: 6px;
+}
+.tree-preset-btn {
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    gap: 4px;
+    background: rgba(12, 28, 48, 0.86);
+    border: 1px solid rgba(140, 195, 245, 0.32);
+    border-bottom: 2px solid var(--preset-c, #80d8ff);
+    color: #e1f5fe;
+    border-radius: 7px;
+    padding: 5px 8px;
+    font-size: 0.78em;
+    font-weight: 600;
+    cursor: pointer;
+    white-space: nowrap;
+    transition: transform 0.14s ease, background 0.14s ease, border-color 0.14s ease;
+}
+.tree-preset-btn:hover {
+    background: rgba(24, 52, 84, 0.94);
+    border-color: var(--preset-c, #80d8ff);
+    transform: translateY(-1px);
+}
+.tree-preset-btn:active {
+    transform: translateY(0);
+}
+
+/* 技能石符文共鸣配方图鉴与一键镶嵌栏 */
+.gem-resonance-bar {
+    display: flex;
+    flex-direction: column;
+    gap: 6px;
+    padding: 8px 10px;
+    margin-bottom: 8px;
+    border-radius: 10px;
+    background: linear-gradient(135deg, rgba(10, 22, 40, 0.86), rgba(18, 36, 62, 0.78));
+    border: 1px solid rgba(130, 190, 245, 0.24);
+}
+.res-bar-title {
+    font-size: 0.78em;
+    font-weight: 700;
+    color: #ffe082;
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+}
+.res-recipe-grid {
+    display: grid;
+    grid-template-columns: repeat(auto-fill, minmax(195px, 1fr));
+    gap: 6px;
+}
+.res-recipe-chip {
+    display: flex;
+    flex-direction: row;
+    flex-wrap: wrap;
+    align-items: center;
+    gap: 4px 6px;
+    padding: 6px 8px;
+    border-radius: 8px;
+    background: rgba(8, 18, 34, 0.82);
+    border: 1px solid rgba(120, 175, 225, 0.22);
+    border-left: 3px solid var(--rc, #80d8ff);
+    color: #e1f5fe;
+    text-align: left;
+    cursor: pointer;
+    transition: transform 0.14s ease, border-color 0.14s ease, background 0.14s ease;
+}
+.res-recipe-chip.ready {
+    border-color: rgba(255, 215, 64, 0.55);
+    background: rgba(22, 36, 56, 0.9);
+}
+.res-recipe-chip.ready:hover {
+    transform: translateY(-1px);
+    border-color: var(--rc, #ffd740);
+    background: rgba(30, 50, 76, 0.95);
+}
+.res-recipe-chip.active {
+    border-color: rgba(105, 240, 174, 0.75);
+    background: rgba(10, 44, 34, 0.72);
+}
+.res-recipe-chip.locked {
+    opacity: 0.55;
+    cursor: default;
+}
+.res-dots {
+    display: inline-flex;
+    align-items: center;
+    gap: 3px;
+    flex-shrink: 0;
+}
+.res-dot {
+    width: 8px;
+    height: 8px;
+    border-radius: 50%;
+    display: inline-block;
+    box-shadow: 0 0 4px currentColor;
+}
+.res-dot.red { background: #ff5252; color: #ff5252; }
+.res-dot.green { background: #69f0ae; color: #69f0ae; }
+.res-dot.blue { background: #40c4ff; color: #40c4ff; }
+.res-chip-name {
+    font-size: 0.82em;
+    font-weight: 700;
+    color: var(--rc, #fff);
+}
+.res-chip-desc {
+    width: 100%;
+    font-size: 0.72em;
+    color: rgba(205, 232, 255, 0.78);
+    line-height: 1.25;
+}
+.res-chip-tag {
+    margin-left: auto;
+    font-size: 0.68em;
+    padding: 1px 6px;
+    border-radius: 999px;
+    background: rgba(255, 255, 255, 0.08);
+    color: #ffe082;
+    font-weight: 600;
+}
+.res-recipe-chip.active .res-chip-tag {
+    background: rgba(105, 240, 174, 0.2);
+    color: #69f0ae;
+}
+.res-recipe-chip.locked .res-chip-tag {
+    color: rgba(190, 215, 235, 0.6);
+}
+
+/* 圣物余烬熔炉操作栏 */
+.relic-forge-actions {
+    display: flex;
+    align-items: center;
+    gap: 6px;
+    flex-wrap: wrap;
+}
+.relic-forge-btn {
+    border-color: rgba(255, 171, 64, 0.6) !important;
+    color: #ffd180 !important;
+    background: rgba(255, 145, 0, 0.14) !important;
+}
+.relic-forge-btn:hover:not(:disabled) {
+    background: rgba(255, 145, 0, 0.28) !important;
+    border-color: #ffab40 !important;
+    color: #fff !important;
+}
+.relic-dismantle-btn {
+    border-color: rgba(179, 136, 255, 0.5) !important;
+    color: #d1c4e9 !important;
+}
+.relic-forge-btn:disabled,
+.relic-dismantle-btn:disabled {
+    opacity: 0.42;
+    cursor: not-allowed;
+}
+
+@media (max-width: 640px) {
+    .res-recipe-grid {
+        grid-template-columns: repeat(2, minmax(0, 1fr));
+    }
+}
+
+

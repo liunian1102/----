@@ -5,11 +5,31 @@ const fs = require('fs');
 const path = require('path');
 
 function installedChromiums() {
-    const root = process.env.PLAYWRIGHT_BROWSERS_PATH;
-    if (!root || !fs.existsSync(root)) return [];
-    const subs = { linux: ['chrome-linux/chrome', 'chrome-linux64/chrome'], darwin: ['chrome-mac/Chromium.app/Contents/MacOS/Chromium'], win32: ['chrome-win/chrome.exe'] }[process.platform] || [];
-    return fs.readdirSync(root).filter(d => /^chromium-\d+$/.test(d)).sort().reverse()
-        .flatMap(d => subs.map(s => path.join(root, d, s))).filter(p => fs.existsSync(p));
+    const roots = [process.env.PLAYWRIGHT_BROWSERS_PATH, '/ms-playwright'].filter(Boolean);
+    const subs = {
+        linux: [
+            'chrome-linux/chrome',
+            'chrome-linux64/chrome',
+            'chrome-headless-shell-linux64/chrome-headless-shell'
+        ],
+        darwin: ['chrome-mac/Chromium.app/Contents/MacOS/Chromium'],
+        win32: ['chrome-win/chrome.exe']
+    }[process.platform] || [];
+    const found = [];
+    for (const root of roots) {
+        if (!fs.existsSync(root)) continue;
+        const dirs = fs.readdirSync(root)
+            .filter(d => /^chromium(_headless_shell)?-\d+$/.test(d))
+            .sort()
+            .reverse();
+        for (const d of dirs) {
+            for (const s of subs) {
+                const p = path.join(root, d, s);
+                if (fs.existsSync(p)) found.push(p);
+            }
+        }
+    }
+    return found;
 }
 
 async function launchBrowser(chromium, opts = {}) {

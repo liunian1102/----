@@ -4,11 +4,15 @@
   "description": "方块快跑 联机服务器",
   "main": "server.js",
   "scripts": {
+    "dev": "node server.js",
     "start": "node server.js",
+    "build": "node --check game.js && node --check art.js && node --check server.js",
+    "lint": "node --check game.js && node --check art.js && node --check server.js",
     "test": "node tests/run-all.js",
     "test:e2e": "node tests/run-all.js --e2e"
   },
   "dependencies": {
+    "d3": "^7.9.2",
     "ws": "^8.18.0"
   },
   "devDependencies": {

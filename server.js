@@ -1,7 +1,61 @@
+const http = require('http');
+const fs = require('fs');
+const path = require('path');
 const WebSocket = require('ws');
 
-const PORT = process.env.PORT || 8080;
-const wss = new WebSocket.Server({ port: PORT });
+const PORT = Number(process.env.PORT) || 3000;
+const LEGACY_WS_PORT = 8080;
+
+const MIME_TYPES = {
+    '.html': 'text/html; charset=utf-8',
+    '.css': 'text/css; charset=utf-8',
+    '.js': 'application/javascript; charset=utf-8',
+    '.json': 'application/json; charset=utf-8',
+    '.webmanifest': 'application/manifest+json; charset=utf-8',
+    '.png': 'image/png',
+    '.jpg': 'image/jpeg',
+    '.svg': 'image/svg+xml',
+    '.ico': 'image/x-icon'
+};
+
+const ROOT_DIR = __dirname;
+
+const server = http.createServer((req, res) => {
+    try {
+        const urlPath = decodeURIComponent((req.url || '/').split('?')[0]);
+        if (urlPath === '/healthz') {
+            res.writeHead(200, { 'Content-Type': 'application/json; charset=utf-8' });
+            res.end(JSON.stringify({ ok: true, rooms: rooms.size, clients: clients.size }));
+            return;
+        }
+        const relPath = urlPath === '/' ? 'index.html' : urlPath.replace(/^\/+/, '');
+        const safePath = path.normalize(path.join(ROOT_DIR, relPath));
+        if (!safePath.startsWith(ROOT_DIR)) {
+            res.writeHead(403);
+            res.end('Forbidden');
+            return;
+        }
+        fs.stat(safePath, (err, stat) => {
+            if (err || !stat.isFile()) {
+                res.writeHead(404, { 'Content-Type': 'text/plain; charset=utf-8' });
+                res.end('Not Found');
+                return;
+            }
+            const ext = path.extname(safePath).toLowerCase();
+            const contentType = MIME_TYPES[ext] || 'application/octet-stream';
+            res.writeHead(200, {
+                'Content-Type': contentType,
+                'Cache-Control': 'no-cache'
+            });
+            fs.createReadStream(safePath).pipe(res);
+        });
+    } catch {
+        res.writeHead(500);
+        res.end('Internal Server Error');
+    }
+});
+
+const wss = new WebSocket.Server({ server });
 
 // rooms: Map<code, { host: ws, guests: Map<id, ws>, started: bool, nextId: number }>
 const rooms = new Map();
@@ -53,7 +107,7 @@ function removeClient(ws) {
     }
 }
 
-wss.on('connection', ws => {
+function handleWsConnection(ws) {
     ws.on('message', raw => {
         let msg;
         try { msg = JSON.parse(raw); } catch { return; }
@@ -177,11 +231,38 @@ wss.on('connection', ws => {
                 send(room.host, { type: 'castSkill', playerId: info.playerId, skill: msg.skill, aim });
                 break;
             }
+
+            // Guest → host (tactical ping)
+            case 'tacticalPing': {
+                const info = clients.get(ws);
+                if (!info || info.isHost) break;
+                const room = getRoom(info.roomCode);
+                if (!room) break;
+                if (Number.isFinite(msg.x) && Number.isFinite(msg.y)) {
+                    send(room.host, { type: 'tacticalPing', playerId: info.playerId, x: msg.x, y: msg.y, pingType: msg.pingType });
+                }
+                break;
+            }
         }
     });
 
     ws.on('close', () => removeClient(ws));
     ws.on('error', () => removeClient(ws));
+}
+
+wss.on('connection', handleWsConnection);
+
+server.listen(PORT, '0.0.0.0', () => {
+    console.log(`方块快跑 Web 与联机服务器启动: http://localhost:${PORT}`);
 });
 
-console.log(`方块快跑 联机服务器启动，端口 ${PORT}`);
+if (PORT !== LEGACY_WS_PORT) {
+    try {
+        const legacyWss = new WebSocket.Server({ port: LEGACY_WS_PORT });
+        legacyWss.on('connection', handleWsConnection);
+        legacyWss.on('error', () => {});
+    } catch {
+        // Ignore if 8080 is already bound by another process
+    }
+}
+

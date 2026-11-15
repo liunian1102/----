@@ -248,13 +248,98 @@ function renderProgressPanel() {
     const achList = document.getElementById('achList');
     achList.innerHTML = '';
     for (const a of ACHIEVEMENTS) {
+        const isDone = !!p.achievements[a.id];
+        const isNew = isDone && Progress.isNewlyUnlocked(a.id, p);
         const row = document.createElement('div');
-        row.className = 'ach-item' + (p.achievements[a.id] ? ' done' : '');
-        row.innerHTML = '<span class="ach-icon"></span><div><div class="ach-name"></div><div class="ach-desc"></div></div>';
-        row.querySelector('.ach-icon').textContent = a.icon;
-        row.querySelector('.ach-name').textContent = a.name;
-        row.querySelector('.ach-desc').textContent = a.desc;
+        row.className = 'ach-item' + (isDone ? ' done' : '') + (isNew ? ' ach-new' : '');
+        row.dataset.achId = a.id;
+        if (isNew) row.dataset.new = '1';
+        row.innerHTML = '<span class="ach-icon"><span class="ach-icon-glyph"></span></span><div class="ach-main"><div class="ach-name"></div><div class="ach-desc"></div></div>';
+        const glyphEl = row.querySelector('.ach-icon-glyph') || row.querySelector('.ach-icon');
+        if (glyphEl) glyphEl.textContent = a.icon;
+        const nameEl = row.querySelector('.ach-name');
+        if (nameEl) nameEl.textContent = a.name;
+        const descEl = row.querySelector('.ach-desc');
+        if (descEl) descEl.textContent = a.desc;
+        if (isNew) {
+            injectAchMicroSvg(row, a);
+        }
+        if (isDone) {
+            row.addEventListener('click', () => {
+                if (!row.classList.contains('ach-new')) {
+                    row.classList.add('ach-new');
+                    injectAchMicroSvg(row, a);
+                }
+                row.classList.remove('ach-burst-replay');
+                void row.offsetWidth;
+                row.classList.add('ach-burst-replay');
+                if (typeof Sound !== 'undefined' && Sound.play) Sound.play('resonate');
+            });
+        }
         achList.append(row);
+    }
+}
+
+// 为新解锁的成就列表项注入 SVG 微动效(星轨呼吸光环 + 动态绘制勋章与闪烁星芒)
+function injectAchMicroSvg(row, ach) {
+    if (!row || typeof document === 'undefined') return;
+    const uid = String((ach && ach.id) || 'ach').replace(/[^a-zA-Z0-9_-]/g, '');
+    const SVG_NS = 'http://www.w3.org/2000/svg';
+
+    // 1. 图标外围注入旋转星轨与呼吸脉冲光环 SVG
+    const iconWrap = row.querySelector('.ach-icon');
+    if (iconWrap && !iconWrap.querySelector('.ach-icon-halo-svg')) {
+        const haloSvg = document.createElementNS ? document.createElementNS(SVG_NS, 'svg') : document.createElement('svg');
+        haloSvg.setAttribute('class', 'ach-icon-halo-svg');
+        haloSvg.setAttribute('viewBox', '0 0 44 44');
+        haloSvg.setAttribute('aria-hidden', 'true');
+        haloSvg.innerHTML =
+            `<defs>` +
+                `<linearGradient id="achHaloGrad_${uid}" x1="0" y1="0" x2="1" y2="1">` +
+                    `<stop offset="0%" stop-color="#fff59d"/>` +
+                    `<stop offset="50%" stop-color="#ffd740"/>` +
+                    `<stop offset="100%" stop-color="#ff9100"/>` +
+                `</linearGradient>` +
+            `</defs>` +
+            `<circle class="ach-halo-pulse" cx="22" cy="22" r="15" fill="rgba(255,215,64,0.12)" stroke="rgba(255,215,64,0.45)" stroke-width="1.2"/>` +
+            `<g class="ach-halo-orbit">` +
+                `<circle cx="22" cy="22" r="19" fill="none" stroke="url(#achHaloGrad_${uid})" stroke-width="1.5" stroke-dasharray="5 3.5" stroke-linecap="round"/>` +
+                `<circle cx="22" cy="3" r="2.1" fill="#fffde7"/>` +
+                `<circle cx="22" cy="41" r="1.7" fill="#ffd740"/>` +
+                `<animateTransform attributeName="transform" type="rotate" from="0 22 22" to="360 22 22" dur="6.5s" repeatCount="indefinite"/>` +
+            `</g>`;
+        iconWrap.appendChild(haloSvg);
+    }
+
+    // 2. 行尾注入动态勋章对勾 + 闪烁四角星芒 SVG 微动效徽章
+    if (!row.querySelector('.ach-new-badge')) {
+        const badge = document.createElement('div');
+        badge.className = 'ach-new-badge';
+        const microSvg = document.createElementNS ? document.createElementNS(SVG_NS, 'svg') : document.createElement('svg');
+        microSvg.setAttribute('class', 'ach-micro-svg');
+        microSvg.setAttribute('viewBox', '0 0 56 28');
+        microSvg.setAttribute('width', '56');
+        microSvg.setAttribute('height', '28');
+        microSvg.setAttribute('aria-hidden', 'true');
+        microSvg.innerHTML =
+            `<defs>` +
+                `<linearGradient id="achCrestGrad_${uid}" x1="0" y1="0" x2="1" y2="1">` +
+                    `<stop offset="0%" stop-color="#fff9c4"/>` +
+                    `<stop offset="55%" stop-color="#ffd740"/>` +
+                    `<stop offset="100%" stop-color="#ffab00"/>` +
+                `</linearGradient>` +
+            `</defs>` +
+            `<circle class="ach-svg-ripple" cx="15" cy="14" r="9" fill="none" stroke="#ffd740" stroke-width="1.4"/>` +
+            `<circle cx="15" cy="14" r="9" fill="rgba(255,215,64,0.18)" stroke="url(#achCrestGrad_${uid})" stroke-width="1.6"/>` +
+            `<path class="ach-svg-check" d="M10.8 14.2 L13.8 17.2 L19.5 11.2" fill="none" stroke="#fffde7" stroke-width="2.1" stroke-linecap="round" stroke-linejoin="round"/>` +
+            `<path class="ach-svg-spark s1" d="M34 5 L35.4 8.6 L39 10 L35.4 11.4 L34 15 L32.6 11.4 L29 10 L32.6 8.6 Z" fill="#fff59d"/>` +
+            `<path class="ach-svg-spark s2" d="M46 12 L47 14.5 L49.5 15.5 L47 16.5 L46 19 L45 16.5 L42.5 15.5 L45 14.5 Z" fill="#ffd740"/>` +
+            `<path class="ach-svg-spark s3" d="M39 18 L39.8 19.8 L41.6 20.6 L39.8 21.4 L39 23.2 L38.2 21.4 L36.4 20.6 L38.2 19.8 Z" fill="#80d8ff"/>`;
+        const tag = document.createElement('span');
+        tag.className = 'ach-new-tag';
+        tag.textContent = 'NEW · 新解锁';
+        badge.append(microSvg, tag);
+        row.appendChild(badge);
     }
 }
 
@@ -274,8 +359,8 @@ const DMG_SRC_INFO = {
     body: { name: '碰撞', color: '#ef9a9a' }, other: { name: '其他', color: '#90a4ae' }
 };
 // 敌人中文名(死亡结算「致命一击」来源显示)
-const ENEMY_NAMES = { chaser: '追击者', patroller: '巡逻者', giant: '巨人', gunner: '炮手', dasher: '冲锋者', bomber: '自爆方块', treasure: '宝藏方块', healer: '医疗兵', splitter: '分裂者', shard: '碎片', reaper: '噬魂者', burrower: '潜伏者' };
-const MP_ENEMY_TYPES = ['chaser', 'patroller', 'giant', 'gunner', 'dasher', 'bomber', 'treasure', 'healer', 'splitter', 'shard', 'reaper', 'burrower'];
+const ENEMY_NAMES = { chaser: '追击者', patroller: '巡逻者', giant: '巨人', gunner: '炮手', dasher: '冲锋者', bomber: '自爆方块', treasure: '宝藏方块', healer: '医疗兵', splitter: '分裂者', shard: '碎片', reaper: '噬魂者', burrower: '潜伏者', prism: '棱镜哨卫' };
+const MP_ENEMY_TYPES = ['chaser', 'patroller', 'giant', 'gunner', 'dasher', 'bomber', 'treasure', 'healer', 'splitter', 'shard', 'reaper', 'burrower', 'prism'];
 
 // 词缀精英体系 2.0 (Affix System 2.0)
 //   gale: 疾风(极速+风刃尾迹) / tenacity: 坚毅(霸体+坚毅护盾) / frost: 极寒(减速冰环) / vortex: 引力(黑洞牵引) / venom: 剧毒(毒雾洼地)
@@ -296,14 +381,15 @@ const GAME_EVENTS = {
     horde:     { name: '怪潮',     icon: '🌊', color: '#40c4ff', dur: 12, desc: '敌人大量涌来,击杀经验和分数翻倍' },
     altar:     { name: '祝福祭坛', icon: '✨', color: '#b388ff', dur: 18, desc: '站进光圈为祭坛充能,充满后全队获得祝福' },
     void_rift: { name: '虚空裂隙', icon: '🌀', color: '#ba68c8', dur: 22, desc: '靠近石碑引导开启挑战,击破虚空怪潮夺取史诗宝藏' },
-    greed:     { name: '贪婪祭坛', icon: '⚖️', color: '#ffd700', dur: 20, desc: '靠近签订高风险契约,换取全队质变强化' }
+    greed:     { name: '贪婪祭坛', icon: '⚖️', color: '#ffd700', dur: 20, desc: '靠近签订高风险契约,换取全队质变强化' },
+    forge:     { name: '远古铁砧', icon: '⚒', color: '#ffab40', dur: 18, desc: '靠近铁砧引导锻造,立刻赐予全队Lv2觉醒神装或升阶当前装备' }
 };
 const EVENT_TYPES = Object.keys(GAME_EVENTS);
 const MP_ITEM_TYPES = ['potion', 'exp_book', 'snowflake', 'bomb', 'heart', 'potion_invicible',
     'gear_blade', 'gear_orb', 'gear_armor', 'gear_bow', 'gear_thorns',
     'relic_thunder_ring', 'relic_vampire_fang', 'relic_chrono_watch', 'relic_reaper_cloak', 'relic_alchemist_stone', 'relic_warmog_vest',
     'relic_glass_crown', 'relic_berserk_mask', 'relic_frost_heart', 'relic_gold_idol', 'relic_storm_boots', 'relic_blood_chalice',
-    'relic_astral_compass', 'relic_resonance_crystal'];
+    'relic_astral_compass', 'relic_resonance_crystal', 'relic_phoenix_feather', 'relic_void_mirror'];
 
 // 永久战利品暗金遗物系统 (Relic Loot System)
 //   玩家最多同时装备 3 件遗物,整局常驻。每件都是一笔交易:pros 增益 + cons 代价(至少一条)
@@ -341,7 +427,11 @@ const RELICS = {
     astral_compass:  { name: '星界罗盘', icon: '🧭', color: '#80d8ff',
         pros: ['每拾取 3 个道具释放一次星界冲击波(击退并冰冻敌人)'], cons: ['冲刺冷却 +12%'], mods: { astralShock: 1, dashCdr: -0.12 } },
     resonance_crystal: { name: '共鸣水晶', icon: '🔮', color: '#d500f9',
-        pros: ['技能石共鸣时额外触发连锁雷暴，并延长共鸣持续效果'], cons: ['最大生命 -10%'], mods: { resonanceOverload: 1, maxHpPct: -0.10 } }
+        pros: ['技能石共鸣时额外触发连锁雷暴，并延长共鸣持续效果'], cons: ['最大生命 -10%'], mods: { resonanceOverload: 1, maxHpPct: -0.10 } },
+    phoenix_feather: { name: '涅槃凤羽', icon: '🪶', color: '#ff9100',
+        pros: ['受到致命伤害时涅槃重生(回复 50% 生命并引发烈焰新星清场,每局 1 次)', '持续伤害 +30%'], cons: ['最大生命 -15%'], mods: { phoenixRevive: 1, dotMult: 0.30, maxHpPct: -0.15 } },
+    void_mirror:     { name: '虚空魔镜', icon: '🔮', color: '#b388ff',
+        pros: ['冲刺或无敌帧穿过敌方子弹时将其反射回最近敌人(造成 180% 攻击伤害)', '技能范围 +20%'], cons: ['防御 -25%'], mods: { bulletReflect: 1, aoe: 0.20, defPct: -0.25 } }
 };
 for (const k in RELICS) {
     const r = RELICS[k];
@@ -635,7 +725,7 @@ function statMod(p, key) {
     const tk = TREE_STAT_KEY[key];
     return relicMod(p, key) + ((p.tmods && p.tmods[key]) || 0) + (schoolState(p).mods[key] || 0) + ((tk && p.tree && p.tree[tk]) || 0);
 }
-const BASE_RELIC_TYPES = ['thunder_ring', 'vampire_fang', 'chrono_watch', 'reaper_cloak', 'alchemist_stone', 'warmog_vest', 'glass_crown', 'berserk_mask', 'frost_heart', 'gold_idol', 'storm_boots', 'blood_chalice'];
+const BASE_RELIC_TYPES = ['thunder_ring', 'vampire_fang', 'chrono_watch', 'reaper_cloak', 'alchemist_stone', 'warmog_vest', 'glass_crown', 'berserk_mask', 'frost_heart', 'gold_idol', 'storm_boots', 'blood_chalice', 'phoenix_feather', 'void_mirror'];
 function getAvailableRelicTypes() {
     const list = BASE_RELIC_TYPES.slice();
     if (typeof Metagrowth !== 'undefined') {
@@ -986,7 +1076,7 @@ const Store = {
 const Immersive = {
     // 主输入是手指的设备(手机/平板);带触摸屏的笔记本主输入仍是鼠标,不强制全屏
     isTouch: !!(window.matchMedia && matchMedia('(pointer: coarse)').matches),
-    get enabled() { return this.isTouch && Store.get('blockrun.immersive', true); },
+    get enabled() { return this.isTouch && Store.get('blockrun.immersive', false); },
     setEnabled(on) {
         Store.set('blockrun.immersive', !!on);
         if (!on) this.exit();
@@ -1026,6 +1116,47 @@ const Immersive = {
     }
 };
 
+// ── 移动端触觉震动反馈系统 (Haptics): 独立持久化开关 + 分级战斗脉冲 ──
+const Haptics = {
+    PATTERNS: {
+        light: 10,
+        hit: 12,
+        skill: 14,
+        crit: [15, 20, 15],
+        dodge: [12, 16, 14],
+        combo: [16, 22, 20],
+        ult: [45, 30, 60],
+        boss: [40, 35, 65],
+        hurt: [45, 25, 45],
+        heartbeat: 15,
+        ko: [60, 40, 120]
+    },
+    lastPulse: null,
+    get enabled() { return Store.get('blockrun.haptics', true); },
+    setEnabled(on) {
+        Store.set('blockrun.haptics', !!on);
+        if (!on && typeof navigator !== 'undefined' && typeof navigator.vibrate === 'function') {
+            try { navigator.vibrate(0); } catch (_) { /* 忽略 */ }
+        }
+    },
+    toggle() {
+        const next = !this.enabled;
+        this.setEnabled(next);
+        if (next) this.pulse('light');
+        return next;
+    },
+    pulse(pattern = 'light') {
+        if (!this.enabled) return false;
+        const p = typeof pattern === 'string' ? (this.PATTERNS[pattern] || 15) : pattern;
+        this.lastPulse = { kind: typeof pattern === 'string' ? pattern : 'custom', pattern: p, at: Date.now() };
+        if (typeof navigator !== 'undefined' && typeof navigator.vibrate === 'function') {
+            try { return !!navigator.vibrate(p); } catch (_) { return false; }
+        }
+        return true;
+    }
+};
+if (typeof window !== 'undefined') window.Haptics = Haptics;
+
 // ── 局外成长:成就 + 外观解锁(localStorage `blockrun.profile`,与 blockrun.best 并列) ──
 // run = 本局实时数据 { score, time, level, bossRepels, cls };profile 为跨局累计
 const ACHIEVEMENTS = [
@@ -1052,7 +1183,10 @@ const ACHIEVEMENTS = [
     { id: 'comboMaster',     icon: '🔥', name: '百连绝杀', desc: '单局达成 100 连杀',         check: r => (r.maxCombo || 0) >= 100 },
     // 传奇试炼多维挑战成就
     { id: 'trialFirst',      icon: '⚡', name: '星界破界者', desc: '单局内成功通关任意 1 次传奇试炼', check: r => (r.trialsCleared || 0) >= 1 },
-    { id: 'trialMaster',     icon: '👑', name: '四圣试炼王', desc: '单局内成功通关至少 2 次传奇试炼', check: r => (r.trialsCleared || 0) >= 2 }
+    { id: 'trialMaster',     icon: '👑', name: '四圣试炼王', desc: '单局内成功通关至少 2 次传奇试炼', check: r => (r.trialsCleared || 0) >= 2 },
+    // 神铸与棱镜猎杀新成就
+    { id: 'forgeMaster',     icon: '⚒', name: '神匠降临',   desc: '单局内完成远古铁砧神铸或升阶Lv2觉醒装备', check: r => (r.forgesCompleted || 0) >= 1 || (r.gearAwakened || 0) >= 1 },
+    { id: 'prismBreaker',    icon: '💎', name: '破棱者',     desc: '单局内击破至少 3 只棱镜哨卫',         check: r => (r.prismKills || 0) >= 3 }
 ];
 
 // ══════════════════════════════════════════════════════════════════
@@ -1127,10 +1261,23 @@ const Progress = {
             starCores: p.starCores !== undefined ? p.starCores : 0,
             classesPlayed: p.classesPlayed || {},
             achievements: p.achievements || {},
+            newAchievements: p.newAchievements || {},
+            seenAchievements: p.seenAchievements || {},
             skin: p.skin || 'jade'
         };
     },
     save(p) { Store.set(this.KEY, p); },
+    isNewlyUnlocked(achId, p) {
+        const prof = p || this.load();
+        if (!prof || !prof.achievements || !prof.achievements[achId]) return false;
+        if (prof.newAchievements && prof.newAchievements[achId]) return true;
+        if (typeof window !== 'undefined' && window.game && Array.isArray(window.game.runUnlocked) &&
+            window.game.runUnlocked.some(u => u && u.id === achId)) {
+            return true;
+        }
+        if (!prof.seenAchievements || !prof.seenAchievements[achId]) return true;
+        return false;
+    },
     skinUnlocked(skin, p) {
         if (!skin.need) return true;
         if (skin.need.totalScore != null) return p.totalScore >= skin.need.totalScore;
@@ -1152,10 +1299,18 @@ const Progress = {
     // 检查本局数据能新解锁哪些成就,写入存档并返回新成就列表
     checkAchievements(run) {
         const p = this.load();
+        if (!p.newAchievements) p.newAchievements = {};
         const fresh = [];
+        const now = Date.now();
         for (const a of ACHIEVEMENTS) {
             if (p.achievements[a.id]) continue;
-            try { if (a.check(run, p)) { p.achievements[a.id] = Date.now(); fresh.push(a); } } catch (e) { /* 忽略 */ }
+            try {
+                if (a.check(run, p)) {
+                    p.achievements[a.id] = now;
+                    p.newAchievements[a.id] = now;
+                    fresh.push(a);
+                }
+            } catch (e) { /* 忽略 */ }
         }
         if (fresh.length) this.save(p);
         return fresh;
@@ -1299,6 +1454,28 @@ const Metagrowth = {
         const state = {};
         for (const k of Object.keys(this.BRANCHES)) state[k] = false;
         this.save(state);
+    },
+
+    // 星图点亮进度汇总
+    getProgressSummary() {
+        const state = this.load();
+        const keys = Object.keys(this.BRANCHES);
+        const unlocked = keys.filter(k => !!state[k]).length;
+        return { unlocked, total: keys.length, available: this.getAvailableStarCores() };
+    },
+
+    // 按优先级推荐并一键点亮下一个可负担的分支节点
+    unlockRecommended() {
+        const priority = ['class_variant', 'relic_astral', 'abyss_beacon', 'legend_contract', 'mutation_overload', 'relic_resonance'];
+        const state = this.load();
+        const avail = this.getAvailableStarCores();
+        for (const k of priority) {
+            const def = this.BRANCHES[k];
+            if (def && !state[k] && avail >= def.cost) {
+                return this.unlockNode(k) ? k : null;
+            }
+        }
+        return null;
     }
 };
 
@@ -1391,6 +1568,26 @@ const ExpeditionContract = {
             target: 25,
             rewardDust: 15,
             check: (game) => ((game.runSkillCastCount || 0) >= 25)
+        },
+        gear_awakener: {
+            id: 'gear_awakener',
+            name: '神装匠师',
+            icon: '⚒',
+            type: 'build',
+            desc: '通过远古铁砧或拾取同款装备完成 1 次Lv2神装觉醒',
+            target: 1,
+            rewardDust: 18,
+            check: (game) => ((game.gearAwakenedCount || 0) >= 1 || (game.forgesCompletedCount || 0) >= 1)
+        },
+        prism_hunter: {
+            id: 'prism_hunter',
+            name: '破棱猎手',
+            icon: '💎',
+            type: 'combat',
+            desc: '击破 2 只棱镜哨卫或完成 1 次远古铁砧神铸',
+            target: 2,
+            rewardDust: 18,
+            check: (game) => ((game.prismKills || 0) >= 2 || (game.forgesCompletedCount || 0) >= 1)
         }
     },
 
@@ -1967,6 +2164,14 @@ class Game {
         // 按键布局:'default' 左摇杆右技能 / 'swap' 右摇杆左技能(左右对调)
         this.layoutMode = Store.get('blockrun.layout', 'default') === 'swap' ? 'swap' : 'default';
         this.showDmgNums = Store.get('blockrun.dmgNums', true) !== false; // 伤害数字开关(暂停面板里切换)
+        // 战场动态迷雾: 浓度级别 'off'(关闭) | 'light'(轻微 0.4) | 'normal'(标准 0.72) | 'dense'(浓郁 0.92)
+        const savedFog = Store.get('blockrun.fog', 'normal');
+        this.fogDensity = ['off', 'light', 'normal', 'dense'].includes(savedFog) ? savedFog : 'normal';
+        this._initFog();
+        // 🏰 随机地下城与迷宫系统: 'dungeon'(随机地牢) | 'maze'(秘境迷宫) | 'off'(开放战场)
+        const savedDungeon = Store.get('blockrun.dungeon', 'dungeon');
+        this.dungeonMode = ['off', 'dungeon', 'maze'].includes(savedDungeon) ? savedDungeon : 'dungeon';
+        this._initDungeon();
         // 拖拽瞄准状态:hcx/hcy 为按钮中心(HUD 坐标),sx/sy 为按下点(CSS px)
         this.aim = { active: false, id: null, skill: null, hcx: 0, hcy: 0, sx: 0, sy: 0, ox: 0, oy: 0, dx: 0, dy: 0, armed: false, wasArmed: false, cancel: false };
         this.freezeOverlay = null; // 全屏冰封特效数据
@@ -2466,6 +2671,7 @@ class Game {
         this.height = 600;
         SpriteCache.setScale(s, dpr);
         this._bgLayers = null; // 背景缓存随缩放重建
+        this._screenBgCanvas = null;
     }
 
     // shadowBlur 以设备像素计,不受 transform 影响;乘上 dpr 让光晕在高分屏下观感不变
@@ -2496,10 +2702,20 @@ class Game {
 
             // 在房间码输入框里打字时不触发静音
             if ((e.key === 'm' || e.key === 'M') && e.target.tagName !== 'INPUT') Sound.toggleMute();
-            // 构筑面板:B / T 开关,Esc 关闭;打开期间不响应其它游戏按键
+            // 构筑面板:B / T 开关,Esc 关闭;1-4 快速切换分页;打开期间不响应其它游戏按键
             const buildKey = e.key === 'b' || e.key === 'B' || e.key === 't' || e.key === 'T';
             if (this.showingBuild) {
-                if ((buildKey || e.key === 'Escape' || e.key === 'c' || e.key === 'C') && !e.repeat) this.closeBuild();
+                if ((buildKey || e.key === 'Escape' || e.key === 'c' || e.key === 'C') && !e.repeat) {
+                    this.closeBuild();
+                    return;
+                }
+                if (!e.repeat && e.target.tagName !== 'INPUT') {
+                    const tabMap = { '1': 'stats', '2': 'tree', '3': 'gems', '4': 'relics' };
+                    if (tabMap[e.key]) {
+                        this._buildShowTab(tabMap[e.key]);
+                        return;
+                    }
+                }
                 return;
             }
             if (this.showingPotentialMenu && !this.showingClassSelection && !e.repeat) {
@@ -2593,12 +2809,14 @@ class Game {
         };
         const tryStartJoy = (clientX, clientY, id) => {
             if (this.controlMode !== 'joystick' || this.joy.active) return false;
-            // 摇杆分区:根据 layoutMode 决定摇杆生成区域
-            // 默认模式:左侧 60% 生成摇杆; 对调模式:右侧 60% 生成摇杆
-            if (this.layoutMode === 'swap') {
-                if (clientX <= window.innerWidth * 0.4) return false;
-            } else {
-                if (clientX >= window.innerWidth * 0.6) return false;
+            // 摇杆分区:横屏根据 layoutMode 左右分区;竖屏(高>宽)支持单手全屏空白处呼出浮动摇杆
+            const isPortrait = window.innerHeight > window.innerWidth;
+            if (!isPortrait) {
+                if (this.layoutMode === 'swap') {
+                    if (clientX <= window.innerWidth * 0.4) return false;
+                } else {
+                    if (clientX >= window.innerWidth * 0.6) return false;
+                }
             }
             if (!this.isRunning || this.isPaused || this.showingPotentialMenu || this.showingClassSelection) return false;
             const { x, y } = toCanvas(clientX, clientY);
@@ -2707,7 +2925,14 @@ class Game {
             e.preventDefault();
             for (const t of e.changedTouches) {
                 if (this.joy.active && this.joy.id === t.identifier) moveJoy(t.clientX, t.clientY);
-                if (this.aim.active && this.aim.id === t.identifier) moveAim(t.clientX, t.clientY);
+                else if (this.aim.active && this.aim.id === t.identifier) moveAim(t.clientX, t.clientY);
+                else if (this.controlMode === 'tap' && this.isRunning && !this.isPaused && !this.showingPotentialMenu && !this.showingClassSelection) {
+                    const { x, y } = toCanvas(t.clientX, t.clientY);
+                    const hit = (b) => b && x >= b.x && x <= b.x + b.w && y >= b.y && y <= b.y + b.h;
+                    if (!hit(this.muteButton) && !hit(this.pauseButton) && !this.skillButtons.some(hit)) {
+                        this.setPlayerTarget(x, y);
+                    }
+                }
             }
         }, { passive: false });
 
@@ -2811,10 +3036,21 @@ class Game {
         this.player.moving = true;
     }
     
+    _syncBodyState() {
+        if (typeof document === 'undefined' || !document.body || !document.body.dataset) return;
+        if (!this.isRunning) {
+            const goEl = document.getElementById('gameOver');
+            document.body.dataset.state = (goEl && goEl.style.display === 'flex') ? 'gameover' : 'title';
+        } else {
+            document.body.dataset.state = this.isPaused ? 'paused' : 'playing';
+        }
+    }
+
     startGame() {
         if (!this.isRunning) {
             this.isRunning = true;
             this.isPaused = false;
+            this._syncBodyState();
             if (this.diffMode !== 'abyss') {
                 this.diffMode = this.diffPref;
             }
@@ -2830,7 +3066,9 @@ class Game {
                     // 顿帧(hit-stop):单人/客机冻结模拟,画面照常绘制(含震屏);
                     // 联机主机的模拟不能停(会卡住所有客机),改为冻结画面,结束后自然追上
                     if (this.hitStop > 0) {
-                        this.hitStop -= elapsed / 1000;
+                        const dtHit = elapsed / 1000;
+                        this.hitStop -= dtHit;
+                        this._updateKillImpact(dtHit);
                         if (this.mpMode !== 'host') {
                             this._frameAccum = 0;
                             this.render();
@@ -2894,6 +3132,7 @@ class Game {
         if (this.isRunning) {
             this.isPaused = !this.isPaused;
             this._pauseQuitArmed = false;
+            this._syncBodyState();
         }
     }
     
@@ -2935,6 +3174,9 @@ class Game {
         this.showingClassSelection = false;
         this.particles = [];
         this._locate = null; // 新一局重新触发「我在这」定位脉冲
+        this._resetFog();
+        this._generateDungeon();
+        if (this.canvas && this.canvas.style) this.canvas.style.transform = '';
         this.pendingActions = [];
         this._uiTimer = 0;
         this.buttons = [];
@@ -2979,6 +3221,7 @@ class Game {
         this._sfxPrev = null;
         this._mpGuestLastLevel = 1;
         document.getElementById('gameOver').style.display = 'none';
+        this._syncBodyState();
         this.updateUI();
         this.render();
         // 单人模式点击重新开始直接无缝开局,彻底解决卡在黑屏死锁的问题
@@ -3176,7 +3419,7 @@ class Game {
                     (e.stunTimer > 0 ? 1 : 0) | (e._mpHit ? 2 : 0) | (e.elite ? 4 : 0) | (e.poison > 0 ? 8 : 0) | (e.burnT > 0 ? 16 : 0) | ((affixIdx & 7) << 5)];
                 e._mpHit = false;
                 if (e.type === 'gunner') row.push(q2(e.aimAngle || 0), q2(e.shootTimer || 0), q2(e.shootInterval || 1));
-                else if (e.type === 'burrower') row.push(e.state, q2(e.stateTimer), q2(e.stateDur), q1(e.lockX), q1(e.lockY));
+                else if (e.type === 'burrower' || e.type === 'prism') row.push(e.state, q2(e.stateTimer), q2(e.stateDur), q1(e.lockX), q1(e.lockY));
                 else if (e.type === 'dasher' || e.type === 'bomber' || e.type === 'healer') row.push(e.state, q2(e.stateTimer), q2(e.stateDur), q2(e.dashAngle),
                     q1(e.type === 'dasher' ? e.dashDist : e.type === 'bomber' ? e.blastRadius : e.healRadius));
                 return row;
@@ -3195,9 +3438,10 @@ class Game {
             ev: this.event ? [EVENT_TYPES.indexOf(this.event.type), q1(this.event.timer), this.event.dur, this.event.left || 0,
                 ...(this.event.type === 'altar' ? [q1(this.event.ax), q1(this.event.ay), q2(this.event.charge)] :
                     this.event.type === 'void_rift' ? [q1(this.event.rx), q1(this.event.ry), q2(this.event.charge), this.event.activated ? 1 : 0] :
-                    this.event.type === 'greed' ? [q1(this.event.gx), q1(this.event.gy), q2(this.event.charge), this.event.contract, this.event.signed ? 1 : 0] : [])] : 0,
+                    this.event.type === 'greed' ? [q1(this.event.gx), q1(this.event.gy), q2(this.event.charge), this.event.contract, this.event.signed ? 1 : 0] :
+                    this.event.type === 'forge' ? [q1(this.event.fx), q1(this.event.fy), q2(this.event.charge), this.event.forged ? 1 : 0] : [])] : 0,
             bt: this.bossState === 'idle' ? q1(this.bossTimer) : 0,
-            mt: this.meteors.map(m => [m.id, q1(m.x), q1(m.y), q1(m.r), q2(m.t), m.dur, m.v ? 1 : 0]),
+            mt: this.meteors.map(m => [m.id, q1(m.x), q1(m.y), q1(m.r), q2(m.t), m.dur, m.v || 0]),
             tp: (this.tacticalPings || []).map(t => [t.id, q1(t.x), q1(t.y), t.type, q1(t.timer)]),
             tx: (this.toxicPuddles || []).map(p => [q1(p.x), q1(p.y), q1(p.radius), q1(p.timer)]),
             hz: (this.hazards || []).map(h => [h.id, q1(h.x), q1(h.y), h.type, h.hp, q1(h.timer || 0)]),
@@ -3356,8 +3600,8 @@ class Game {
                 if (r[6] & 2) e.flash();
                 if (r.length > 7) {
                     if (e.type === 'gunner') { e.aimAngle = r[7]; e.shootTimer = r[8]; e.shootInterval = r[9]; }
-                    else if (e.type === 'burrower') {
-                        if (!isNew && e.state === 1 && r[7] === 2) Sound.play('meteor'); // 破土
+                    else if (e.type === 'burrower' || e.type === 'prism') {
+                        if (!isNew && e.type === 'burrower' && e.state === 1 && r[7] === 2) Sound.play('meteor'); // 破土
                         e.state = r[7]; e.stateTimer = r[8]; e.stateDur = r[9]; e.lockX = r[10]; e.lockY = r[11];
                     } else {
                         // 冲刺 / 点燃引信的音效按状态边沿在本机播放
@@ -3425,6 +3669,11 @@ class Game {
                 this.event.charge = evRow[6] || 0;
                 this.event.contract = evRow[7] || 'blood';
                 this.event.signed = !!evRow[8];
+            } else if (evType === 'forge') {
+                this.event.fx = evRow[4];
+                this.event.fy = evRow[5];
+                this.event.charge = evRow[6] || 0;
+                this.event.forged = !!evRow[7];
             }
         } else {
             this.event = null;
@@ -4135,7 +4384,8 @@ class Game {
         const contractNames = {
             blood: '【血契】受伤+30% 收益翻倍',
             gale:  '【狂风契】敌速+25% 暴伤大增',
-            death: '【死誓契】禁回血 击退+2潜能'
+            death: '【死誓契】禁回血 击退+2潜能',
+            overload: '【超载契】受伤+25% 冷却-30% 范围+25%'
         };
         const name = contractNames[ev.contract] || '贪婪契约';
         ctx.font = 'bold 11px Arial';
@@ -4147,6 +4397,54 @@ class Game {
         ctx.fillStyle = c > 0 ? '#ffd54f' : 'rgba(255,255,255,0.7)';
         ctx.fillText(c > 0 ? `引导签订中 ${Math.round(c * 100)}%` : '靠近站立签订', 0, 40);
 
+        ctx.restore();
+    }
+
+    // 远古铁砧:炽热熔炉底座 + 悬浮锻锤 + 靠近引导进度弧
+    _renderForge(ctx) {
+        const ev = this.event;
+        if (!ev || ev.type !== 'forge' || ev.fx === undefined) return;
+        const x = ev.fx, y = ev.fy, t = this.bgTime;
+        const pulse = 0.5 + 0.5 * Math.sin(t * 4);
+        ctx.save();
+        const R = 80;
+        const c = ev.charge || 0;
+        ctx.fillStyle = `rgba(255, 145, 0, ${0.12 + 0.14 * c})`;
+        ctx.beginPath();
+        ctx.arc(x, y, R, 0, Math.PI * 2);
+        ctx.fill();
+        ctx.strokeStyle = `rgba(255, 171, 64, ${0.5 + 0.35 * pulse})`;
+        ctx.lineWidth = 2.2;
+        ctx.setLineDash([8, 6]);
+        ctx.lineDashOffset = -t * 20;
+        ctx.beginPath();
+        ctx.arc(x, y, R, 0, Math.PI * 2);
+        ctx.stroke();
+        ctx.setLineDash([]);
+        if (c > 0) {
+            ctx.strokeStyle = '#ffd54f';
+            ctx.lineWidth = 4;
+            ctx.lineCap = 'round';
+            ctx.beginPath();
+            ctx.arc(x, y, R - 4, -Math.PI / 2, -Math.PI / 2 + Math.PI * 2 * c);
+            ctx.stroke();
+        }
+        const bob = Math.sin(t * 3.2) * 4;
+        ctx.translate(x, y + bob);
+        ctx.shadowBlur = 16 + 8 * pulse;
+        ctx.shadowColor = '#ff9100';
+        ctx.font = '24px Arial';
+        ctx.textAlign = 'center';
+        ctx.textBaseline = 'middle';
+        ctx.fillText('⚒', 0, 0);
+        ctx.font = 'bold 11px Arial';
+        ctx.fillStyle = '#ffe082';
+        ctx.shadowBlur = 4;
+        ctx.shadowColor = '#000000';
+        ctx.fillText('远古神铸 · 觉醒Lv2神装', 0, 26);
+        ctx.font = '10px Arial';
+        ctx.fillStyle = c > 0 ? '#ffcc80' : 'rgba(255,255,255,0.75)';
+        ctx.fillText(c > 0 ? `引导锻造中 ${Math.round(c * 100)}%` : '靠近站立引导锻造', 0, 40);
         ctx.restore();
     }
 
@@ -4475,9 +4773,11 @@ class Game {
         const tr = this.activeTrial;
         const def = tr.def;
         const ctx = this.ctx;
-        const cx = this._hud ? this._hud.w / 2 : this.width / 2;
-        const topY = 48;
-        const boxW = 280, boxH = 46;
+        const hudW = this._hud ? this._hud.w : this.width;
+        const cx = hudW / 2;
+        const isNarrow = hudW < 480;
+        const topY = isNarrow ? Math.max(72, this._topHudBottom() + 4) : 48;
+        const boxW = Math.min(280, hudW - 32), boxH = 46;
 
         ctx.save();
         ctx.translate(cx, topY);
@@ -4702,7 +5002,13 @@ class Game {
     // 统计面板下方的限时增益条:装备在上,祭坛祝福在下
     _renderGearHUD() {
         const p = this.player;
+        const hudW = (this._hud && this._hud.w) ? this._hud.w : this.width;
+        const isNarrow = hudW < 480;
+        const hasContract = !!(this.expeditionSession && this.expeditionSession.selectedId);
+        const isBossActive = this.bossState === 'warning' || this.bossState === 'active';
         let y = 72;
+        if (hasContract && isBossActive) y += 30;
+        if (isNarrow && this.bossState === 'active' && this.boss) y = Math.max(y, (hasContract ? 104 : 72) + 52);
         const g = p.gear;
         if (g && GEARS[g.type]) {
             const def = GEARS[g.type];
@@ -4717,7 +5023,7 @@ class Game {
             y += 34;
         }
         if (p.greedContract) {
-            const names = { blood: '血契', gale: '狂风契', death: '死誓契' };
+            const names = { blood: '血契', gale: '狂风契', death: '死誓契', overload: '超载契' };
             const desc = names[p.greedContract] || '契约';
             const ctx = this.ctx;
             const x = (this._hud && this._hud.padLeft) ? this._hud.padLeft : 10;
@@ -5002,10 +5308,11 @@ class Game {
         ctx.fillRect(-W, -H, W * 3, H * 3);
         // 概况行数会随本局内容变多(精英/遗物/致命一击),面板按行数排版:行多时改三列,放不下再压缩按钮
         const rows = this._runSummaryRows();
+        const isPortraitMenu = W < H;
         const cols = rows.length > 6 && W >= 380 ? 3 : 2;
-        const pw = Math.min(cols === 3 ? 360 : 300, W - 32);
-        const rowH = 32, rowsH = Math.ceil(rows.length / cols) * rowH;
-        let bh = 36, gap = 8;
+        const pw = Math.min(isPortraitMenu ? 420 : (cols === 3 ? 360 : 300), W - 32);
+        const rowH = isPortraitMenu ? 36 : 32, rowsH = Math.ceil(rows.length / cols) * rowH;
+        let bh = isPortraitMenu ? 42 : 36, gap = isPortraitMenu ? 9 : 8;
         const fixedH = 76 + rowsH + 44 + 14;
         if (fixedH + 4 * (bh + gap) > H - 16) { bh = 30; gap = 6; }
         const ph = fixedH + 4 * (bh + gap);
@@ -5051,18 +5358,25 @@ class Game {
         let by = py + fixedH;
         this.drawButton(bx, by, bw, bh, '#00b0ff', '继续游戏', 'resume');
         by += bh + gap;
-        const hw = (bw - gap) / 2;
-        this.drawButton(bx, by, hw, bh, '#546e7a', Sound.muted ? '🔇 声音:关' : '🔊 声音:开', 'mute');
-        this.drawButton(bx + hw + gap, by, hw, bh, '#546e7a', Music.enabled ? '🎵 音乐:开' : '🎵 音乐:关', 'music');
+        const tw = (bw - gap * 2) / 3;
+        this.drawButton(bx, by, tw, bh, '#546e7a', Sound.muted ? '🔇 声音:关' : '🔊 声音:开', 'mute');
+        this.drawButton(bx + tw + gap, by, tw, bh, '#546e7a', Music.enabled ? '🎵 音乐:开' : '🎵 音乐:关', 'music');
+        const dngLabels = { dungeon: '🏰 地形:地牢', maze: '🏰 地形:迷宫', off: '🏰 地形:空旷' };
+        const dngColors = { dungeon: '#4e342e', maze: '#4a148c', off: '#455a64' };
+        this.drawButton(bx + (tw + gap) * 2, by, tw, bh, dngColors[this.dungeonMode] || '#4e342e', dngLabels[this.dungeonMode] || '🏰 地形:地牢', 'dungeon');
         by += bh + gap;
-        this.drawButton(bx, by, hw, bh, '#546e7a', this.showDmgNums ? '数字:开' : '数字:关', 'dmgNums');
+        this.drawButton(bx, by, tw, bh, '#546e7a', this.showDmgNums ? '数字:开' : '数字:关', 'dmgNums');
+        this.drawButton(bx + tw + gap, by, tw, bh, Haptics.enabled ? '#00838f' : '#546e7a', Haptics.enabled ? '震动:开' : '震动:关', 'haptics');
+        const fogLabels = { off: '迷雾:关', light: '迷雾:轻', normal: '迷雾:标', dense: '迷雾:浓' };
+        const fogColors = { off: '#455a64', light: '#37474f', normal: '#263238', dense: '#1a237e' };
+        this.drawButton(bx + (tw + gap) * 2, by, tw, bh, fogColors[this.fogDensity] || '#546e7a', fogLabels[this.fogDensity] || '迷雾:标', 'fog');
+        by += bh + gap;
         const isSwap = this.layoutMode === 'swap';
-        this.drawButton(bx + hw + gap, by, hw, bh, isSwap ? '#3949ab' : '#546e7a', isSwap ? '🔄 布局:对调' : '🕹 布局:默认', 'layout');
-        by += bh + gap;
+        this.drawButton(bx, by, tw, bh, isSwap ? '#3949ab' : '#546e7a', isSwap ? '🔄 布局:对调' : '🕹 布局:默认', 'layout');
         const isFs = !!(document.fullscreenElement || document.webkitFullscreenElement);
-        this.drawButton(bx, by, hw, bh, isFs ? '#00897b' : '#546e7a', isFs ? '⛶ 全屏:开' : '⛶ 全屏:关', 'fullscreen');
+        this.drawButton(bx + tw + gap, by, tw, bh, isFs ? '#00897b' : '#546e7a', isFs ? '⛶ 全屏:开' : '⛶ 全屏:关', 'fullscreen');
         const quitText = this.mpMode === 'guest' ? '离开房间' : '结束本局';
-        this.drawButton(bx + hw + gap, by, hw, bh, this._pauseQuitArmed ? '#ff1744' : '#8d3b3b',
+        this.drawButton(bx + (tw + gap) * 2, by, tw, bh, this._pauseQuitArmed ? '#ff1744' : '#8d3b3b',
                         this._pauseQuitArmed ? `确认${quitText}` : quitText, 'quit');
     }
 
@@ -5078,7 +5392,10 @@ class Game {
             if (btn.choice === 'resume') this.togglePause();
             else if (btn.choice === 'mute') Sound.toggleMute();
             else if (btn.choice === 'music') Music.toggle();
+            else if (btn.choice === 'dungeon') this.cycleDungeonMode();
             else if (btn.choice === 'dmgNums') this.toggleDmgNums();
+            else if (btn.choice === 'haptics') Haptics.toggle();
+            else if (btn.choice === 'fog') this.cycleFogDensity();
             else if (btn.choice === 'layout') this.setLayoutMode(this.layoutMode === 'swap' ? 'default' : 'swap');
             else if (btn.choice === 'fullscreen') this.toggleFullscreen();
             else if (btn.choice === 'quit') {
@@ -5096,6 +5413,9 @@ class Game {
         Sound.setMuffle(false);
         this._pauseQuitArmed = false;
         this.isPaused = false;
+        this.killShake = null;
+        this.killSummary = null;
+        if (this.canvas && this.canvas.style) this.canvas.style.transform = '';
         if (this.mpMode === 'guest') {
             this.enemies = [];
             this.items = [];
@@ -5110,6 +5430,7 @@ class Game {
 
     update() {
         this._critCountFrame = 0;
+        this._updateKillImpact(DT);
         // ── Guest 模式：仅应用 host 状态，处理本地输入 ──
         if (this.mpMode === 'guest') {
             if (!this.isPaused) {
@@ -5119,6 +5440,7 @@ class Game {
                     this.mpStateBuffer = null;
                     // 击退魔王的 +1 潜能是每人一份:房主在 _repelBoss 里拿,guest 按状态边沿自己加
                     if (prevBoss === 'active' && this.bossState === 'retreating') {
+                        this._triggerKillImpact(this.boss, true);
                         this.player.potentialPoints++;
                         if (!this.showingClassSelection) this.showPotentialMenu();
                     }
@@ -5149,6 +5471,7 @@ class Game {
                 this.updateEffects();
                 this.updateParticles();
                 this._updateDmgNums();
+                this._updateFog(DT);
                 this.bgTime += DT;
                 this._uiTimer += DT;
                 if (this._uiTimer >= 0.1) { this.updateUI(); this._uiTimer = 0; }
@@ -5178,6 +5501,7 @@ class Game {
             // 计时器随暂停一起停（按帧推进，不再用 setTimeout）
             if (this.enemyFreezeTimer > 0) this.enemyFreezeTimer -= DT;
             this.updateInvincible();
+            this._updateFog(DT);
 
             this._tickAutoAttack();
             this._tickPlayerResources();
@@ -5208,6 +5532,7 @@ class Game {
             this._updateEvents();
             this._updateTacticalPings();
             this._updateHazards();
+            this._updateDungeon(DT);
             this._updateAbyssMode();
             this._updateTrialObelisk();
             this._updateActiveTrial();
@@ -5307,6 +5632,7 @@ class Game {
                  bossRepels: this.runBossRepels || 0, cls: this.player.class, dodges: this.player.dodgeCount || 0,
                  treasures: this.treasureKills || 0, elites: this.eliteKills || 0, diff: this.diffMode,
                  affixElites: this.affixEliteKills || 0, gearAwakened: this.gearAwakenedCount || 0, voidRifts: this.voidRiftClearedCount || 0,
+                 forgesCompleted: this.forgesCompletedCount || 0, prismKills: this.prismKills || 0,
                  abyssFloor: this.abyssFloor || 1, resonanceCount: resCount, maxCombo: Math.max(this.player.maxCombo || 0, this._runMaxCombo || 0),
                  contractCompleted: contractDone, contractId: this.expeditionSession ? this.expeditionSession.selectedId : null,
                  trialsCleared: this.trialsCleared || 0,
@@ -5354,10 +5680,15 @@ class Game {
     // 解锁提示:顶部居中依次下滑出现,3 秒后淡出
     // 顶部居中 HUD(事件横幅 / 魔王将至小牌 / 魔王血条)当前占到的底边,HUD 坐标;成就提示排在它下面
     _topHudBottom() {
-        if (this.bossState === 'active' && this.boss) return 74;
-        let y = 10;
+        const hudW = (this._hud && this._hud.w) ? this._hud.w : this.width;
+        const isNarrow = hudW < 480;
+        const hasContract = !!(this.expeditionSession && this.expeditionSession.selectedId);
+        if (this.bossState === 'active' && this.boss) {
+            return isNarrow ? ((hasContract ? 104 : 72) + 52) : 74;
+        }
+        let y = isNarrow ? 70 : 10;
         const eventShown = this.event && this.bossState !== 'warning';
-        if (eventShown) y = this._eventDescShown() ? 66 : 46;
+        if (eventShown) y = (isNarrow ? 72 : 10) + (this._eventDescShown() ? 56 : 36);
         if (this.bossState === 'idle' && this.bossTimer > 0 && this.bossTimer <= 15) y += 28;
         return y;
     }
@@ -5496,20 +5827,9 @@ class Game {
         this.hitStop = Math.max(this.hitStop || 0, sec);
     }
 
-    // Web Haptics 2.0: 动作游戏级分级微触觉震动系统(支持模式名与脉冲数组)
+    // Web Haptics 2.0: 动作游戏级分级微触觉震动系统(支持模式名与脉冲数组,由 Haptics 统一管控)
     _vibrate(pattern) {
-        if (Sound.muted || typeof navigator === 'undefined' || !navigator.vibrate) return;
-        const patterns = {
-            light: 10,
-            hit: 12,
-            crit: [15, 20, 15],
-            dodge: [12, 15, 12],
-            ult: [45, 30, 60],
-            heartbeat: 15,
-            ko: [50, 40, 90]
-        };
-        const p = typeof pattern === 'string' ? (patterns[pattern] || 15) : pattern;
-        try { navigator.vibrate(p); } catch (_) { /* 忽略无手势异常 */ }
+        return Haptics.pulse(pattern);
     }
 
     _onLocalHurt(died) {
@@ -6333,7 +6653,8 @@ class Game {
     _aoe(r, slot) {
         const p = this.player;
         if (slot === undefined) slot = this._ctx ? this._ctx.slot : null;
-        return r * (1 + ((p.tree && p.tree.aoe) || 0) + this._gv(p, slot, 'aoe') + statMod(p, 'aoe'));
+        const overloadAoe = (p && p.greedContract === 'overload') ? 0.25 : 0;
+        return r * (1 + ((p.tree && p.tree.aoe) || 0) + this._gv(p, slot, 'aoe') + statMod(p, 'aoe') + overloadAoe);
     }
 
     // 普攻速度倍率:天赋攻速 + 普攻位「快速冷却」
@@ -6476,9 +6797,11 @@ class Game {
         if (!(t.burnT > 0)) return false;
         t.burnT -= DT;
         const o = t.burnOwner;
-        const dmg = t.burn * DT * (1 + ((o && o.tree && o.tree.dot) || 0));
+        const dotBonus = ((o && o.tree && o.tree.dot) || 0) + statMod(o || this.player, 'dotMult');
+        const dmg = t.burn * DT * (1 + dotBonus);
         this._recDmg(o || this.player, 'dot', Math.min(dmg, t.currentHealth));
         t.currentHealth = Math.max(0, t.currentHealth - dmg);
+        t._totalDmgTaken = (t._totalDmgTaken || 0) + dmg;
         t._dnDot = (t._dnDot || 0) + dmg;
         if (t === this.boss) this.bossDamageDealt += dmg;
         if (t.burnT <= 0) t.burn = 0;
@@ -7258,7 +7581,7 @@ class Game {
                 laser: b.tier >= 2 ? (dist > 140 ? 2.5 : 1.2) : 0,
                 summon: b.tier >= 3 && this.enemies.length < 30 ? 1.5 : 0,
                 cross: b.phase2 ? (dist > 100 ? 3 : 1.5) : 0,
-                blink: 0, rift: 0
+                blink: 0, rift: 0, glacier: 0
             };
             // 虚空形态:冲撞换成闪现(远了更爱闪),新增虚空坍缩;不召唤爪牙
             if (b.isVoid) {
@@ -7266,6 +7589,12 @@ class Game {
                 w.charge = 0;
                 w.summon = 0;
                 w.rift = b.enraged ? 2.6 : 2;
+            } else if (b.isFrost) {
+                // 冰霜泰坦:掌握「冰河世纪」(glacier: 极寒新星+八方冰枪+寒霜冰爆区),不召唤普通爪牙
+                w.glacier = b.enraged ? 3.2 : 2.6;
+                w.ring = 2.2;
+                w.slam = dist < 190 ? 2.5 : 0.8;
+                w.summon = 0;
             }
             if (b.lastAtk) w[b.lastAtk] = 0;
             const keys = Object.keys(w);
@@ -7274,9 +7603,9 @@ class Game {
             for (const k of keys) { if ((r -= w[k]) < 0) { atk = k; break; } }
             b.atk = b.lastAtk = atk;
             b.atkPhase = 0;
-            b.atkDur = b.atkTimer = { charge: 0.95, ring: 0.8, slam: 1.1, laser: 1.15, summon: 1.0, cross: 1.3, blink: 0.95, rift: 0.7 }[atk] * speedUp;
+            b.atkDur = b.atkTimer = { charge: 0.95, ring: 0.8, slam: 1.1, laser: 1.15, summon: 1.0, cross: 1.3, blink: 0.95, rift: 0.7, glacier: 0.9 }[atk] * speedUp;
             if (atk === 'blink') this._bossBlinkAim(b, tcx, tcy);
-            b.atkAngle = atk === 'ring' || atk === 'summon' || atk === 'cross' ? Math.random() * Math.PI * 2 : Math.atan2(tcy - bcy, tcx - bcx);
+            b.atkAngle = atk === 'ring' || atk === 'summon' || atk === 'cross' || atk === 'glacier' ? Math.random() * Math.PI * 2 : Math.atan2(tcy - bcy, tcx - bcx);
             b.atkSweep = Math.random() < 0.5 ? 1 : -1;
             return;
         }
@@ -7310,7 +7639,7 @@ class Game {
             b.atkPhase = 1;
             this._releaseBossAttack(b, bcx, bcy);
             b.atkDur = b.atkTimer = { charge: BlockBoss.CHARGE_TIME, ring: 0.4, slam: 0.35,
-                laser: b.enraged ? 1.1 : 1.3, summon: 0.4, cross: 1.4, blink: 0.45, rift: 0.4 }[b.atk];
+                laser: b.enraged ? 1.1 : 1.3, summon: 0.4, cross: 1.4, blink: 0.45, rift: 0.4, glacier: 0.45 }[b.atk];
         } else {
             if (b.atk === 'ring' && b.enraged) this._bossRing(b, bcx, bcy, b.atkAngle + Math.PI / BlockBoss.ringCount(true));
             b.atk = null;
@@ -7356,15 +7685,66 @@ class Game {
         }
     }
 
+    // 冰霜泰坦「冰河世纪」(glacier):释放极寒新星震波 + 发射多向穿透冰枪 + 在目标周围布下延迟寒霜冰爆区
+    _bossFrostRelease(b, bcx, bcy) {
+        const r = BlockBoss.GLACIER_R * (b.enraged ? 1.15 : 1);
+        this.effects.push({ type: 'shockwave', x: bcx, y: bcy, radius: 18, maxRadius: r, color: '#00e5ff', ttl: 0.45, maxTtl: 0.45 });
+        this.effects.push({ type: 'shockwave', x: bcx, y: bcy, radius: 10, maxRadius: r * 0.65, color: '#e0f7fa', ttl: 0.32, maxTtl: 0.32 });
+        this.spawnBurstRing(bcx, bcy, r * 0.45, '#84ffff', 18);
+        this.spawnParticles(bcx, bcy, '#80d8ff', 24, 2.5, 6.5, 2, 5, 0.04);
+        this.screenShake = Math.max(this.screenShake, 0.35);
+        Sound.play('freeze');
+        const novaDmg = b.attack * 0.48;
+        for (const p of this._livingPlayers()) {
+            const d = Math.hypot(p.x + p.size / 2 - bcx, p.y + p.size / 2 - bcy);
+            if (d <= r + p.size * 0.3) {
+                if (this._bossHitPlayer(p, novaDmg, '#00e5ff', '冰霜新星')) {
+                    p._frostSlowTimer = Math.max(p._frostSlowTimer || 0, 2.2);
+                }
+            }
+        }
+        // 多向寒冰棱枪弹幕
+        const n = BlockBoss.GLACIER_SPIKES(b.enraged);
+        const speed = 3.2 + this.difficulty * 0.35;
+        const lanceDmg = b.attack * 0.32;
+        for (let k = 0; k < n; k++) {
+            const ang = (b.atkAngle || 0) + k * Math.PI * 2 / n;
+            const c = Math.cos(ang), s = Math.sin(ang);
+            const eb = new EnemyBullet(bcx + c * b.size * 0.45, bcy + s * b.size * 0.45, c * speed, s * speed, lanceDmg);
+            eb.color = '#00e5ff';
+            this.enemyBullets.push(eb);
+        }
+        // 目标周围生成寒霜冰爆区(v = 2)
+        const target = this._bossTarget();
+        if (target) {
+            const tcx = target.x + target.size / 2, tcy = target.y + target.size / 2;
+            const zn = b.enraged ? 4 : 2;
+            const zDmg = b.attack * 0.38;
+            for (let i = 0; i < zn; i++) {
+                const a = (b.atkAngle || 0) + (i / zn) * Math.PI * 2;
+                const dist = i === 0 ? 0 : 75 + i * 20;
+                this._spawnFrostZone(tcx + Math.cos(a) * dist, tcy + Math.sin(a) * dist, zDmg, 1.0 + i * 0.12);
+            }
+        }
+    }
+
     // 虚空区与流星共用一套地面预警 / 倒计时 / 联机同步(v = 1),只伤玩家
     _spawnVoidZone(x, y, dmg, dur) {
         this.meteors.push({ id: nextEntityId(), x: Math.max(24, Math.min(this.width - 24, x)), y: Math.max(24, Math.min(this.height - 24, y)),
             r: 46, t: dur, dur, v: 1, dmg });
     }
 
+    // 寒霜冰爆区(v = 2):倒计时结束后引爆极寒冰晶并施加减速
+    _spawnFrostZone(x, y, dmg, dur) {
+        this.meteors.push({ id: nextEntityId(), x: Math.max(24, Math.min(this.width - 24, x)), y: Math.max(24, Math.min(this.height - 24, y)),
+            r: 44, t: dur, dur, v: 2, dmg });
+    }
+
     _releaseBossAttack(b, bcx, bcy) {
         if (b.atk === 'blink' || b.atk === 'rift') {
             this._bossVoidRelease(b, bcx, bcy);
+        } else if (b.atk === 'glacier') {
+            this._bossFrostRelease(b, bcx, bcy);
         } else if (b.atk === 'charge') {
             this.screenShake = Math.max(this.screenShake, 0.2);
             this.spawnParticles(bcx, bcy, '#ff1744', 12, 2, 5, 2, 4, 0.05);
@@ -7514,6 +7894,24 @@ class Game {
         const p = this.player;
         if (p.currentHealth > 0 || this.life <= 0 || p.downed || p.guardianActive) return;
 
+        // 暗金遗物【涅槃凤羽】:受到致命伤害时立刻涅槃重生(每局 1 次),回复 50% 最大生命并爆发烈焰新星清场
+        if (statMod(p, 'phoenixRevive') > 0 && !p._phoenixFeatherUsed) {
+            p._phoenixFeatherUsed = true;
+            p.currentHealth = Math.max(1, Math.round(p.maxHealth * 0.5));
+            p.hurtCooldown = 2.5;
+            p.invincibleTimer = Math.max(p.invincibleTimer || 0, 2.0);
+            const pcx = p.x + p.size / 2, pcy = p.y + p.size / 2;
+            const novaDmg = this._computeAttackDamage(p.attack) * 3.0;
+            this._withSrc('other', () => this._hitAround(pcx, pcy, 180, novaDmg, e => this._applyBurn(e, p, p.attack * 0.6)));
+            this.effects.push({ type: 'shockwave', x: pcx, y: pcy, radius: 12, maxRadius: 180, color: '#ff9100', ttl: 0.55, maxTtl: 0.55 });
+            this.spawnBurstRing(pcx, pcy, 110, '#ffab40', 24);
+            this.spawnParticles(pcx, pcy, '#ff6d00', 30, 2, 7, 2, 5, 0.03);
+            this.screenShake = Math.max(this.screenShake, 0.35);
+            Sound.play('levelUp');
+            this._showFloatingText('🪶 涅槃凤羽! 浴火重生!', pcx, p.y - 20, '#ff9100');
+            return;
+        }
+
         // 单人模式守护天使反扑
         if (!this.mpMode && (p.guardianCooldown || 0) <= 0) {
             p.guardianActive = true;
@@ -7569,7 +7967,7 @@ class Game {
     static bossTierMult(tier) { return 1 + 0.3 * Math.max(0, (tier || 1) - 1); }
     _bossDmgGoal() { return this.bossDamageRequired * this.difficulty * Game.bossTierMult(this.boss && this.boss.tier); }
 
-    _spawnBoss() {
+    _spawnBoss(forceForm = null) {
         // 在屏幕外随机一侧生成
         let x, y;
         if (Math.random() < 0.5) {
@@ -7582,8 +7980,10 @@ class Game {
         this.boss = new BlockBoss(x, y, this.difficulty, this.player.maxHealth);
         this.bossWave = (this.bossWave || 0) + 1;
         this.boss.tier = this.bossWave;
-        // 第 3 只起,单数波次换成虚空形态(与普通形态交替出现)
-        if (this.bossWave >= 3 && this.bossWave % 2 === 1) this.boss.form = 'void';
+        // 第 3 只起,单数波次换成虚空形态;第 6 只起,双数波次轮换为冰霜泰坦(亦支持指定形态)
+        if (forceForm) this.boss.form = forceForm;
+        else if (this.bossWave >= 3 && this.bossWave % 2 === 1) this.boss.form = 'void';
+        else if (this.bossWave >= 6 && this.bossWave % 2 === 0) this.boss.form = 'frost';
         // 每多一只魔王,血量与击退所需伤害 +30%(后期魔王不再一碰就退)
         this.boss.maxHealth *= Game.bossTierMult(this.boss.tier);
         // 第一只魔王在 1 分钟左右出现,玩家才 3 级左右:各招伤害打七折,别成为开局的死亡门槛
@@ -7593,17 +7993,19 @@ class Game {
         this.bossActiveTimer = 0;
         this.bossDamageDealt = 0;
         this.screenShake = 0.6;
+        this._vibrate('boss');
+        const tier = this.boss.tier, voidForm = this.boss.isVoid, frostForm = this.boss.isFrost;
+        const fxColor = frostForm ? '#00e5ff' : voidForm ? '#d500f9' : '#ff1744';
         // 出场闪白 / 大震动
-        this.effects.push({ type: 'shockwave', x: this.boss.x + 40, y: this.boss.y + 40, radius: 5, maxRadius: 200, color: '#ff1744', ttl: 0.8, maxTtl: 0.8 });
-        this.spawnParticles(this.boss.x + 40, this.boss.y + 40, '#ff1744', 30, 2, 6, 3, 6, 0.03);
-        const tier = this.boss.tier, voidForm = this.boss.isVoid;
+        this.effects.push({ type: 'shockwave', x: this.boss.x + 40, y: this.boss.y + 40, radius: 5, maxRadius: 200, color: fxColor, ttl: 0.8, maxTtl: 0.8 });
+        this.spawnParticles(this.boss.x + 40, this.boss.y + 40, fxColor, 30, 2, 6, 3, 6, 0.03);
         // 登场横幅与技能习得移至屏幕上部安全区(避开魔王本体头像与正中央战斗走位区)
         const bannerY = Math.round(this.height * 0.22);
-        this._showFloatingText(`${this.boss.title}${tier > 1 ? ' Lv' + tier : ''}!`, this.width / 2, bannerY, voidForm ? '#ea80fc' : '#ff1744');
-        const learned = voidForm ? (tier === 3 ? '虚空闪现 · 虚空坍缩' : null) : { 2: '激光扫射', 3: '召唤爪牙' }[tier];
+        this._showFloatingText(`${this.boss.title}${tier > 1 ? ' Lv' + tier : ''}!`, this.width / 2, bannerY, voidForm ? '#ea80fc' : frostForm ? '#80d8ff' : '#ff1744');
+        const learned = voidForm ? (tier === 3 ? '虚空闪现 · 虚空坍缩' : null) : frostForm ? '冰河世纪 · 寒霜新星' : { 2: '激光扫射', 3: '召唤爪牙' }[tier];
         if (learned) {
-            this.effects.push({ type: 'floatText', text: `${voidForm ? '虚空形态' : '魔王习得新招'}「${learned}」`, x: this.width / 2, y: bannerY + 28,
-                color: '#ea80fc', ttl: 2.6, maxTtl: 2.6 });
+            this.effects.push({ type: 'floatText', text: `${voidForm ? '虚空形态' : frostForm ? '极寒形态' : '魔王习得新招'}「${learned}」`, x: this.width / 2, y: bannerY + 28,
+                color: frostForm ? '#80d8ff' : '#ea80fc', ttl: 2.6, maxTtl: 2.6 });
         }
     }
 
@@ -7628,7 +8030,8 @@ class Game {
         this.boss.triggerRetreat(this.player.x, this.player.y);
         this.bossState = 'retreating';
 
-        // 魔王击退 K.O. 慢镜头终结特写(子弹时间 + 全屏金色裂空斩击 + 径向速度线)
+        // 魔王击退 K.O. 慢镜头终结特写(子弹时间 + 全屏金色裂空斩击 + 径向速度线 + 全屏微动摇晃与中央伤害汇总)
+        this._triggerKillImpact(this.boss, true);
         this.hitStop = 0.45;
         this.screenShake = 0.6;
         Sound.play('bossRepel');
@@ -7666,6 +8069,10 @@ class Game {
         this.affixEliteKills = 0;
         this.gearAwakenedCount = 0;
         this.voidRiftClearedCount = 0;
+        this.forgesCompletedCount = 0;
+        this.prismKills = 0;
+        this.killShake = null;
+        this.killSummary = null;
         this._lastEventType = null;
         // ⚡ 传奇星界试炼系统 (Astral Crucible)
         this.trialObelisk = null;       // { x, y, radius, timer, maxTimer, charge, needTime, trialType }
@@ -7696,6 +8103,8 @@ class Game {
                 this._tickVoidRift(ev);
             } else if (ev.type === 'greed') {
                 this._tickGreedAltar(ev);
+            } else if (ev.type === 'forge') {
+                this._tickForge(ev);
             } else if (ev.type === 'treasure') {
                 const t = this.enemies.find(e => e.type === 'treasure');
                 if (!t) ev.timer = 0;
@@ -7769,6 +8178,10 @@ class Game {
         this.difficulty = 1.2 + (this.abyssFloor - 1) * 0.45;
         this.screenShake = Math.max(this.screenShake, 0.45);
         Sound.play('riftWin');
+
+        // 踏入新深渊层时重构随机地牢/秘境迷宫布局并重置迷雾探索
+        this._generateDungeon();
+        this._resetFog();
 
         const cx = this.width / 2, cy = this.height / 2;
         this.effects.push({ type: 'shockwave', x: cx, y: cy, radius: 15, maxRadius: this.width * 0.9, color: '#ba68c8', ttl: 0.7, maxTtl: 0.7 });
@@ -8284,6 +8697,7 @@ class Game {
         else if (type === 'altar') this._placeAltar(this.event);
         else if (type === 'void_rift') this._placeVoidRift(this.event);
         else if (type === 'greed') this._placeGreedAltar(this.event);
+        else if (type === 'forge') this._placeForge(this.event);
     }
 
     _endEvent() {
@@ -8320,6 +8734,10 @@ class Game {
                 this._showFloatingText('⚖️ 契约已缔结!', this.width / 2, this.height * 0.3, '#ffd700');
             } else {
                 this._showFloatingText('贪婪天平隐没…', this.width / 2, this.height * 0.3, '#ffe082');
+            }
+        } else if (ev.type === 'forge') {
+            if (!ev.forged) {
+                this._showFloatingText('远古铁砧冷却隐没…', this.width / 2, this.height * 0.3, '#ffcc80');
             }
         }
     }
@@ -8495,7 +8913,7 @@ class Game {
         ev.needTime = 1.3;
         ev.signed = false;
         // 轮换本次提供的契约
-        const contracts = ['blood', 'gale', 'death'];
+        const contracts = ['blood', 'gale', 'death', 'overload'];
         ev.contract = contracts[Math.floor(Math.random() * contracts.length)];
         this.spawnBurstRing(x, y, 65, '#ffd700', 18);
         this.effects.push({ type: 'shockwave', x, y, radius: 8, maxRadius: 65, color: '#ffb300', ttl: 0.4, maxTtl: 0.4 });
@@ -8537,9 +8955,75 @@ class Game {
         const titles = {
             blood: '⚖️ 缔结【血契】: 受伤+30% 击杀分数经验翻倍!',
             gale:  '⚖️ 缔结【狂风契】: 敌人移速+25% 暴击+20% 暴伤+60%!',
-            death: '⚖️ 缔结【死誓契】: 禁用回血 击退魔王额外+2潜能点!'
+            death: '⚖️ 缔结【死誓契】: 禁用回血 击退魔王额外+2潜能点!',
+            overload: '⚖️ 缔结【超载契】: 受伤+25% 技能冷却-30% 技能范围+25%!'
         };
         this._showFloatingText(titles[contract] || '⚖️ 契约已签订!', this.width / 2, this.height * 0.28, '#ffd700');
+    }
+
+    // ── ⚒ 远古铁砧:靠近引导锻造,全队获得或升阶 Lv2 觉醒神装 + 遗物余烬 ──
+    _placeForge(ev) {
+        const players = this._livingPlayers(), m = 120;
+        let x = this.width / 2, y = this.height / 2;
+        for (let i = 0; i < 16; i++) {
+            x = m + Math.random() * (this.width - m * 2);
+            y = m + Math.random() * (this.height - m * 2);
+            if (players.every(p => Math.hypot(p.x + p.size / 2 - x, p.y + p.size / 2 - y) > 180)) break;
+        }
+        ev.fx = x; ev.fy = y;
+        ev.charge = 0;
+        ev.needTime = 1.2;
+        ev.forged = false;
+        this.spawnBurstRing(x, y, 70, '#ffab40', 20);
+        this.effects.push({ type: 'shockwave', x, y, radius: 8, maxRadius: 70, color: '#ff9100', ttl: 0.45, maxTtl: 0.45 });
+    }
+
+    _tickForge(ev) {
+        if (ev.forged) return;
+        let near = false;
+        for (const p of this._livingPlayers()) {
+            if (Math.hypot(p.x + p.size / 2 - ev.fx, p.y + p.size / 2 - ev.fy) <= 80) {
+                near = true;
+                break;
+            }
+        }
+        if (near) {
+            ev.charge = Math.min(1, ev.charge + DT / (ev.needTime || 1.2));
+            if (Math.random() < 0.35) {
+                this.spawnParticles(ev.fx, ev.fy, '#ffab40', 2, 1.0, 3.0, 1.5, 3.5, 0.04);
+            }
+        } else {
+            ev.charge = Math.max(0, ev.charge - DT * 0.4);
+        }
+        if (ev.charge >= 1) {
+            ev.forged = true;
+            ev.timer = 0;
+            this._completeForge(ev);
+        }
+    }
+
+    _completeForge(ev) {
+        const cx = ev.fx, cy = ev.fy;
+        for (const p of this._livingPlayers()) {
+            this._runAsPlayer(p, () => {
+                const kind = (p.gear && p.gear.timer > 0) ? p.gear.type : GEAR_TYPES[Math.floor(Math.random() * GEAR_TYPES.length)];
+                if (!p.gear || p.gear.type !== kind) {
+                    this._equipGear(kind);
+                }
+                // 再次调用同款 _equipGear 立即触发 Lv2 觉醒神装
+                this._equipGear(kind);
+                p.relicAsh = (p.relicAsh || 0) + 1;
+                this._grantGem(GEM_TYPES[Math.floor(Math.random() * GEM_TYPES.length)]);
+            });
+        }
+        this._dropGem(cx, cy - 28);
+        this.forgesCompletedCount = (this.forgesCompletedCount || 0) + 1;
+        this.score += Math.round(200 * (this.scoreMult || 1));
+        this.screenShake = Math.max(this.screenShake, 0.28);
+        Sound.play('gearAwaken');
+        this.effects.push({ type: 'shockwave', x: cx, y: cy, radius: 12, maxRadius: 180, color: '#ffab40', ttl: 0.55, maxTtl: 0.55 });
+        this.spawnBurstRing(cx, cy, 90, '#ffd54f', 24);
+        this._showFloatingText('⚒ 远古神铸完成! 神装觉醒Lv2 +1遗物余烬!', this.width / 2, this.height * 0.28, '#ffd54f');
     }
 
     // 敌人从场外随机一侧进场
@@ -8618,6 +9102,23 @@ class Game {
     }
 
     _meteorImpact(m) {
+        if (m.v === 2) {
+            // 寒霜冰爆区:极寒冰晶爆裂,只伤玩家并施加减速
+            this.effects.push({ type: 'shockwave', x: m.x, y: m.y, radius: 6, maxRadius: m.r, color: '#00e5ff', ttl: 0.35, maxTtl: 0.35 });
+            this.effects.push({ type: 'shockwave', x: m.x, y: m.y, radius: m.r * 0.8, maxRadius: 8, color: '#e0f7fa', ttl: 0.28, maxTtl: 0.28 });
+            this.spawnParticles(m.x, m.y, '#84ffff', 14, 2, 5, 2, 4, 0.05);
+            this.screenShake = Math.max(this.screenShake, 0.1);
+            Sound.play('freeze');
+            for (const p of this._livingPlayers()) {
+                const d = Math.hypot(p.x + p.size / 2 - m.x, p.y + p.size / 2 - m.y);
+                if (d <= m.r + p.size * 0.3) {
+                    if (this._bossHitPlayer(p, m.dmg || 18, '#00e5ff', '极寒冰爆')) {
+                        p._frostSlowTimer = Math.max(p._frostSlowTimer || 0, 2.0);
+                    }
+                }
+            }
+            return;
+        }
         if (m.v) {
             // 虚空坍缩:向内塌缩的紫色冲击,只伤玩家
             this.effects.push({ type: 'shockwave', x: m.x, y: m.y, radius: m.r * 1.2, maxRadius: 4, color: '#d500f9', ttl: 0.3, maxTtl: 0.3 });
@@ -8687,6 +9188,80 @@ class Game {
         this.eliteKills++;
         this.spawnBurstRing(cx, cy, 30, '#ffc400', 14);
         this._showFloatingText('精英击破!', cx, e.y - 14, '#ffc400');
+        this._triggerKillImpact(e, false);
+    }
+
+    // 击杀精英怪或魔王:触发全屏高频阻尼微动摇晃 + 屏幕中央伤害数字汇总横幅(如“暴击! 1200”)
+    _triggerKillImpact(target, isBoss = false) {
+        const rawDmg = isBoss
+            ? Math.max(this.bossDamageDealt || 0, (target && target._totalDmgTaken) || 0, (target && target.maxHealth) || 1200)
+            : Math.max((target && target._totalDmgTaken) || 0, (target && target.maxHealth) || 100);
+        const totalDmg = Math.max(1, Math.round(rawDmg));
+        const isCrit = !!(target && (target._dnCrit || target._lastHitCrit || target._hadCritHit));
+        const shakeDur = isBoss ? 0.45 : 0.30;
+        const shakeAmp = isBoss ? 6.0 : 3.8;
+        this.killShake = {
+            timer: shakeDur,
+            maxTimer: shakeDur,
+            amp: shakeAmp,
+            freq: isBoss ? 58 : 48,
+            phase: Math.random() * Math.PI * 2,
+            isBoss: !!isBoss
+        };
+        this.screenShake = Math.max(this.screenShake || 0, isBoss ? 0.6 : 0.28);
+
+        let sub = '⚡ 精英击破 · 伤害汇总';
+        if (isBoss) {
+            const bTitle = (target && target.title) ? target.title : '方块大魔王';
+            sub = `👑 ${bTitle}击退 · 伤害汇总`;
+        } else if (target) {
+            const afx = target.affix && AFFIX_INFO[target.affix] ? AFFIX_INFO[target.affix].name + '·' : '精英·';
+            const eName = ENEMY_NAMES[target.type] || '强敌';
+            sub = `⚡ ${afx}${eName}击破 · 伤害汇总`;
+        }
+        const sumDur = isBoss ? 1.45 : 1.15;
+        this.killSummary = {
+            text: `暴击! ${totalDmg}`,
+            prefix: '暴击!',
+            dmg: totalDmg,
+            isCrit,
+            isBoss: !!isBoss,
+            sub,
+            color: isBoss ? '#ffd700' : '#ffab40',
+            accent: isBoss ? '#ff5252' : '#ff6d00',
+            timer: sumDur,
+            maxTimer: sumDur
+        };
+        this._vibrate(isBoss ? 'heavy' : 'crit');
+    }
+
+    _updateKillImpact(dt = DT) {
+        if (this.killShake) {
+            this.killShake.timer -= dt;
+            if (this.killShake.timer <= 0) {
+                this.killShake = null;
+                if (this.canvas && this.canvas.style && this.canvas.style.transform) {
+                    this.canvas.style.transform = '';
+                }
+            }
+        }
+        if (this.killSummary) {
+            this.killSummary.timer -= dt;
+            if (this.killSummary.timer <= 0) {
+                this.killSummary = null;
+            }
+        }
+    }
+
+    _getKillShakeOffset() {
+        const ks = this.killShake;
+        if (!ks || ks.timer <= 0 || ks.maxTimer <= 0) return { dx: 0, dy: 0, active: false };
+        const p = Math.max(0, Math.min(1, 1 - ks.timer / ks.maxTimer));
+        const decay = Math.pow(1 - p, 1.55);
+        const angle = p * ks.freq + (ks.phase || 0);
+        const dx = Math.sin(angle) * ks.amp * decay;
+        const dy = Math.cos(angle * 1.37) * ks.amp * 0.8 * decay;
+        return { dx, dy, active: true, p, decay, isBoss: ks.isBoss };
     }
 
     // 地面预警:外圈 + 随落地进度填满的内圈(只有填充/描边,无 shadowBlur)
@@ -8695,6 +9270,23 @@ class Game {
         ctx.save();
         for (const m of this.meteors) {
             const p = Math.max(0, Math.min(1, 1 - m.t / m.dur));
+            if (m.v === 2) {
+                // 寒霜冰爆区:冰青色六棱光环由内向外凝结
+                ctx.fillStyle = 'rgba(0, 229, 255, 0.14)';
+                ctx.beginPath();
+                ctx.arc(m.x, m.y, m.r, 0, Math.PI * 2);
+                ctx.fill();
+                ctx.fillStyle = 'rgba(132, 255, 255, 0.24)';
+                ctx.beginPath();
+                ctx.arc(m.x, m.y, m.r * p, 0, Math.PI * 2);
+                ctx.fill();
+                ctx.strokeStyle = `rgba(128, 216, 255, ${0.5 + 0.5 * p})`;
+                ctx.lineWidth = 2;
+                ctx.beginPath();
+                ctx.arc(m.x, m.y, m.r, 0, Math.PI * 2);
+                ctx.stroke();
+                continue;
+            }
             if (m.v) {
                 // 虚空区:外圈不动,内圈从外向里收(和流星的由内向外反过来,一眼区分)
                 ctx.fillStyle = 'rgba(124,77,255,0.16)';
@@ -8774,7 +9366,8 @@ class Game {
         if (!def) return;
         const ctx = this.ctx;
         const hudW = (this._hud && this._hud.w) ? this._hud.w : this.width;
-        const w = 230, h = 30, x = (hudW - w) / 2, y = 10;
+        const isNarrow = hudW < 480;
+        const w = Math.min(230, hudW - 32), h = 30, x = (hudW - w) / 2, y = isNarrow ? 72 : 10;
         const pct = Math.max(0, Math.min(1, ev.timer / (ev.dur || 1)));
         ctx.save();
         ctx.fillStyle = 'rgba(10,16,28,0.78)';
@@ -8794,6 +9387,7 @@ class Game {
         else if (ev.type === 'horde') label += '  经验×2';
         else if (ev.type === 'altar') label += `  ${Math.floor((ev.charge || 0) * 100)}%`;
         else if (ev.type === 'void_rift') label += ev.activated ? `  挑战中!` : `  引导 ${Math.floor((ev.charge || 0) * 100)}%`;
+        else if (ev.type === 'forge') label += ev.forged ? `  已神铸!` : `  锻造 ${Math.floor((ev.charge || 0) * 100)}%`;
         else if (ev.type === 'greed') label += ev.signed ? `  已缔结!` : `  引导 ${Math.floor((ev.charge || 0) * 100)}%`;
         label += `  ${Math.ceil(ev.timer)}s`;
         ctx.fillStyle = '#ffffff';
@@ -8825,6 +9419,12 @@ class Game {
 
     updatePlayer() {
         this.player.update(this.keys, this.width, this.height);
+        this._resolveDungeonCollision(this.player, false);
+        if (this.mpMode === 'host') {
+            for (const gp of this.mpGuestPlayers.values()) {
+                this._resolveDungeonCollision(gp, false);
+            }
+        }
     }
     
     updateEnemies() {
@@ -8832,10 +9432,13 @@ class Game {
             const e = this.enemies[i];
             e.applyKnockback(this.width, this.height);
             if (e.freezeImmunityTimer > 0) e.freezeImmunityTimer -= DT;
+            let targetPlayer = null;
             if (this.enemyFreezeTimer <= 0) {
                 // 联机时每个敌人追离它最近的存活玩家,不再只盯房主
                 const t = this._nearestPlayer(e.x, e.y);
+                targetPlayer = t;
                 e.update(t.x, t.y, this.width, this.height, t.size);
+                this._resolveDungeonCollision(e, true, t);
 
                 // 词缀精英机制驱动
                 if (e.elite) {
@@ -8901,6 +9504,10 @@ class Game {
             if (e.erupt) {
                 e.erupt = false;
                 this._burrowerErupt(e);
+            }
+            if (e.prismFire) {
+                e.prismFire = false;
+                this._prismBeam(e);
             }
             // 炮手开火:取出 pendingShot 并生成敌方子弹
             if (e.pendingShot) {
@@ -8985,6 +9592,30 @@ class Game {
         }
     }
 
+    // 棱镜哨卫激光迸射:沿锁定线发射高能折射激光束,命中路径上的玩家(冲刺可完美闪避)
+    _prismBeam(e) {
+        const cx = e.x + e.size / 2, cy = e.y + e.size / 2;
+        const lx = e.lockX != null ? e.lockX : cx + 100, ly = e.lockY != null ? e.lockY : cy;
+        const dx = lx - cx, dy = ly - cy, len = Math.hypot(dx, dy) || 1;
+        const ux = dx / len, uy = dy / len;
+        const endLen = Math.min(480, len + 85);
+        const bx = cx + ux * endLen, by = cy + uy * endLen;
+        this.effects.push({ type: 'prismBeam', x1: cx, y1: cy, x2: bx, y2: by, w: 18, color: '#00e5ff', ttl: 0.32, maxTtl: 0.32 });
+        this.spawnParticles(cx, cy, '#80d8ff', 10, 2, 5, 1.5, 3.5, 0.05);
+        this.spawnParticles(bx, by, '#ea80fc', 10, 2, 5, 1.5, 3.5, 0.05);
+        this.screenShake = Math.max(this.screenShake, 0.14);
+        Sound.play('cdReady');
+        const segX = bx - cx, segY = by - cy, segL2 = segX * segX + segY * segY || 1;
+        for (const p of this._livingPlayers()) {
+            const px = p.x + p.size / 2, py = p.y + p.size / 2;
+            const t = Math.max(0, Math.min(1, ((px - cx) * segX + (py - cy) * segY) / segL2));
+            const dist = Math.hypot(px - (cx + t * segX), py - (cy + t * segY));
+            if (dist <= 16 + p.size * 0.35) {
+                this._bossHitPlayer(p, e.beamDamage || 20, '#00e5ff', '棱镜激光');
+            }
+        }
+    }
+
     _bomberExplode(e, armed) {
         e.exploded = true;
         const cx = e.x + e.size / 2, cy = e.y + e.size / 2, r = e.blastRadius;
@@ -9032,7 +9663,7 @@ class Game {
     
     updateItems() {
         this._magnetItems();
-        this._mergeNearbyItems();
+        if (this.items.length > 1) this._mergeNearbyItems();
         for (let i = this.items.length - 1; i >= 0; i--) {
             this.items[i].update();
             if (this.items[i].duration <= 0) {
@@ -9043,6 +9674,7 @@ class Game {
 
     // 道具同类聚合: 落地后局部区域内若有相同的普通消耗品(如药水、经验书、雪花、炸弹), 融合成强化高阶道具
     _mergeNearbyItems() {
+        if (this.items.length < 2) return;
         const stackables = ['potion', 'exp_book', 'snowflake', 'bomb'];
         for (let i = 0; i < this.items.length; i++) {
             const a = this.items[i];
@@ -9052,8 +9684,8 @@ class Game {
                 if (!b || b.landTimer > 0 || b.type !== a.type) continue;
                 // 合并后最多 4 层(拾取效果按层数放大,超过会出现半屏炸弹/长时间冰冻)
                 if ((a.stackCount || 1) + (b.stackCount || 1) > 4) continue;
-                const dist = Math.hypot(a.x - b.x, a.y - b.y);
-                if (dist <= 75) {
+                const dx = a.x - b.x, dy = a.y - b.y;
+                if (dx * dx + dy * dy <= 5625) {
                     a.stackCount = (a.stackCount || 1) + (b.stackCount || 1);
                     a.duration = Math.max(a.duration, b.duration);
                     a.maxDuration = Math.max(a.maxDuration, b.maxDuration);
@@ -9175,7 +9807,7 @@ class Game {
             }
         }
 
-        // 敌方子弹碰玩家
+        // 敌方子弹碰玩家或地牢掩体墙
         for (let i = this.enemyBullets.length - 1; i >= 0; i--) {
             const b = this.enemyBullets[i];
             // 越界清理:出界 60px 自动淘汰
@@ -9183,8 +9815,36 @@ class Game {
                 this.enemyBullets.splice(i, 1);
                 continue;
             }
+            if (this._checkPointHitsDungeonWall(b.x + (b.size || 12) / 2, b.y + (b.size || 12) / 2, (b.size || 12) * 0.35)) {
+                this.spawnParticles(b.x + (b.size || 12) / 2, b.y + (b.size || 12) / 2, '#ff9800', 4, 1, 3, 1, 2.5, 0.06);
+                this.enemyBullets.splice(i, 1);
+                continue;
+            }
             if (this.checkCollision(this.player, b)) {
-                if (this.player.dashTimer > 0) { this._canHurt(this.player); continue; } // 冲刺中穿过子弹
+                if (this.player.dashTimer > 0 || this.player.invincibleTimer > 0) {
+                    if (this.player.dashTimer > 0) this._canHurt(this.player);
+                    // 🔮 暗金遗物【虚空魔镜】:冲刺或无敌帧穿过敌方弹幕时将其反弹为高伤奥术飞弹
+                    if (statMod(this.player, 'bulletReflect') > 0) {
+                        const px = this.player.x + this.player.size / 2, py = this.player.y + this.player.size / 2;
+                        const near = this._findClosestTarget();
+                        let rvx = -b.vx * 1.6, rvy = -b.vy * 1.6;
+                        if (near) {
+                            const tx = near.x + near.size / 2 - px, ty = near.y + near.size / 2 - py;
+                            const td = Math.hypot(tx, ty) || 1;
+                            const spd = Math.max(8, Math.hypot(b.vx, b.vy) * 1.6);
+                            rvx = (tx / td) * spd;
+                            rvy = (ty / td) * spd;
+                        }
+                        const refDmg = this._computeAttackDamage(this.player.attack) * 1.8;
+                        const refProj = new Projectile(b.x, b.y, rvx, rvy, refDmg, '#b388ff', 9, this.player);
+                        refProj.setKind(4);
+                        this.projectiles.push(refProj);
+                        this.effects.push({ type: 'ring', x: b.x + b.size / 2, y: b.y + b.size / 2, radius: 22, color: '#b388ff', ttl: 0.22, maxTtl: 0.22 });
+                        this._showFloatingText('🔮 魔镜反弹!', px, this.player.y - 14, '#e1bee7');
+                        this.enemyBullets.splice(i, 1);
+                    }
+                    continue;
+                } // 冲刺中穿过子弹
                 if (this.player.hurtCooldown <= 0) {
                     this.player.takeDamage(b.damage, '敌方子弹');
                     this.player.hurtCooldown = 0.6 + (this.player.hurtCooldownBonus || 0);
@@ -9289,6 +9949,23 @@ class Game {
                 }
             }
 
+            // 投射物 vs 地下城/迷宫墙体与可击碎符文墙
+            if (!hit && this.dungeonMode !== 'off' && !this._isDungeonWallsSubmerged()) {
+                const pSize = proj.size || 8;
+                const pcx = proj.x + pSize / 2, pcy = proj.y + pSize / 2;
+                const hitWall = this._checkPointHitsDungeonWall(pcx, pcy, pSize * 0.35);
+                if (hitWall) {
+                    if (hitWall.destructible) {
+                        this._damageDungeonWall(hitWall, proj.damage || 15);
+                    } else {
+                        this.spawnParticles(pcx, pcy, '#90a4ae', 3, 1, 2.5, 1, 2, 0.06);
+                    }
+                    if (!proj.pierceRemaining || proj.pierceRemaining <= 0) {
+                        hit = true;
+                    }
+                }
+            }
+
             if (hit) this.projectiles.splice(i, 1);
             if (splashAt) this._projSplash(proj, splashAt);
             this._ctx = prevCtx;
@@ -9340,11 +10017,13 @@ class Game {
             // 医疗兵 70 秒后加入,场上最多 3 个(太多会把战斗拖成消耗战)
             if (this.gameTime >= 70 && this.enemies.filter(e => e.type === 'healer').length < 3) pool.push(['healer', 6]);
             // 分裂者 90 秒后加入:死后裂成 3 块碎片
-            if (this.gameTime >= 90) pool.push(['splitter', 7]);
+            if (this.gameTime >= 90) pool.push(['splitter', 5]);
             // 噬魂者 120 秒后加入:按最大生命百分比造成真实伤害(无视防御、半穿护盾),专治堆血堆防;场上最多 4 个
-            if (this.gameTime >= 120 && this.enemies.filter(e => e.type === 'reaper').length < 4) pool.push(['reaper', 6]);
+            if (this.gameTime >= 120 && this.enemies.filter(e => e.type === 'reaper').length < 4) pool.push(['reaper', 5]);
             // 潜伏者 100 秒后加入:钻地逼近、破土震击;场上最多 4 个
-            if (this.gameTime >= 100 && this.enemies.filter(e => e.type === 'burrower').length < 4) pool.push(['burrower', 6]);
+            if (this.gameTime >= 100 && this.enemies.filter(e => e.type === 'burrower').length < 4) pool.push(['burrower', 5]);
+            // 棱镜哨卫 75 秒后加入:折射护盾减伤、激光锁定瞄准与过热破防;场上最多 3 个
+            if (this.gameTime >= 75 && this.enemies.filter(e => e.type === 'prism').length < 3) pool.push(['prism', 4]);
             let roll = Math.random() * pool.reduce((a, w) => a + w[1], 0);
             let type = pool[0][0];
             for (const [t, w] of pool) { if ((roll -= w) < 0) { type = t; break; } }
@@ -9802,6 +10481,17 @@ class Game {
         if (this._mpFx.length < 200) this._mpFx.push([kind, ...args.map(v => typeof v === 'number' ? q2(v) : v)]);
     }
 
+    _allocParticle(x, y, vx, vy, life, decay, size, color) {
+        const pool = this._particlePool || (this._particlePool = []);
+        const p = pool.pop();
+        if (p) {
+            p.x = x; p.y = y; p.vx = vx; p.vy = vy;
+            p.life = life; p.decay = decay; p.size = size; p.color = color;
+            return p;
+        }
+        return { x, y, vx, vy, life, decay, size, color };
+    }
+
     spawnHitParticles(x, y, color, count) {
         this._mpRecordFx('h', [x, y, color, count]);
         count = this._fxCount(count);
@@ -9812,15 +10502,15 @@ class Game {
         for (let i = 0; i < count; i++) {
             const angle = Math.random() * Math.PI * 2;
             const speed = Math.random() * 3 + 1;
-            this.particles.push({
+            this.particles.push(this._allocParticle(
                 x, y,
-                vx: Math.cos(angle) * speed,
-                vy: Math.sin(angle) * speed,
-                life: 1,
-                decay: Math.random() * 0.04 + 0.03,
-                size: Math.random() * 4 + 2,
+                Math.cos(angle) * speed,
+                Math.sin(angle) * speed,
+                1,
+                Math.random() * 0.04 + 0.03,
+                Math.random() * 4 + 2,
                 color
-            });
+            ));
         }
     }
 
@@ -9833,15 +10523,15 @@ class Game {
         for (let i = 0; i < count; i++) {
             const angle = Math.random() * Math.PI * 2;
             const speed = speedMin + Math.random() * (speedMax - speedMin);
-            this.particles.push({
+            this.particles.push(this._allocParticle(
                 x, y,
-                vx: Math.cos(angle) * speed,
-                vy: Math.sin(angle) * speed,
-                life: 1,
-                decay: decay || (Math.random() * 0.03 + 0.02),
-                size: sizeMin + Math.random() * (sizeMax - sizeMin),
+                Math.cos(angle) * speed,
+                Math.sin(angle) * speed,
+                1,
+                decay || (Math.random() * 0.03 + 0.02),
+                sizeMin + Math.random() * (sizeMax - sizeMin),
                 color
-            });
+            ));
         }
     }
 
@@ -9854,16 +10544,16 @@ class Game {
         for (let i = 0; i < count; i++) {
             const angle = (i / count) * Math.PI * 2;
             const speed = 1.5 + Math.random() * 2;
-            this.particles.push({
-                x: x + Math.cos(angle) * radius * 0.3,
-                y: y + Math.sin(angle) * radius * 0.3,
-                vx: Math.cos(angle) * speed,
-                vy: Math.sin(angle) * speed,
-                life: 1,
-                decay: Math.random() * 0.025 + 0.02,
-                size: Math.random() * 4 + 2,
+            this.particles.push(this._allocParticle(
+                x + Math.cos(angle) * radius * 0.3,
+                y + Math.sin(angle) * radius * 0.3,
+                Math.cos(angle) * speed,
+                Math.sin(angle) * speed,
+                1,
+                Math.random() * 0.025 + 0.02,
+                Math.random() * 4 + 2,
                 color
-            });
+            ));
         }
     }
 
@@ -9872,8 +10562,9 @@ class Game {
     }
 
     updateParticles() {
-        // 原地压缩:粒子多时 splice 逐个删除是 O(n²)
+        // 原地压缩 + 对象池回收:避免高频战斗中每帧分配/GC 数百个短命粒子对象
         const ps = this.particles;
+        const pool = this._particlePool || (this._particlePool = []);
         let n = 0;
         for (let i = 0; i < ps.length; i++) {
             const p = ps[i];
@@ -9883,6 +10574,7 @@ class Game {
             p.vx *= 0.96;
             p.life -= p.decay;
             if (p.life > 0) ps[n++] = p;
+            else if (pool.length < 600) pool.push(p);
         }
         ps.length = n;
     }
@@ -9957,10 +10649,11 @@ class Game {
         const base = (CLASS_BASE_CD[p.class] || { q: 3, e: 5 })[key];
         const sk = key === 'q' ? p.skillQ : p.skillE;
         const flat = key === 'q' ? (p.qCdFlat || 0) : 0;
-        // 冷却缩减:天赋 + 该技能位的「快速冷却」+ 暗金遗物(怀表 -18% / 圣杯 +20%)+ 每日突变【虚空狂涌】-35%,合计最多 -75%
+        // 冷却缩减:天赋 + 该技能位的「快速冷却」+ 暗金遗物(怀表 -18% / 圣杯 +20%)+ 每日突变【虚空狂涌】-35% + 贪婪【超载契】-30%,合计最多 -75%
         const relicCdr = statMod(p, 'cdr'); // 可为负:鲜血圣杯的代价
         const mutCdr = (this.mutations && this.mutations.includes('void_surge')) ? 0.35 : 0;
-        const red = Math.max(-0.5, Math.min(0.75, ((p.tree && p.tree.cdr) || 0) + this._gv(p, key, 'faster') + relicCdr + mutCdr));
+        const contractCdr = p.greedContract === 'overload' ? 0.30 : 0;
+        const red = Math.max(-0.5, Math.min(0.75, ((p.tree && p.tree.cdr) || 0) + this._gv(p, key, 'faster') + relicCdr + mutCdr + contractCdr));
         const cd = base * this._getCDMultiplier(sk.level) * (1 - red);
         return flat ? Math.max(1, cd - flat) : cd;
     }
@@ -10121,12 +10814,17 @@ class Game {
             p._phantomStepCrits--;
         }
 
+        if (target) target._lastHitCrit = false;
         if (crit > 0 && Math.random() < crit) {
             dmg *= 2 + this._critBonus(p);
             Sound.play('critHit');
             this._vibrate('crit');
             // 暴击命中时为本地玩家施加 50ms 的轻微顿帧,强化打击感
             if (p === this.player) this.hitStop = Math.max(this.hitStop, 0.05);
+            if (target) {
+                target._hadCritHit = true;
+                target._lastHitCrit = true;
+            }
             // 开着伤害数字时暴击直接用放大的金色数字表现,不再额外飘「暴击」
             if (this.showDmgNums) target._dnCrit = true;
             else this._showFloatingText('暴击', target.x + target.size / 2, target.y - 8, '#ff80ab');
@@ -10242,9 +10940,10 @@ class Game {
         if (t.poisonTick <= 0) {
             t.poisonTick += 0.5;
             const owner = t.poisonOwner || this.player;
-            const dmg = t.poison * 0.2 * owner.attack * 0.5 * (1 + ((owner.tree && owner.tree.dot) || 0));
+            const dmg = t.poison * 0.2 * owner.attack * 0.5 * (1 + ((owner.tree && owner.tree.dot) || 0) + statMod(owner, 'dotMult'));
             this._recDmg(owner, 'dot', Math.min(dmg, t.currentHealth));
             t.currentHealth = Math.max(0, t.currentHealth - dmg);
+            t._totalDmgTaken = (t._totalDmgTaken || 0) + dmg;
             t._dnDot = (t._dnDot || 0) + dmg;
             if (t === this.boss) this.bossDamageDealt += dmg;
             this.spawnParticles(t.x + t.size / 2, t.y + t.size / 2, '#76ff03', 3, 0.5, 1.5, 1, 3, 0.03);
@@ -11504,6 +12203,7 @@ class Game {
         Sound.play('kill', this.player.combo || 0);
         // 击杀计数随玩家快照下发,本机据此触发击杀顿帧/震动(guest 也能拿到自己的击杀反馈)
         this.player.killCount = (this.player.killCount || 0) + 1;
+        if (e && e.type === 'prism') this.prismKills = (this.prismKills || 0) + 1;
         // 🌀 无尽深渊模式:当前层击杀数累加
         if (this.diffMode === 'abyss') this.abyssKillsThisFloor = (this.abyssKillsThisFloor || 0) + 1;
         const horde = (this.event && this.event.type === 'horde') || (e && e._horde) ? 2 : 1;
@@ -12295,12 +12995,12 @@ class Game {
 
         let cardW, cardH, startX, startY, stepX, stepY;
         if (portrait || MW < 480) {
-            cardW = Math.min(280, MW * 0.75);
-            cardH = Math.min(110, MH * 0.14);
+            cardW = Math.min(440, MW * 0.88);
+            cardH = Math.min(132, MH * 0.155);
             startX = (MW - cardW) / 2;
             startY = MH * 0.21;
             stepX = 0;
-            stepY = cardH + Math.max(8, MH * 0.015);
+            stepY = cardH + Math.max(10, MH * 0.016);
         } else {
             const spacing = Math.min(16, MW * 0.025);
             cardW = Math.min(180, (MW - spacing * (n + 1)) / Math.max(n, 1));
@@ -12429,8 +13129,8 @@ class Game {
         }
 
         // 跳过按钮
-        const skipW = Math.min(140, MW * 0.35);
-        const skipH = Math.max(36, Math.min(44, MH * 0.075));
+        const skipW = Math.min((portrait || MW < 480) ? 185 : 140, MW * 0.38);
+        const skipH = Math.max(38, Math.min(48, MH * 0.075));
         const btnGap = Math.min(16, MW * 0.04);
         const skipX = (MW - skipW * 2 - btnGap) / 2;
         let skipY;
@@ -12591,6 +13291,9 @@ class Game {
     
     endGame() {
         this.isRunning = false;
+        this.killShake = null;
+        this.killSummary = null;
+        if (this.canvas && this.canvas.style) this.canvas.style.transform = '';
         if (this._rafId) { cancelAnimationFrame(this._rafId); this._rafId = null; }
         // Host 广播游戏结束(携带完整对局战绩,保障客机也能正确达成成就与解锁外观)
         if (this.mpMode === 'host' && this.mpWs && this.mpWs.readyState === WebSocket.OPEN) {
@@ -12610,9 +13313,10 @@ class Game {
             }));
         }
         this._showGameOver(Math.floor(this.gameTime), this.score);
+        this._syncBodyState();
     }
 
-    // 结算页的伤害构成:标题 + 分段条 + 每个来源一行(名称、数值、占比)
+    // 结算页的伤害构成:标题 + 分段条 + D3 伤害占比柱状图 + 每个来源一行(名称、数值、占比)
     _renderDmgBreakdownDom(el) {
         if (!el) return;
         el.innerHTML = '';
@@ -12630,6 +13334,8 @@ class Game {
         head.textContent = `伤害构成 · 总 ${Game.fmtNum(b.total)} · 秒伤 ${Game.fmtNum(b.dps)}`;
         const bar = document.createElement('div');
         bar.className = 'db-bar';
+        const chartWrap = document.createElement('div');
+        chartWrap.className = 'db-chart';
         const list = document.createElement('div');
         list.className = 'db-list';
         for (const part of b.parts) {
@@ -12645,7 +13351,113 @@ class Game {
             row.children[2].textContent = `${Game.fmtNum(part.v)} · ${Math.round(part.pct * 100)}%`;
             list.appendChild(row);
         }
-        el.append(head, bar, list);
+        if (typeof d3 !== 'undefined' && d3 && typeof d3.select === 'function' && b.parts.length > 0) {
+            const svgW = 400;
+            const svgH = 124;
+            const margin = { top: 20, right: 12, bottom: 24, left: 34 };
+            const plotBottom = svgH - margin.bottom;
+            const maxPct = Math.max(0.1, d3.max(b.parts, d => d.pct) || 1);
+            const yDomainMax = Math.min(1, Math.max(0.2, Math.ceil(maxPct * 10) / 10));
+
+            const xScale = d3.scaleBand()
+                .domain(b.parts.map(d => d.name))
+                .range([margin.left, svgW - margin.right])
+                .padding(0.28);
+
+            const yScale = d3.scaleLinear()
+                .domain([0, yDomainMax])
+                .range([plotBottom, margin.top]);
+
+            const svg = d3.select(chartWrap)
+                .append('svg')
+                .attr('class', 'db-d3-svg')
+                .attr('viewBox', `0 0 ${svgW} ${svgH}`)
+                .attr('preserveAspectRatio', 'xMidYMid meet');
+
+            // Y 轴参考网格线与百分比刻度
+            const yTicks = [0, yDomainMax * 0.5, yDomainMax];
+            const gridGroup = svg.append('g').attr('class', 'db-grid');
+            gridGroup.selectAll('line.db-grid-line')
+                .data(yTicks)
+                .enter()
+                .append('line')
+                .attr('class', 'db-grid-line')
+                .attr('x1', margin.left)
+                .attr('x2', svgW - margin.right)
+                .attr('y1', d => yScale(d))
+                .attr('y2', d => yScale(d))
+                .attr('stroke', d => d === 0 ? 'rgba(200,232,255,0.22)' : 'rgba(200,232,255,0.09)')
+                .attr('stroke-dasharray', d => d === 0 ? null : '3,3');
+
+            gridGroup.selectAll('text.db-axis-y')
+                .data(yTicks)
+                .enter()
+                .append('text')
+                .attr('class', 'db-axis-y')
+                .attr('x', margin.left - 5)
+                .attr('y', d => yScale(d) + 3)
+                .attr('text-anchor', 'end')
+                .attr('fill', 'rgba(200,232,255,0.52)')
+                .attr('font-size', '9px')
+                .text(d => `${Math.round(d * 100)}%`);
+
+            // 柱状图主体分组
+            const groups = svg.selectAll('g.db-bar-group')
+                .data(b.parts)
+                .enter()
+                .append('g')
+                .attr('class', 'db-bar-group');
+
+            groups.append('rect')
+                .attr('class', 'db-bar-track')
+                .attr('x', d => xScale(d.name))
+                .attr('y', margin.top)
+                .attr('width', xScale.bandwidth())
+                .attr('height', plotBottom - margin.top)
+                .attr('rx', 4)
+                .attr('fill', 'rgba(255,255,255,0.04)');
+
+            groups.append('rect')
+                .attr('class', 'db-bar-rect bar')
+                .attr('data-src', d => d.k)
+                .attr('data-pct', d => (d.pct * 100).toFixed(1))
+                .attr('x', d => xScale(d.name))
+                .attr('y', d => yScale(Math.min(yDomainMax, d.pct)))
+                .attr('width', xScale.bandwidth())
+                .attr('height', d => Math.max(3, plotBottom - yScale(Math.min(yDomainMax, d.pct))))
+                .attr('rx', 4)
+                .attr('fill', d => d.color);
+
+            groups.append('title')
+                .text(d => `${d.name}: ${Game.fmtNum(d.v)} (${(d.pct * 100).toFixed(1)}%)`);
+
+            groups.append('text')
+                .attr('class', 'db-bar-pct')
+                .attr('x', d => xScale(d.name) + xScale.bandwidth() / 2)
+                .attr('y', d => Math.max(12, yScale(Math.min(yDomainMax, d.pct)) - 4))
+                .attr('text-anchor', 'middle')
+                .attr('fill', '#ffffff')
+                .attr('font-size', '10px')
+                .attr('font-weight', '700')
+                .text(d => `${Math.round(d.pct * 100)}%`);
+
+            groups.append('text')
+                .attr('class', 'db-bar-label')
+                .attr('x', d => xScale(d.name) + xScale.bandwidth() / 2)
+                .attr('y', svgH - 7)
+                .attr('text-anchor', 'middle')
+                .attr('fill', 'rgba(225,240,255,0.88)')
+                .attr('font-size', '10px')
+                .text(d => d.name);
+        }
+        if (typeof el.append === 'function') {
+            el.append(head, bar, chartWrap, list);
+        } else if (typeof el.appendChild === 'function') {
+            el.appendChild(head);
+            el.appendChild(bar);
+            el.appendChild(chartWrap);
+            el.appendChild(list);
+        }
     }
 
     // 结算弹窗 + 最高纪录(分数与生存时间分别记录,存 localStorage)
@@ -12798,31 +13610,52 @@ class Game {
     }
 
     // 全屏全景空间背景:铺满整个物理视口(含 letterbox 区域),消除宽屏/带鱼屏下的死黑边
+    // 缓存在离屏 Canvas 中,仅在视口尺寸/偏移变化时重建,避免每帧重复创建全屏渐变与遍历网格线
     _renderScreenBackground() {
         const ctx = this.ctx;
         const W = this.canvas.width, H = this.canvas.height;
-        // 深空星河全景渐变
+        const key = `${W}|${H}|${this.gameOffsetX}|${this.gameOffsetY}|${this.dpr || 1}`;
+        if (!this._screenBgCanvas || this._screenBgKey !== key) {
+            const off = typeof document !== 'undefined' && document.createElement ? document.createElement('canvas') : null;
+            if (off && off.getContext) {
+                off.width = W;
+                off.height = H;
+                const gctx = off.getContext('2d');
+                if (gctx) {
+                    const grad = gctx.createLinearGradient(0, 0, 0, H);
+                    grad.addColorStop(0, '#060d15');
+                    grad.addColorStop(1, '#04080d');
+                    gctx.fillStyle = grad;
+                    gctx.fillRect(0, 0, W, H);
+
+                    gctx.save();
+                    gctx.globalAlpha = 0.035;
+                    gctx.strokeStyle = '#00c8ff';
+                    gctx.lineWidth = 1;
+                    const grid = 60 * (this.dpr || 1);
+                    gctx.beginPath();
+                    for (let x = (this.gameOffsetX % grid); x < W; x += grid) {
+                        gctx.moveTo(x, 0); gctx.lineTo(x, H);
+                    }
+                    for (let y = (this.gameOffsetY % grid); y < H; y += grid) {
+                        gctx.moveTo(0, y); gctx.lineTo(W, y);
+                    }
+                    gctx.stroke();
+                    gctx.restore();
+                    this._screenBgCanvas = off;
+                    this._screenBgKey = key;
+                }
+            }
+        }
+        if (this._screenBgCanvas) {
+            ctx.drawImage(this._screenBgCanvas, 0, 0);
+            return;
+        }
         const grad = ctx.createLinearGradient(0, 0, 0, H);
         grad.addColorStop(0, '#060d15');
         grad.addColorStop(1, '#04080d');
         ctx.fillStyle = grad;
         ctx.fillRect(0, 0, W, H);
-
-        // 视口全景科技微光网格
-        ctx.save();
-        ctx.globalAlpha = 0.035;
-        ctx.strokeStyle = '#00c8ff';
-        ctx.lineWidth = 1;
-        const grid = 60 * (this.dpr || 1);
-        ctx.beginPath();
-        for (let x = (this.gameOffsetX % grid); x < W; x += grid) {
-            ctx.moveTo(x, 0); ctx.lineTo(x, H);
-        }
-        for (let y = (this.gameOffsetY % grid); y < H; y += grid) {
-            ctx.moveTo(0, y); ctx.lineTo(W, y);
-        }
-        ctx.stroke();
-        ctx.restore();
     }
 
     // 悬浮竞技场高科技能量光幕边界(800×600 逻辑战场边缘)
@@ -12994,9 +13827,16 @@ class Game {
             return;
         }
 
-        // 外层变换：全屏缩放 + 居中偏移
+        // 全屏微动摇晃偏移（击杀精英怪或魔王触发，同步作用于全屏画布与视口层）
+        const ksOff = this._getKillShakeOffset();
+        if (this.canvas && this.canvas.style) {
+            const nextTf = ksOff.active ? `translate3d(${(ksOff.dx * 0.45).toFixed(2)}px, ${(ksOff.dy * 0.45).toFixed(2)}px, 0)` : '';
+            if (this.canvas.style.transform !== nextTf) this.canvas.style.transform = nextTf;
+        }
+
+        // 外层变换：全屏缩放 + 居中偏移 + 全屏微动摇晃
         ctx.save();
-        ctx.translate(this.gameOffsetX, this.gameOffsetY);
+        ctx.translate(this.gameOffsetX + ksOff.dx * (this.dpr || 1), this.gameOffsetY + ksOff.dy * (this.dpr || 1));
         ctx.scale(this.gameScale, this.gameScale);
 
         // 内层变换：屏幕震动（仅影响游戏世界）
@@ -13008,11 +13848,13 @@ class Game {
 
         this.renderBackground();
         this._renderArenaBoundary(ctx);
+        this._renderDungeon(ctx);
         this._renderMeteorMarks(ctx);
         this._renderToxicPuddles(ctx);
         this._renderAltar(ctx);
         this._renderVoidRift(ctx);
         this._renderGreedAltar(ctx);
+        this._renderForge(ctx);
         this._renderSoulBeacons(ctx);
         this._renderTacticalPings(ctx);
         this._renderHazards(ctx);
@@ -13056,10 +13898,14 @@ class Game {
         this._renderSelfMarker();
         this._renderAimGuide();
 
+        // 渲染动态战场迷雾(在游戏世界对象之上,随玩家移动消散)
+        this._renderFog(ctx);
+
         ctx.restore(); // 结束震动变换
 
-        // 全屏视口空间覆盖层:受击红边暗角、连杀狂热火焰、全屏冰冻遮罩、魔王全屏红边与预告
+        // 全屏视口空间覆盖层:竖屏战术操控舱底板、受击红边暗角、连杀狂热火焰、全屏冰冻遮罩、魔王全屏红边与预告
         this._withScreen((scrW, scrH) => {
+            this._renderPortraitDeck(scrW, scrH);
             this._renderHurtVignette(scrW, scrH);
             this._renderFrenzyVignette(scrW, scrH);
             this._renderFreezeOverlay(scrW, scrH);
@@ -13094,9 +13940,887 @@ class Game {
             this._withMenu(() => this._renderPauseOverlay());
         }
 
-        ctx.restore(); // 结束缩放变换
+        // 击杀精英怪/魔王全屏微动脉冲边框与屏幕中央伤害数字汇总横幅(如“暴击! 1200”)
+        if (this.killSummary || this.killShake) {
+            this._withScreen((scrW, scrH) => {
+                this._renderKillSummary(scrW, scrH);
+            });
+        }
 
+        ctx.restore(); // 结束缩放变换
         this._renderJoystick();
+    }
+
+    // ── 🌫 动态战场迷雾系统 (Fog of War) ──
+    _initFog() {
+        this.fogCanvas = null;
+        this.fogCtx = null;
+        this.fogAlphaCanvas = null;
+        this.fogAlphaCtx = null;
+        this.fogW = 0;
+        this.fogH = 0;
+        this.fogGridScale = 4; // 800x600 缩小 4 倍，即 200x150 高性能离屏渲染
+        this.fogTime = 0;
+        this.fogWisps = [];
+        this._initFogWisps();
+    }
+
+    _initFogWisps() {
+        this.fogWisps = [];
+        const count = 28;
+        for (let i = 0; i < count; i++) {
+            this.fogWisps.push({
+                x: Math.random() * (this.width || 800),
+                y: Math.random() * (this.height || 600),
+                r: 45 + Math.random() * 65,
+                vx: (Math.random() - 0.5) * 8 + 3,
+                vy: (Math.random() - 0.5) * 6,
+                baseA: 0.25 + Math.random() * 0.45,
+                phase: Math.random() * Math.PI * 2,
+                freq: 0.8 + Math.random() * 1.4
+            });
+        }
+    }
+
+    _resetFog() {
+        this.fogTime = 0;
+        if (this.fogAlphaCtx && this.fogW > 0 && this.fogH > 0) {
+            this.fogAlphaCtx.fillStyle = '#000000';
+            this.fogAlphaCtx.fillRect(0, 0, this.fogW, this.fogH);
+        }
+    }
+
+    cycleFogDensity() {
+        const order = ['off', 'light', 'normal', 'dense'];
+        const idx = order.indexOf(this.fogDensity);
+        const next = order[(idx + 1) % order.length];
+        this.setFogDensity(next);
+        return next;
+    }
+
+    setFogDensity(density) {
+        if (!['off', 'light', 'normal', 'dense'].includes(density)) density = 'normal';
+        this.fogDensity = density;
+        Store.set('blockrun.fog', density);
+        if (typeof document !== 'undefined') {
+            const el = document.getElementById('fogLabel');
+            const btn = document.getElementById('fogToggle');
+            const names = { off: '关闭', light: '轻微', normal: '标准', dense: '浓郁' };
+            if (el) el.textContent = names[density] || '标准';
+            if (btn) btn.style.color = density === 'off' ? 'rgba(255,255,255,0.45)' : '#80deea';
+        }
+    }
+
+    _updateFog(dt = DT) {
+        if (this.fogDensity === 'off') return;
+        this.fogTime += dt;
+        const W = this.width || 800, H = this.height || 600;
+        for (const w of this.fogWisps) {
+            w.x += w.vx * dt;
+            w.y += w.vy * dt;
+            if (w.x < -w.r) w.x = W + w.r;
+            else if (w.x > W + w.r) w.x = -w.r;
+            if (w.y < -w.r) w.y = H + w.r;
+            else if (w.y > H + w.r) w.y = -w.r;
+        }
+
+        // 缓慢恢复未探索或回卷迷雾(极平缓再生，探索消散效果保留且有动态呼吸感)
+        const actx = this.fogAlphaCtx;
+        if (actx && this.fogW > 0 && this.fogH > 0) {
+            // 每秒约 0.012 的平缓迷雾回涌
+            actx.save();
+            actx.globalCompositeOperation = 'source-over';
+            actx.fillStyle = 'rgba(0, 0, 0, 0.0035)';
+            actx.fillRect(0, 0, this.fogW, this.fogH);
+            actx.restore();
+        }
+    }
+
+    _renderFog(ctx) {
+        if (this.fogDensity === 'off') return;
+        const W = this.width || 800, H = this.height || 600;
+        const scale = this.fogGridScale || 4;
+        const fw = Math.ceil(W / scale), fh = Math.ceil(H / scale);
+
+        // 惰性构建/适应离屏迷雾 Canvas
+        if (!this.fogCanvas) {
+            if (typeof document !== 'undefined' && document.createElement) {
+                this.fogCanvas = document.createElement('canvas');
+                this.fogAlphaCanvas = document.createElement('canvas');
+            }
+        }
+        if (!this.fogCanvas || !this.fogCanvas.getContext) return;
+
+        if (this.fogW !== fw || this.fogH !== fh) {
+            this.fogW = fw;
+            this.fogH = fh;
+            this.fogCanvas.width = fw;
+            this.fogCanvas.height = fh;
+            this.fogAlphaCanvas.width = fw;
+            this.fogAlphaCanvas.height = fh;
+            this.fogCtx = this.fogCanvas.getContext('2d');
+            this.fogAlphaCtx = this.fogAlphaCanvas.getContext('2d');
+            if (this.fogAlphaCtx) {
+                this.fogAlphaCtx.fillStyle = '#000000';
+                this.fogAlphaCtx.fillRect(0, 0, fw, fh);
+            }
+        }
+
+        const actx = this.fogAlphaCtx;
+        const fctx = this.fogCtx;
+        if (!actx || !fctx) return;
+
+        // 1. 玩家移动消散迷雾 (在 Alpha 画布上擦除黑色)
+        actx.save();
+        actx.globalCompositeOperation = 'destination-out';
+
+        const revealCircle = (cxWorld, cyWorld, rWorld, coreAlpha = 1.0) => {
+            const rcx = cxWorld / scale, rcy = cyWorld / scale, rr = rWorld / scale;
+            const grad = actx.createRadialGradient(rcx, rcy, rr * 0.3, rcx, rcy, rr);
+            grad.addColorStop(0, `rgba(0,0,0,${coreAlpha})`);
+            grad.addColorStop(0.75, `rgba(0,0,0,${coreAlpha * 0.85})`);
+            grad.addColorStop(1, 'rgba(0,0,0,0)');
+            actx.fillStyle = grad;
+            actx.beginPath();
+            actx.arc(rcx, rcy, rr, 0, Math.PI * 2);
+            actx.fill();
+        };
+
+        const p = this.player;
+        if (p && p.currentHealth > 0) {
+            const pcx = p.x + p.size / 2;
+            const pcy = p.y + p.size / 2;
+            const isDash = p.dashTimer > 0;
+            revealCircle(pcx, pcy, isDash ? 180 : 145, 1.0);
+        }
+
+        // 联机模式其他玩家也能驱散各自周围迷雾
+        if (this.mpMode && this.mpPlayers && this.mpPlayers.length) {
+            for (const mp of this.mpPlayers) {
+                if (!mp || mp.currentHealth <= 0) continue;
+                revealCircle(mp.x + (mp.size || 20) / 2, mp.y + (mp.size || 20) / 2, 135, 1.0);
+            }
+        }
+
+        // 祝福祭坛 / 远古铁砧 / 虚空裂隙 / 贪婪祭坛 / 深渊传送门 / 星界方尖碑 / 地牢神龛等强光源驱散周围迷雾
+        const ev = this.event;
+        if (ev) {
+            if (ev.type === 'altar' && ev.ax != null && ev.ay != null) {
+                revealCircle(ev.ax, ev.ay, (Game.ALTAR_R || 62) + 25, 0.88);
+            } else if (ev.type === 'forge' && ev.fx != null && ev.fy != null) {
+                revealCircle(ev.fx, ev.fy, (ev.r || 65) + 20, 0.9);
+            } else if (ev.type === 'void_rift' && ev.rx != null && ev.ry != null) {
+                revealCircle(ev.rx, ev.ry, (ev.r || 85) + 20, 0.88);
+            } else if (ev.type === 'greed' && ev.gx != null && ev.gy != null) {
+                revealCircle(ev.gx, ev.gy, (ev.r || 55) + 20, 0.85);
+            }
+        }
+        if (this.abyssPortal) {
+            revealCircle(this.abyssPortal.x, this.abyssPortal.y, (this.abyssPortal.radius || 45) + 35, 0.92);
+        }
+        if (this.trialObelisk) {
+            revealCircle(this.trialObelisk.x, this.trialObelisk.y, (this.trialObelisk.radius || 46) + 30, 0.9);
+        }
+        if (this.dungeonProps && this.dungeonProps.length) {
+            for (const dp of this.dungeonProps) {
+                if (!dp.used) revealCircle(dp.x, dp.y, 48, 0.65);
+            }
+        }
+        actx.restore();
+
+        // 2. 离屏合成动态战场深幽烟雾与气流旋涡
+        fctx.clearRect(0, 0, fw, fh);
+        fctx.save();
+        fctx.fillStyle = '#050c18';
+        fctx.fillRect(0, 0, fw, fh);
+
+        // 动态漂移的深蓝雾气团
+        const t = this.fogTime || 0;
+        for (let i = 0; i < this.fogWisps.length; i++) {
+            const w = this.fogWisps[i];
+            const wx = w.x / scale;
+            const wy = w.y / scale;
+            const wr = (w.r * (0.85 + 0.15 * Math.sin(t * w.freq + w.phase))) / scale;
+            const wa = w.baseA * (0.8 + 0.2 * Math.cos(t * 1.2 + w.phase));
+            const wGrad = fctx.createRadialGradient(wx, wy, 0, wx, wy, wr);
+            wGrad.addColorStop(0, `rgba(14, 28, 48, ${wa})`);
+            wGrad.addColorStop(0.65, `rgba(8, 18, 32, ${wa * 0.6})`);
+            wGrad.addColorStop(1, 'rgba(5, 12, 24, 0)');
+            fctx.fillStyle = wGrad;
+            fctx.beginPath();
+            fctx.arc(wx, wy, wr, 0, Math.PI * 2);
+            fctx.fill();
+        }
+
+        // 将迷雾掩码 (Alpha Canvas) 扣除到雾气层上
+        fctx.globalCompositeOperation = 'destination-in';
+        fctx.drawImage(this.fogAlphaCanvas, 0, 0);
+        fctx.restore();
+
+        // 3. 最终绘制到游戏主画布世界层 (根据浓度调节整体透明度)
+        const densityMap = { light: 0.38, normal: 0.70, dense: 0.90 };
+        const maxAlpha = densityMap[this.fogDensity] || 0.70;
+
+        ctx.save();
+        ctx.globalAlpha = maxAlpha;
+        ctx.imageSmoothingEnabled = true;
+        ctx.drawImage(this.fogCanvas, 0, 0, fw, fh, 0, 0, W, H);
+
+        // 玩家脚下柔和的视野边缘淡光光晕
+        if (p && p.currentHealth > 0) {
+            const pcx = p.x + p.size / 2;
+            const pcy = p.y + p.size / 2;
+            const vr = (p.dashTimer > 0 ? 175 : 140);
+            const rimGrad = ctx.createRadialGradient(pcx, pcy, vr * 0.78, pcx, pcy, vr);
+            rimGrad.addColorStop(0, 'rgba(0, 200, 255, 0)');
+            rimGrad.addColorStop(0.85, 'rgba(0, 229, 255, 0.08)');
+            rimGrad.addColorStop(1, 'rgba(0, 160, 220, 0)');
+            ctx.fillStyle = rimGrad;
+            ctx.beginPath();
+            ctx.arc(pcx, pcy, vr, 0, Math.PI * 2);
+            ctx.fill();
+        }
+
+        ctx.restore();
+    }
+
+    // ══════════════════════════════════════════════════════════════════
+    //  🏰 随机地下城与秘境迷宫系统 (Procedural Dungeon & Maze System)
+    //  支持: 'dungeon' (随机地牢) | 'maze' (秘境迷宫) | 'off' (开放战场)
+    // ══════════════════════════════════════════════════════════════════
+    _initDungeon() {
+        this.dungeonTileSize = 40;
+        this.dungeonCols = 20; // 800 / 40 = 20
+        this.dungeonRows = 15; // 600 / 40 = 15
+        this.dungeonGrid = [];
+        this.dungeonWalls = [];
+        this.dungeonRooms = [];
+        this.dungeonProps = [];
+        this.dungeonSeed = 0;
+        this._generateDungeon();
+    }
+
+    cycleDungeonMode() {
+        const order = ['dungeon', 'maze', 'off'];
+        const idx = order.indexOf(this.dungeonMode);
+        const next = order[(idx + 1) % order.length];
+        this.setDungeonMode(next);
+        return next;
+    }
+
+    setDungeonMode(mode, seed = null) {
+        if (!['off', 'dungeon', 'maze'].includes(mode)) mode = 'dungeon';
+        this.dungeonMode = mode;
+        Store.set('blockrun.dungeon', mode);
+        if (typeof document !== 'undefined') {
+            const el = document.getElementById('dungeonLabel');
+            const btn = document.getElementById('dungeonToggle');
+            const names = { dungeon: '随机地牢', maze: '秘境迷宫', off: '开放战场' };
+            if (el) el.textContent = names[mode] || '随机地牢';
+            if (btn) btn.style.color = mode === 'off' ? 'rgba(255,255,255,0.45)' : (mode === 'maze' ? '#ce93d8' : '#ffcc80');
+        }
+        this._generateDungeon(seed, mode);
+    }
+
+    // 魔王降临激战或星界试炼期间，地牢墙体自动沉降化为地面符文，保障大招跑位空间
+    _isDungeonWallsSubmerged() {
+        return this.bossState === 'active' || !!this.activeTrial;
+    }
+
+    _generateDungeon(seed = null, mode = this.dungeonMode) {
+        const cols = this.dungeonCols || 20;
+        const rows = this.dungeonRows || 15;
+        const ts = this.dungeonTileSize || 40;
+        this.dungeonGrid = Array.from({ length: rows }, () => new Array(cols).fill(0));
+        this.dungeonWalls = [];
+        this.dungeonRooms = [];
+        this.dungeonProps = [];
+
+        if (mode === 'off') return;
+
+        // 可复现确定性伪随机数生成器 (Mulberry32)
+        let s = (seed != null ? seed : Math.floor(Math.random() * 0x7fffffff)) >>> 0;
+        if (s === 0) s = 1337;
+        this.dungeonSeed = s;
+        const rng = () => {
+            s = (s + 0x6D2B79F5) >>> 0;
+            let t = Math.imul(s ^ (s >>> 15), 1 | s);
+            t = (t + Math.imul(t ^ (t >>> 7), 61 | t)) ^ t;
+            return ((t ^ (t >>> 14)) >>> 0) / 4294967296;
+        };
+
+        // 判断格子是否属于安全畅通区(外圈进场走廊 + 中央十字主干道 + 中央出生广场)
+        const isSafeZone = (gx, gy) => {
+            if (gx <= 1 || gx >= cols - 2 || gy <= 1 || gy >= rows - 2) return true;
+            if (gy >= 6 && gy <= 8) return true; // 中央水平主干道 (y: 240..360)
+            if (gx >= 8 && gx <= 11) return true; // 中央垂直主干道 (x: 320..480)
+            const wx = (gx + 0.5) * ts, wy = (gy + 0.5) * ts;
+            if (Math.hypot(wx - 400, wy - 300) < 135) return true;
+            return false;
+        };
+
+        // 四个象限区域: [x0, x1, y0, y1] (闭区间)
+        const quadrants = [
+            { x0: 2, x1: 7,  y0: 2, y1: 5,  qx: 0, qy: 0 }, // 左上秘室区
+            { x0: 12, x1: 17, y0: 2, y1: 5,  qx: 1, qy: 0 }, // 右上秘室区
+            { x0: 2, x1: 7,  y0: 9, y1: 12, qx: 0, qy: 1 }, // 左下秘室区
+            { x0: 12, x1: 17, y0: 9, y1: 12, qx: 1, qy: 1 }  // 右下秘室区
+        ];
+
+        const setTile = (gx, gy, val) => {
+            if (gx < 0 || gx >= cols || gy < 0 || gy >= rows) return;
+            if (isSafeZone(gx, gy)) return;
+            this.dungeonGrid[gy][gx] = val; // 1: 坚固黑曜石墙, 2: 可击碎奥术符文墙
+        };
+
+        const propTypes = ['chest', 'shrine', 'rune', 'chest'];
+        // 洗牌机关类型，保证每层至少有宝箱、治愈神龛与疾风符石
+        for (let i = propTypes.length - 1; i > 0; i--) {
+            const j = Math.floor(rng() * (i + 1));
+            const tmp = propTypes[i]; propTypes[i] = propTypes[j]; propTypes[j] = tmp;
+        }
+
+        if (mode === 'dungeon') {
+            // ── 随机地牢模式: 为每个象限随机生成战术地牢房型 ──
+            quadrants.forEach((q, qi) => {
+                const { x0, x1, y0, y1 } = q;
+                this.dungeonRooms.push({ x: x0 * ts, y: y0 * ts, w: (x1 - x0 + 1) * ts, h: (y1 - y0 + 1) * ts, kind: 'chamber' });
+                const archetype = Math.floor(rng() * 5);
+                let propGx = Math.floor((x0 + x1) / 2), propGy = Math.floor((y0 + y1) / 2);
+
+                if (archetype === 0) {
+                    // 房型 0: L型堡垒秘室 + 符文封门
+                    const cornerX = q.qx === 0 ? x0 : x1;
+                    const cornerY = q.qy === 0 ? y0 : y1;
+                    const innerX = q.qx === 0 ? x0 + 3 : x1 - 3;
+                    const innerY = q.qy === 0 ? y0 + 2 : y1 - 2;
+                    for (let x = Math.min(cornerX, innerX); x <= Math.max(cornerX, innerX); x++) {
+                        setTile(x, innerY, x === Math.floor((cornerX + innerX) / 2) ? 2 : 1);
+                    }
+                    for (let y = Math.min(cornerY, innerY); y <= Math.max(cornerY, innerY); y++) {
+                        setTile(innerX, y, y === cornerY ? 2 : 1);
+                    }
+                    propGx = q.qx === 0 ? x0 + 1 : x1 - 1;
+                    propGy = q.qy === 0 ? y0 + 1 : y1 - 1;
+                } else if (archetype === 1) {
+                    // 房型 1: 双柱神殿 (对称黑曜石柱 + 中央可碎裂符文晶墙)
+                    setTile(x0 + 1, y0 + 1, 1);
+                    setTile(x1 - 1, y0 + 1, 1);
+                    setTile(x0 + 1, y1 - 1, 1);
+                    setTile(x1 - 1, y1 - 1, 1);
+                    setTile(x0 + 2, y0 + 1, 2);
+                    setTile(x1 - 2, y1 - 1, 2);
+                    propGx = Math.floor((x0 + x1) / 2);
+                    propGy = Math.floor((y0 + y1) / 2);
+                } else if (archetype === 2) {
+                    // 房型 2: U型秘宝库 (三面围墙 + 符文晶石大门)
+                    const openTop = q.qy === 1;
+                    const wallY = openTop ? y1 : y0;
+                    const gateY = openTop ? y0 : y1;
+                    for (let x = x0 + 1; x <= x1 - 1; x++) setTile(x, wallY, 1);
+                    setTile(x0 + 1, y0 + 1, 1);
+                    setTile(x0 + 1, y1 - 1, 1);
+                    setTile(x1 - 1, y0 + 1, 1);
+                    setTile(x1 - 1, y1 - 1, 1);
+                    setTile(Math.floor((x0 + x1) / 2), gateY, 2); // 符文封门
+                    propGx = Math.floor((x0 + x1) / 2);
+                    propGy = openTop ? y0 + 1 : y1 - 1;
+                } else if (archetype === 3) {
+                    // 房型 3: 交错战术掩体走廊
+                    setTile(x0 + 1, y0, 1);
+                    setTile(x0 + 2, y0, 1);
+                    setTile(x0 + 2, y0 + 1, 2);
+                    setTile(x1 - 1, y1, 1);
+                    setTile(x1 - 2, y1, 1);
+                    setTile(x1 - 2, y1 - 1, 2);
+                    propGx = Math.floor((x0 + x1) / 2);
+                    propGy = Math.floor((y0 + y1) / 2);
+                } else {
+                    // 房型 4: 十字祭坛密室
+                    const mx = Math.floor((x0 + x1) / 2);
+                    setTile(mx - 2, y0 + 1, 1);
+                    setTile(mx + 2, y0 + 1, 1);
+                    setTile(mx - 2, y1 - 1, 1);
+                    setTile(mx + 2, y1 - 1, 1);
+                    setTile(mx, q.qy === 0 ? y1 : y0, 2);
+                    propGx = mx;
+                    propGy = q.qy === 0 ? y0 + 1 : y1 - 1;
+                }
+
+                // 确保机关所在格不是墙体
+                this.dungeonGrid[propGy][propGx] = 0;
+                this.dungeonProps.push({
+                    id: nextEntityId(),
+                    type: propTypes[qi % propTypes.length],
+                    gx: propGx,
+                    gy: propGy,
+                    x: (propGx + 0.5) * ts,
+                    y: (propGy + 0.5) * ts,
+                    radius: 16,
+                    used: false,
+                    pulse: rng() * Math.PI * 2
+                });
+            });
+        } else if (mode === 'maze') {
+            // ── 秘境迷宫模式: 递归回溯迷宫 + 环路打通 (Braided Labyrinth) ──
+            quadrants.forEach((q, qi) => {
+                const { x0, x1, y0, y1 } = q;
+                this.dungeonRooms.push({ x: x0 * ts, y: y0 * ts, w: (x1 - x0 + 1) * ts, h: (y1 - y0 + 1) * ts, kind: 'labyrinth' });
+                // 先在象限内铺设迷宫骨架墙，再用递归回溯挖掘通道
+                const subW = x1 - x0 + 1, subH = y1 - y0 + 1;
+                for (let gy = y0; gy <= y1; gy++) {
+                    for (let gx = x0; gx <= x1; gx++) {
+                        setTile(gx, gy, 1);
+                    }
+                }
+                const visited = new Set();
+                const startLx = q.qx === 0 ? 0 : subW - 1;
+                const startLy = q.qy === 0 ? 0 : subH - 1;
+                const stack = [[startLx, startLy]];
+                visited.add(`${startLx},${startLy}`);
+                this.dungeonGrid[y0 + startLy][x0 + startLx] = 0;
+
+                while (stack.length > 0) {
+                    const [cx, cy] = stack[stack.length - 1];
+                    const dirs = [[2, 0], [-2, 0], [0, 2], [0, -2]];
+                    for (let i = dirs.length - 1; i > 0; i--) {
+                        const j = Math.floor(rng() * (i + 1));
+                        const tmp = dirs[i]; dirs[i] = dirs[j]; dirs[j] = tmp;
+                    }
+                    let carved = false;
+                    for (const [dx, dy] of dirs) {
+                        const nx = cx + dx, ny = cy + dy;
+                        if (nx >= 0 && nx < subW && ny >= 0 && ny < subH && !visited.has(`${nx},${ny}`)) {
+                            visited.add(`${nx},${ny}`);
+                            this.dungeonGrid[y0 + cy + dy / 2][x0 + cx + dx / 2] = 0;
+                            this.dungeonGrid[y0 + ny][x0 + nx] = 0;
+                            stack.push([nx, ny]);
+                            carved = true;
+                            break;
+                        }
+                    }
+                    if (!carved) stack.pop();
+                }
+
+                // 将部分迷宫内墙转化为可击碎符文墙，并开辟入口与环路避免死胡同卡死
+                const midX = Math.floor((x0 + x1) / 2);
+                const midY = Math.floor((y0 + y1) / 2);
+                this.dungeonGrid[y0][midX] = 0;
+                this.dungeonGrid[y1][midX] = 0;
+                this.dungeonGrid[midY][x0] = 0;
+                this.dungeonGrid[midY][x1] = 0;
+
+                for (let gy = y0; gy <= y1; gy++) {
+                    for (let gx = x0; gx <= x1; gx++) {
+                        if (this.dungeonGrid[gy][gx] === 1 && rng() < 0.28) {
+                            this.dungeonGrid[gy][gx] = 2; // 28% 迷宫墙可被火力轰碎开辟捷径
+                        }
+                    }
+                }
+
+                // 在迷宫深处放置秘境宝箱/神龛/符石
+                const propGx = midX;
+                const propGy = midY;
+                this.dungeonGrid[propGy][propGx] = 0;
+                this.dungeonProps.push({
+                    id: nextEntityId(),
+                    type: propTypes[qi % propTypes.length],
+                    gx: propGx,
+                    gy: propGy,
+                    x: (propGx + 0.5) * ts,
+                    y: (propGy + 0.5) * ts,
+                    radius: 16,
+                    used: false,
+                    pulse: rng() * Math.PI * 2
+                });
+            });
+        }
+
+        // BFS 连通性校验与自动修复: 确保从中心 (10, 7) 出发 100% 开放地面格可达，绝无封闭孤岛
+        this._validateDungeonConnectivity();
+
+        // 从网格构建实体墙列表
+        this._rebuildDungeonWallsFromGrid();
+    }
+
+    _validateDungeonConnectivity() {
+        const rows = this.dungeonRows || 15;
+        const cols = this.dungeonCols || 20;
+        const grid = this.dungeonGrid;
+        if (!grid || !grid.length) return true;
+
+        const startX = Math.floor(cols / 2), startY = Math.floor(rows / 2);
+        grid[startY][startX] = 0;
+
+        const getReachable = () => {
+            const vis = Array.from({ length: rows }, () => new Array(cols).fill(false));
+            const q = [[startX, startY]];
+            vis[startY][startX] = true;
+            let head = 0;
+            while (head < q.length) {
+                const [cx, cy] = q[head++];
+                const dirs = [[1, 0], [-1, 0], [0, 1], [0, -1]];
+                for (const [dx, dy] of dirs) {
+                    const nx = cx + dx, ny = cy + dy;
+                    if (nx >= 0 && nx < cols && ny >= 0 && ny < rows && !vis[ny][nx] && grid[ny][nx] === 0) {
+                        vis[ny][nx] = true;
+                        q.push([nx, ny]);
+                    }
+                }
+            }
+            return vis;
+        };
+
+        for (let iter = 0; iter < 30; iter++) {
+            const vis = getReachable();
+            let isolated = null;
+            for (let y = 0; y < rows && !isolated; y++) {
+                for (let x = 0; x < cols; x++) {
+                    if (grid[y][x] === 0 && !vis[y][x]) {
+                        isolated = [x, y];
+                        break;
+                    }
+                }
+            }
+            if (!isolated) return true;
+
+            // 沿着孤岛向中心方向凿开一格墙体
+            let [ix, iy] = isolated;
+            const dx = Math.sign(startX - ix), dy = Math.sign(startY - iy);
+            if (dx !== 0 && grid[iy][ix + dx] !== 0) grid[iy][ix + dx] = 0;
+            else if (dy !== 0 && grid[iy + dy][ix] !== 0) grid[iy + dy][ix] = 0;
+            else {
+                for (const [ox, oy] of [[1, 0], [-1, 0], [0, 1], [0, -1]]) {
+                    const nx = ix + ox, ny = iy + oy;
+                    if (nx >= 0 && nx < cols && ny >= 0 && ny < rows && grid[ny][nx] !== 0) {
+                        grid[ny][nx] = 0;
+                        break;
+                    }
+                }
+            }
+        }
+        return true;
+    }
+
+    _rebuildDungeonWallsFromGrid() {
+        const rows = this.dungeonRows || 15;
+        const cols = this.dungeonCols || 20;
+        const ts = this.dungeonTileSize || 40;
+        const grid = this.dungeonGrid;
+        this.dungeonWalls = [];
+        if (!grid || !grid.length) return;
+
+        const maxHp = Math.round(75 * (this.difficulty || 1));
+        for (let gy = 0; gy < rows; gy++) {
+            for (let gx = 0; gx < cols; gx++) {
+                const cell = grid[gy][gx];
+                if (cell === 1 || cell === 2) {
+                    this.dungeonWalls.push({
+                        gx,
+                        gy,
+                        x: gx * ts,
+                        y: gy * ts,
+                        w: ts,
+                        h: ts,
+                        destructible: cell === 2,
+                        hp: cell === 2 ? maxHp : Infinity,
+                        maxHp: cell === 2 ? maxHp : Infinity,
+                        hitFlash: 0
+                    });
+                }
+            }
+        }
+    }
+
+    _checkPointHitsDungeonWall(px, py, radius = 4) {
+        if (this.dungeonMode === 'off' || this._isDungeonWallsSubmerged()) return null;
+        if (!this.dungeonWalls || !this.dungeonWalls.length) return null;
+        for (let i = 0; i < this.dungeonWalls.length; i++) {
+            const w = this.dungeonWalls[i];
+            const nearX = Math.max(w.x, Math.min(px, w.x + w.w));
+            const nearY = Math.max(w.y, Math.min(py, w.y + w.h));
+            const dx = px - nearX, dy = py - nearY;
+            if (dx * dx + dy * dy <= radius * radius) return w;
+        }
+        return null;
+    }
+
+    _damageDungeonWall(wall, dmg) {
+        if (!wall || !wall.destructible) return false;
+        wall.hp -= dmg;
+        wall.hitFlash = 0.12;
+        const cx = wall.x + wall.w / 2, cy = wall.y + wall.h / 2;
+        this.spawnParticles(cx, cy, '#80deea', 4, 1, 3, 1, 2.5, 0.05);
+        if (wall.hp <= 0) {
+            if (this.dungeonGrid && this.dungeonGrid[wall.gy]) {
+                this.dungeonGrid[wall.gy][wall.gx] = 0;
+            }
+            const idx = this.dungeonWalls.indexOf(wall);
+            if (idx >= 0) this.dungeonWalls.splice(idx, 1);
+            this.spawnParticles(cx, cy, '#00e5ff', 16, 2, 5, 2, 4, 0.04);
+            this.effects.push({ type: 'shockwave', x: cx, y: cy, radius: 6, maxRadius: 42, color: '#00e5ff', ttl: 0.25, maxTtl: 0.25 });
+            this.screenShake = Math.max(this.screenShake || 0, 0.12);
+            Sound.play('bomb');
+            this.score += Math.round(15 * (this.scoreMult || 1));
+            this.exp += 8;
+            if (Math.random() < 0.28) {
+                this._dropRandomItem(cx - 12, cy - 12);
+            }
+            return true;
+        }
+        return false;
+    }
+
+    // 平滑 AABB 实体与地牢墙体碰撞推出与拐角滑动(Corner Sliding)
+    _resolveDungeonCollision(entity, isEnemy = false, targetPlayer = null) {
+        if (!entity || this.dungeonMode === 'off' || this._isDungeonWallsSubmerged()) return false;
+        if (!this.dungeonWalls || !this.dungeonWalls.length) return false;
+        // 潜伏者钻地期间可从地牢墙下潜行通过
+        if (isEnemy && entity.type === 'burrower' && entity.state !== 2) return false;
+
+        const size = entity.size || 20;
+        const half = size * 0.5;
+        let collided = false;
+
+        for (let pass = 0; pass < 2; pass++) {
+            for (let i = 0; i < this.dungeonWalls.length; i++) {
+                const w = this.dungeonWalls[i];
+                const ecx = entity.x + half;
+                const ecy = entity.y + half;
+                const wcx = w.x + w.w * 0.5;
+                const wcy = w.y + w.h * 0.5;
+                const dx = ecx - wcx;
+                const dy = ecy - wcy;
+                const overlapX = (half + w.w * 0.5) - Math.abs(dx);
+                const overlapY = (half + w.h * 0.5) - Math.abs(dy);
+
+                if (overlapX > 0 && overlapY > 0) {
+                    collided = true;
+                    if (overlapX < overlapY) {
+                        entity.x += dx >= 0 ? overlapX : -overlapX;
+                        // 敌人追击被纵向墙挡住时，顺着墙面朝目标纵向滑动绕障
+                        if (isEnemy && pass === 0 && targetPlayer) {
+                            const tcy = (targetPlayer.y || 0) + (targetPlayer.size || 20) * 0.5;
+                            const slideDir = Math.abs(tcy - ecy) > 4 ? Math.sign(tcy - ecy) : (ecy < 300 ? 1 : -1);
+                            entity.y += slideDir * Math.min(2.2, entity.speed || 1.8);
+                        }
+                    } else {
+                        entity.y += dy >= 0 ? overlapY : -overlapY;
+                        // 敌人追击被横向墙挡住时，顺着墙面朝目标横向滑动绕障
+                        if (isEnemy && pass === 0 && targetPlayer) {
+                            const tcx = (targetPlayer.x || 0) + (targetPlayer.size || 20) * 0.5;
+                            const slideDir = Math.abs(tcx - ecx) > 4 ? Math.sign(tcx - ecx) : (ecx < 400 ? 1 : -1);
+                            entity.x += slideDir * Math.min(2.2, entity.speed || 1.8);
+                        }
+                    }
+                    entity.x = Math.max(0, Math.min((this.width || 800) - size, entity.x));
+                    entity.y = Math.max(0, Math.min((this.height || 600) - size, entity.y));
+                }
+            }
+        }
+        return collided;
+    }
+
+    _updateDungeon(dt = DT) {
+        if (this.dungeonMode === 'off') return;
+        for (let i = 0; i < this.dungeonWalls.length; i++) {
+            const w = this.dungeonWalls[i];
+            if (w.hitFlash > 0) w.hitFlash = Math.max(0, w.hitFlash - dt);
+        }
+        if (!this.dungeonProps || !this.dungeonProps.length) return;
+        const players = this._livingPlayers();
+        for (let i = 0; i < this.dungeonProps.length; i++) {
+            const dp = this.dungeonProps[i];
+            dp.pulse = (dp.pulse || 0) + dt * 3.2;
+            if (dp.used) continue;
+            for (const p of players) {
+                const pcx = p.x + p.size / 2, pcy = p.y + p.size / 2;
+                if (Math.hypot(pcx - dp.x, pcy - dp.y) <= (dp.radius || 16) + p.size * 0.55) {
+                    this._activateDungeonProp(dp, p);
+                    break;
+                }
+            }
+        }
+    }
+
+    _activateDungeonProp(dp, player) {
+        if (!dp || dp.used) return;
+        dp.used = true;
+        const p = player || this.player;
+        const cx = dp.x, cy = dp.y;
+
+        if (dp.type === 'chest') {
+            // 📦 地牢宝箱: 爆出金币粒子、分数、经验与装备/宝石/道具
+            this.score += Math.round(60 * (this.scoreMult || 1));
+            this.exp += 30;
+            this.checkLevelUp();
+            if (Math.random() < 0.35) this._dropGem(cx - 12, cy - 12);
+            else if (Math.random() < 0.35) this._dropGear(cx - 12, cy - 12);
+            else this._dropRandomItem(cx - 12, cy - 12);
+            this.spawnParticles(cx, cy, '#ffd740', 22, 2, 6, 2, 4.5, 0.04);
+            this.effects.push({ type: 'shockwave', x: cx, y: cy, radius: 6, maxRadius: 55, color: '#ffd740', ttl: 0.35, maxTtl: 0.35 });
+            Sound.play('treasure');
+            this._showFloatingText('📦 开启地牢宝箱! +60分 +30经验', cx, cy - 18, '#ffd740');
+        } else if (dp.type === 'shrine') {
+            // ⛩ 治愈神龛: 回复 35% 最大生命并赋予 20% 护盾
+            const heal = Math.round(p.maxHealth * 0.35);
+            p.currentHealth = Math.min(p.maxHealth, p.currentHealth + heal);
+            const shieldGain = Math.round(p.maxHealth * 0.20);
+            p.shield = Math.min(p.maxHealth, (p.shield || 0) + shieldGain);
+            this.spawnParticles(cx, cy, '#69f0ae', 20, 1.5, 5, 2, 4, 0.04);
+            this.effects.push({ type: 'shockwave', x: cx, y: cy, radius: 8, maxRadius: 68, color: '#69f0ae', ttl: 0.4, maxTtl: 0.4 });
+            Sound.play('bless');
+            this._showFloatingText(`⛩ 治愈神龛! +${heal}生命 +${shieldGain}护盾`, cx, cy - 18, '#69f0ae');
+        } else if (dp.type === 'rune') {
+            // ⚡ 疾风符石: 赋予 6 秒祝福加速与增伤、立即刷新冲刺冷却并驱散大片迷雾
+            p.blessTimer = Math.max(p.blessTimer || 0, 6);
+            p.dashCooldown = 0;
+            this.spawnParticles(cx, cy, '#00e5ff', 20, 2, 6, 2, 4, 0.04);
+            this.effects.push({ type: 'shockwave', x: cx, y: cy, radius: 8, maxRadius: 85, color: '#00e5ff', ttl: 0.4, maxTtl: 0.4 });
+            Sound.play('cdReady');
+            this._showFloatingText('⚡ 疾风符石激活! 移速攻速飙升 · 冲刺就绪', cx, cy - 18, '#80deea');
+        }
+    }
+
+    _renderDungeon(ctx) {
+        if (this.dungeonMode === 'off') return;
+        const submerged = this._isDungeonWallsSubmerged();
+        ctx.save();
+
+        // 1. 绘制地牢/迷宫房间石板地砖底纹
+        if (this.dungeonRooms && this.dungeonRooms.length) {
+            const isMaze = this.dungeonMode === 'maze';
+            for (const rm of this.dungeonRooms) {
+                ctx.fillStyle = isMaze ? 'rgba(42, 20, 68, 0.22)' : 'rgba(24, 36, 52, 0.26)';
+                roundRect(ctx, rm.x + 2, rm.y + 2, rm.w - 4, rm.h - 4, 8);
+                ctx.fill();
+                ctx.strokeStyle = isMaze ? 'rgba(186, 104, 200, 0.16)' : 'rgba(120, 144, 156, 0.16)';
+                ctx.lineWidth = 1;
+                roundRect(ctx, rm.x + 2, rm.y + 2, rm.w - 4, rm.h - 4, 8);
+                ctx.stroke();
+            }
+        }
+
+        // 2. 绘制地牢机关 (📦宝箱 / ⛩治愈神龛 / ⚡疾风符石)
+        if (this.dungeonProps && this.dungeonProps.length) {
+            for (const dp of this.dungeonProps) {
+                const cx = dp.x, cy = dp.y;
+                if (dp.used) {
+                    ctx.fillStyle = 'rgba(120, 144, 156, 0.22)';
+                    ctx.beginPath();
+                    ctx.arc(cx, cy, 11, 0, Math.PI * 2);
+                    ctx.fill();
+                    continue;
+                }
+                const pulse = 0.85 + 0.15 * Math.sin(dp.pulse || 0);
+                const col = dp.type === 'chest' ? '#ffd740' : dp.type === 'shrine' ? '#69f0ae' : '#00e5ff';
+                ctx.fillStyle = dp.type === 'chest' ? 'rgba(255, 215, 64, 0.16)' : dp.type === 'shrine' ? 'rgba(105, 240, 174, 0.16)' : 'rgba(0, 229, 255, 0.16)';
+                ctx.beginPath();
+                ctx.arc(cx, cy, 18 * pulse, 0, Math.PI * 2);
+                ctx.fill();
+                ctx.strokeStyle = col;
+                ctx.lineWidth = 1.5;
+                ctx.beginPath();
+                ctx.arc(cx, cy, 14 * pulse, 0, Math.PI * 2);
+                ctx.stroke();
+
+                const icon = dp.type === 'chest' ? '📦' : dp.type === 'shrine' ? '⛩' : '⚡';
+                ctx.font = '16px Arial';
+                ctx.textAlign = 'center';
+                ctx.textBaseline = 'middle';
+                ctx.fillStyle = '#ffffff';
+                ctx.fillText(icon, cx, cy);
+            }
+        }
+
+        // 3. 绘制地牢/迷宫立体墙体 (魔王战/试炼期间沉降为地面虚线符文印记)
+        if (this.dungeonWalls && this.dungeonWalls.length) {
+            for (let i = 0; i < this.dungeonWalls.length; i++) {
+                const w = this.dungeonWalls[i];
+                if (submerged) {
+                    ctx.strokeStyle = w.destructible ? 'rgba(0, 229, 255, 0.22)' : 'rgba(144, 164, 174, 0.18)';
+                    ctx.lineWidth = 1;
+                    ctx.strokeRect(w.x + 4, w.y + 4, w.w - 8, w.h - 8);
+                    continue;
+                }
+
+                // 底部投影
+                ctx.fillStyle = 'rgba(0, 0, 0, 0.42)';
+                roundRect(ctx, w.x + 2, w.y + 4, w.w - 2, w.h - 2, 5);
+                ctx.fill();
+
+                if (w.destructible) {
+                    // 可击碎奥术符文晶石墙
+                    const hpRatio = Math.max(0, Math.min(1, w.hp / (w.maxHp || 75)));
+                    ctx.fillStyle = w.hitFlash > 0 ? '#e0f7fa' : '#13364e';
+                    roundRect(ctx, w.x + 1, w.y + 1, w.w - 2, w.h - 2, 5);
+                    ctx.fill();
+
+                    // 顶部立体高光斜面
+                    ctx.fillStyle = 'rgba(0, 229, 255, 0.28)';
+                    roundRect(ctx, w.x + 3, w.y + 2, w.w - 6, 8, 3);
+                    ctx.fill();
+
+                    ctx.strokeStyle = w.hitFlash > 0 ? '#ffffff' : '#00e5ff';
+                    ctx.lineWidth = 1.6;
+                    roundRect(ctx, w.x + 1.5, w.y + 1.5, w.w - 3, w.h - 3, 5);
+                    ctx.stroke();
+
+                    // 中央发光符文晶核与受创裂纹
+                    const cx = w.x + w.w / 2, cy = w.y + w.h / 2;
+                    ctx.fillStyle = '#84ffff';
+                    ctx.beginPath();
+                    ctx.moveTo(cx, cy - 7);
+                    ctx.lineTo(cx + 6, cy);
+                    ctx.lineTo(cx, cy + 7);
+                    ctx.lineTo(cx - 6, cy);
+                    ctx.closePath();
+                    ctx.fill();
+
+                    if (hpRatio < 0.85) {
+                        ctx.strokeStyle = '#e0f7fa';
+                        ctx.lineWidth = 1.4;
+                        ctx.beginPath();
+                        ctx.moveTo(w.x + 7, w.y + 7);
+                        ctx.lineTo(cx, cy);
+                        if (hpRatio < 0.5) {
+                            ctx.lineTo(w.x + w.w - 7, w.y + w.h - 8);
+                            ctx.moveTo(w.x + w.w - 8, w.y + 8);
+                            ctx.lineTo(cx, cy);
+                        }
+                        ctx.stroke();
+                    }
+                } else {
+                    // 坚固黑曜石立体砖墙
+                    const isMaze = this.dungeonMode === 'maze';
+                    ctx.fillStyle = isMaze ? '#241734' : '#1c2836';
+                    roundRect(ctx, w.x + 1, w.y + 1, w.w - 2, w.h - 2, 5);
+                    ctx.fill();
+
+                    // 顶部石砖高光斜面
+                    ctx.fillStyle = isMaze ? 'rgba(179, 136, 255, 0.22)' : 'rgba(144, 164, 174, 0.25)';
+                    roundRect(ctx, w.x + 3, w.y + 2, w.w - 6, 8, 3);
+                    ctx.fill();
+
+                    // 石砖接缝纹理
+                    ctx.strokeStyle = isMaze ? 'rgba(149, 117, 205, 0.45)' : 'rgba(96, 125, 139, 0.55)';
+                    ctx.lineWidth = 1.4;
+                    roundRect(ctx, w.x + 1.5, w.y + 1.5, w.w - 3, w.h - 3, 5);
+                    ctx.stroke();
+
+                    ctx.strokeStyle = 'rgba(0, 0, 0, 0.35)';
+                    ctx.lineWidth = 1;
+                    ctx.beginPath();
+                    ctx.moveTo(w.x + 4, w.y + w.h * 0.5);
+                    ctx.lineTo(w.x + w.w - 4, w.y + w.h * 0.5);
+                    ctx.moveTo(w.x + w.w * 0.5, w.y + 4);
+                    ctx.lineTo(w.x + w.w * 0.5, w.y + w.h * 0.5);
+                    ctx.stroke();
+                }
+            }
+        }
+
+        ctx.restore();
     }
 
     // 拖拽瞄准:从玩家身上画出瞄准方向(冲刺显示实际冲刺距离,技能显示锁定扇形)
@@ -13181,30 +14905,203 @@ class Game {
     // 屏幕空间覆盖层坐标系:逻辑 CSS 像素,铺满整个视口(消除横屏/带鱼屏下 800×600 的黑边切断感)
     _withScreen(fn) {
         const ctx = this.ctx;
+        const ksOff = this._getKillShakeOffset();
         ctx.save();
-        ctx.setTransform(this.dpr, 0, 0, this.dpr, 0, 0);
+        ctx.setTransform(this.dpr, 0, 0, this.dpr, ksOff.dx * this.dpr, ksOff.dy * this.dpr);
         const scrW = this.canvas.width / this.dpr;
         const scrH = this.canvas.height / this.dpr;
         try { fn(scrW, scrH); } finally { ctx.restore(); }
+    }
+
+    // 渲染击杀精英怪/魔王的全屏微动光效边框与屏幕中央伤害数字汇总(如“暴击! 1200”)
+    _renderKillSummary(scrW, scrH) {
+        const ctx = this.ctx;
+        const ks = this._getKillShakeOffset();
+        if (ks.active) {
+            ctx.save();
+            const pulseAlpha = (ks.isBoss ? 0.34 : 0.24) * ks.decay;
+            ctx.strokeStyle = ks.isBoss ? `rgba(255, 215, 0, ${pulseAlpha})` : `rgba(255, 171, 64, ${pulseAlpha})`;
+            ctx.lineWidth = ks.isBoss ? 10 : 6;
+            ctx.strokeRect(0, 0, scrW, scrH);
+            ctx.restore();
+        }
+        const sum = this.killSummary;
+        if (!sum || sum.timer <= 0 || sum.maxTimer <= 0) return;
+
+        const p = Math.max(0, Math.min(1, 1 - sum.timer / sum.maxTimer));
+        let scale = 1.0;
+        if (p < 0.14) {
+            scale = 0.45 + (p / 0.14) * 0.77;
+        } else if (p < 0.26) {
+            scale = 1.22 - ((p - 0.14) / 0.12) * 0.22;
+        } else {
+            scale = 1.0 + Math.sin(p * 26) * 0.025;
+        }
+        const alpha = p < 0.72 ? 1.0 : Math.max(0, 1 - (p - 0.72) / 0.28);
+        const floatY = p < 0.70 ? 0 : -((p - 0.70) / 0.30) * 20;
+        const jx = p < 0.25 ? Math.sin(p * 115) * 2.6 * (1 - p * 4) : 0;
+        const jy = p < 0.25 ? Math.cos(p * 145) * 2.0 * (1 - p * 4) : 0;
+
+        const cx = scrW / 2 + jx;
+        const cy = scrH * 0.40 + floatY + jy;
+        const bw = sum.isBoss ? 268 : 236;
+        const bh = sum.isBoss ? 68 : 60;
+
+        ctx.save();
+        ctx.globalAlpha = alpha;
+        ctx.translate(cx, cy);
+        ctx.scale(scale, scale);
+
+        // 1. 冲击波扩散环 (前 45% 时长)
+        if (p < 0.45) {
+            const rp = p / 0.45;
+            const ringR = 26 + rp * (sum.isBoss ? 125 : 92);
+            ctx.strokeStyle = sum.isBoss
+                ? `rgba(255, 215, 0, ${(1 - rp) * 0.75})`
+                : `rgba(255, 171, 64, ${(1 - rp) * 0.65})`;
+            ctx.lineWidth = (1 - rp) * 4 + 1;
+            ctx.beginPath();
+            ctx.arc(0, 0, ringR, 0, Math.PI * 2);
+            ctx.stroke();
+        }
+
+        // 2. 径向暴击星芒刺线
+        const rays = sum.isBoss ? 12 : 8;
+        const rayAlpha = p < 0.55 ? (1 - p / 0.55) * 0.55 : 0;
+        if (rayAlpha > 0.02) {
+            ctx.strokeStyle = sum.isBoss ? `rgba(255, 235, 59, ${rayAlpha})` : `rgba(255, 171, 64, ${rayAlpha})`;
+            ctx.lineWidth = 2;
+            for (let i = 0; i < rays; i++) {
+                const a = (i / rays) * Math.PI * 2 + p * 0.6;
+                const rIn = bh * 0.42;
+                const rOut = (i % 2 === 0 ? bw * 0.58 : bw * 0.46) * (0.85 + 0.25 * Math.sin(p * 12 + i));
+                ctx.beginPath();
+                ctx.moveTo(Math.cos(a) * rIn, Math.sin(a) * (rIn * 0.45));
+                ctx.lineTo(Math.cos(a) * rOut, Math.sin(a) * (rOut * 0.45));
+                ctx.stroke();
+            }
+        }
+
+        // 3. 暗曜战术底板与双层流光边框
+        const bgGrad = ctx.createLinearGradient(0, -bh / 2, 0, bh / 2);
+        bgGrad.addColorStop(0, sum.isBoss ? 'rgba(42, 16, 24, 0.92)' : 'rgba(28, 16, 26, 0.90)');
+        bgGrad.addColorStop(1, 'rgba(10, 6, 14, 0.94)');
+        ctx.fillStyle = bgGrad;
+        roundRect(ctx, -bw / 2, -bh / 2, bw, bh, 14);
+        ctx.fill();
+
+        ctx.strokeStyle = sum.color;
+        ctx.lineWidth = sum.isBoss ? 2.4 : 2.0;
+        roundRect(ctx, -bw / 2, -bh / 2, bw, bh, 14);
+        ctx.stroke();
+
+        ctx.strokeStyle = 'rgba(255, 255, 255, 0.22)';
+        ctx.lineWidth = 1;
+        roundRect(ctx, -bw / 2 + 3, -bh / 2 + 3, bw - 6, bh - 6, 11);
+        ctx.stroke();
+
+        // 4. 顶部击破副标题
+        ctx.font = 'bold 12px Arial';
+        ctx.textAlign = 'center';
+        ctx.textBaseline = 'middle';
+        ctx.fillStyle = sum.isBoss ? '#ffe57f' : '#ffd180';
+        ctx.fillText(sum.sub, 0, -bh * 0.24);
+
+        // 5. 核心伤害数字汇总 (如 “💥 暴击! 1200”)
+        const mainText = `💥 ${sum.text}`;
+        ctx.font = `bold ${sum.isBoss ? 29 : 25}px Arial`;
+        ctx.lineJoin = 'round';
+        ctx.lineWidth = 4.5;
+        ctx.strokeStyle = 'rgba(8, 3, 6, 0.94)';
+        ctx.strokeText(mainText, 0, bh * 0.16);
+
+        const txtGrad = ctx.createLinearGradient(0, -2, 0, bh * 0.36);
+        txtGrad.addColorStop(0, '#ffffff');
+        txtGrad.addColorStop(0.35, '#ffee58');
+        txtGrad.addColorStop(1, sum.accent || '#ff6d00');
+        ctx.fillStyle = txtGrad;
+        ctx.fillText(mainText, 0, bh * 0.16);
+
+        ctx.restore();
+    }
+
+    // 竖屏战术操控舱(仅在移动端竖屏比例 scrH > scrW * 1.15 时渲染):
+    // 将竞技场下方的留白区域塑造为带微光边框与分区引导的掌机触控甲板，消除黑边割裂感
+    _renderPortraitDeck(scrW, scrH) {
+        if (scrH <= scrW * 1.15) return;
+        const arenaBottom = (this.gameOffsetY + this.height * this.gameScale) / (this.dpr || 1);
+        const deckTop = Math.round(arenaBottom + 10);
+        const deckH = scrH - deckTop - 10;
+        if (deckH < 90) return;
+        const ctx = this.ctx;
+        const padX = 12;
+        const deckW = scrW - padX * 2;
+        ctx.save();
+        const grad = ctx.createLinearGradient(0, deckTop, 0, deckTop + deckH);
+        grad.addColorStop(0, 'rgba(6, 18, 34, 0.58)');
+        grad.addColorStop(1, 'rgba(3, 10, 20, 0.78)');
+        ctx.fillStyle = grad;
+        roundRect(ctx, padX, deckTop, deckW, deckH, 16);
+        ctx.fill();
+        ctx.strokeStyle = 'rgba(0, 200, 255, 0.22)';
+        ctx.lineWidth = 1;
+        roundRect(ctx, padX, deckTop, deckW, deckH, 16);
+        ctx.stroke();
+
+        // 顶部能量灯带与中央拇指分界虚线
+        ctx.strokeStyle = 'rgba(0, 229, 255, 0.35)';
+        ctx.lineWidth = 1.5;
+        ctx.beginPath();
+        ctx.moveTo(padX + 28, deckTop + 0.5);
+        ctx.lineTo(scrW - padX - 28, deckTop + 0.5);
+        ctx.stroke();
+
+        ctx.strokeStyle = 'rgba(0, 200, 255, 0.12)';
+        ctx.lineWidth = 1;
+        ctx.setLineDash([4, 5]);
+        ctx.beginPath();
+        ctx.moveTo(scrW / 2, deckTop + 14);
+        ctx.lineTo(scrW / 2, deckTop + deckH - 14);
+        ctx.stroke();
+        ctx.setLineDash([]);
+
+        // 点触移动模式下在摇杆侧给出轻量触控提示
+        if (this.controlMode === 'tap') {
+            const isSwap = this.layoutMode === 'swap';
+            const zoneX = isSwap ? (scrW * 0.75) : (scrW * 0.25);
+            const zoneY = deckTop + deckH * 0.52;
+            ctx.strokeStyle = 'rgba(0, 200, 255, 0.22)';
+            ctx.lineWidth = 1.2;
+            ctx.beginPath();
+            ctx.arc(zoneX, zoneY, 32, 0, Math.PI * 2);
+            ctx.stroke();
+            ctx.fillStyle = 'rgba(180, 225, 255, 0.55)';
+            ctx.font = '11px Arial';
+            ctx.textAlign = 'center';
+            ctx.textBaseline = 'middle';
+            ctx.fillText('点触 / 滑动牵引', zoneX, zoneY + 46);
+        }
+        ctx.restore();
     }
 
     _withHud(fn) {
         const ctx = this.ctx;
         let h;
         const isTouch = ('ontouchstart' in window) || navigator.maxTouchPoints > 0;
+        const k = this.dpr || (this.canvas.width / (this.canvas.getBoundingClientRect().width || this.canvas.width));
         if (isTouch) {
-            const k = this.canvas.width / (this.canvas.getBoundingClientRect().width || this.canvas.width);
-            const sc = Math.max(this.gameScale, k * 1.35);
+            const isPortrait = this.canvas.height > this.canvas.width;
+            const sc = Math.max(this.gameScale, k * (isPortrait ? 1.15 : 1.35));
             h = { s: sc, ox: 0, oy: 0, w: this.canvas.width / sc, h: this.canvas.height / sc, k,
-                  padLeft: 16, padRight: 16 };
+                  isPortrait, padLeft: 16, padRight: 16 };
         } else {
             h = { s: this.gameScale, ox: this.gameOffsetX, oy: this.gameOffsetY, w: this.width, h: this.height,
-                  k: this.canvas.width / (this.canvas.getBoundingClientRect().width || this.canvas.width),
-                  padLeft: 10, padRight: 10 };
+                  k, isPortrait: this.canvas.height > this.canvas.width, padLeft: 10, padRight: 10 };
         }
         this._hud = h;
+        const ksOff = this._getKillShakeOffset();
         ctx.save();
-        ctx.setTransform(h.s, 0, 0, h.s, h.ox, h.oy);
+        ctx.setTransform(h.s, 0, 0, h.s, h.ox + ksOff.dx * (this.dpr || 1), h.oy + ksOff.dy * (this.dpr || 1));
         try { fn(); } finally { ctx.restore(); }
     }
 
@@ -13255,20 +15152,23 @@ class Game {
         const ctx = this.ctx;
         const cx = p.x + p.size / 2, cy = p.y + p.size / 2;
         const r = p.size * 0.5 + 24;
-        ctx.save();
-        const g = ctx.createRadialGradient(cx, cy, p.size * 0.35, cx, cy, r);
-        g.addColorStop(0, 'rgba(255,225,77,0.35)');
-        g.addColorStop(1, 'rgba(255,225,77,0)');
-        ctx.fillStyle = g;
-        ctx.beginPath();
-        ctx.arc(cx, cy, r, 0, Math.PI * 2);
-        ctx.fill();
-        ctx.lineWidth = 2;
-        ctx.strokeStyle = 'rgba(255,225,77,0.6)';
-        ctx.beginPath();
-        ctx.arc(cx, cy, p.size * 0.5 + 9, 0, Math.PI * 2);
-        ctx.stroke();
-        ctx.restore();
+        const span = (r + 4) * 2;
+        const sp = SpriteCache.get('selfHalo|' + p.size, span, span, 0, gctx => {
+            const c = span / 2;
+            const g = gctx.createRadialGradient(c, c, p.size * 0.35, c, c, r);
+            g.addColorStop(0, 'rgba(255,225,77,0.35)');
+            g.addColorStop(1, 'rgba(255,225,77,0)');
+            gctx.fillStyle = g;
+            gctx.beginPath();
+            gctx.arc(c, c, r, 0, Math.PI * 2);
+            gctx.fill();
+            gctx.lineWidth = 2;
+            gctx.strokeStyle = 'rgba(255,225,77,0.6)';
+            gctx.beginPath();
+            gctx.arc(c, c, p.size * 0.5 + 9, 0, Math.PI * 2);
+            gctx.stroke();
+        });
+        SpriteCache.draw(ctx, sp, cx - span / 2, cy - span / 2, span, span);
     }
 
     // 置顶 X-Ray 透视轮廓(画在粒子、特效和伤害跳字之上):
@@ -13485,11 +15385,17 @@ class Game {
         const def = ExpeditionContract.POOL[this.expeditionSession.selectedId];
         if (!def) return;
         const ctx = this.ctx;
+        const hudW = (this._hud && this._hud.w) ? this._hud.w : this.width;
         const pad = (this._hud && this._hud.padLeft) ? this._hud.padLeft : 10;
         const isBossActive = this.bossState === 'warning' || this.bossState === 'active';
-        const x = isBossActive ? pad : (pad + 108);
-        const y = isBossActive ? 72 : 10;
-        const w = 150, h = 26;
+        const isNarrow = hudW < 480;
+        // 窄屏竖屏下若不处于魔王战,将契约条紧凑嵌入状态栏与右侧暂停键之间的空隙;魔王战时下移至状态栏下方
+        const availMid = hudW - pad - 106 - 88;
+        const stackBelow = isBossActive || (isNarrow && availMid < 114);
+        const x = stackBelow ? pad : (pad + (isNarrow ? 106 : 108));
+        const y = stackBelow ? 72 : 10;
+        const w = (!stackBelow && isNarrow) ? Math.min(150, Math.max(114, availMid)) : 150;
+        const h = 26;
         const done = !!this.expeditionSession.completed;
 
         ctx.save();
@@ -13662,11 +15568,14 @@ class Game {
     _renderBossHUD() {
         const ctx = this.ctx;
         const hudW = (this._hud && this._hud.w) ? this._hud.w : this.width;
-        // 魔王将至:最后 15 秒在顶部显示倒计时小牌(有事件横幅时排在它下方),给玩家留出准备时间
+        const isNarrow = hudW < 480;
+        // 魔王将至:最后 15 秒在顶部显示倒计时小牌(有事件横幅时排在它下方;竖屏排在状态面板下方避免遮挡)
         if (this.bossState === 'idle' && this.bossTimer > 0 && this.bossTimer <= 15) {
             const urgent = this.bossTimer <= 6;
             const a = urgent ? 0.55 + 0.45 * Math.abs(Math.sin(this.bgTime * 6)) : 0.85;
-            const w = 128, h = 22, x = (hudW - w) / 2, y = this.event ? (this._eventDescShown() ? 66 : 46) : 10;
+            const baseTop = isNarrow ? 72 : 10;
+            const w = 128, h = 22, x = (hudW - w) / 2;
+            const y = this.event ? (baseTop + (this._eventDescShown() ? 56 : 36)) : baseTop;
             ctx.save();
             ctx.fillStyle = 'rgba(30, 6, 12, 0.72)';
             roundRect(ctx, x, y, w, h, 11);
@@ -13690,17 +15599,29 @@ class Game {
         // 活跃:顶部血条 + 进度条(注意:全屏红边已移至 _renderBossAlertScreen)
         if (this.bossState === 'active' && this.boss) {
             ctx.save();
-            // 顶部魔王血条:根据视口宽度自适应居中,两端留出安全余量
-            const barW = Math.min(560, Math.max(340, hudW * 0.58));
+            const hasContract = !!(this.expeditionSession && this.expeditionSession.selectedId);
+            // 顶部魔王血条:横屏/桌面居中于顶栏;移动端竖屏(hudW < 480)下移至顶栏下方通栏排布,彻底消除与状态面板/静音按钮的重叠与越界
+            const barW = isNarrow ? Math.max(200, hudW - 32) : Math.min(560, Math.max(340, hudW * 0.58));
             const barH = 18;
             const bx = (hudW - barW) / 2;
-            const by = 18;
-            const hpRatio = this.boss.currentHealth / this.boss.maxHealth;
+            const by = isNarrow ? (hasContract ? 104 : 72) : 18;
+            const hpRatio = Math.max(0, Math.min(1, this.boss.currentHealth / this.boss.maxHealth));
+            if (typeof this.boss._hpTrail !== 'number' || this.boss._hpTrail < hpRatio) {
+                this.boss._hpTrail = hpRatio;
+            } else if (this.boss._hpTrail > hpRatio) {
+                this.boss._hpTrail = Math.max(hpRatio, this.boss._hpTrail - 0.008);
+            }
 
             // 背景
             ctx.fillStyle = 'rgba(0,0,0,0.7)';
             roundRect(ctx, bx, by, barW, barH, 4);
             ctx.fill();
+            // 掉血残影缓冲条
+            if (this.boss._hpTrail > hpRatio + 0.005) {
+                ctx.fillStyle = 'rgba(255, 235, 180, 0.55)';
+                roundRect(ctx, bx, by, barW * this.boss._hpTrail, barH, 4);
+                ctx.fill();
+            }
             // 血量(紫红渐变)
             const grad = ctx.createLinearGradient(bx, by, bx + barW, by);
             grad.addColorStop(0, '#7c4dff');
@@ -13950,6 +15871,23 @@ class Game {
                 ctx.lineWidth = 2.5;
                 ctx.beginPath();
                 ctx.arc(fx.x, fx.y, r, 0, Math.PI * 2);
+                ctx.stroke();
+            } else if (fx.type === 'prismBeam') {
+                const fade = Math.max(0, alpha);
+                ctx.lineCap = 'round';
+                ctx.globalAlpha = fade * 0.55;
+                ctx.strokeStyle = fx.color || '#00e5ff';
+                ctx.lineWidth = (fx.w || 18) * fade;
+                ctx.beginPath();
+                ctx.moveTo(fx.x1, fx.y1);
+                ctx.lineTo(fx.x2, fx.y2);
+                ctx.stroke();
+                ctx.globalAlpha = fade * 0.95;
+                ctx.strokeStyle = '#ffffff';
+                ctx.lineWidth = Math.max(2, (fx.w || 18) * 0.35 * fade);
+                ctx.beginPath();
+                ctx.moveTo(fx.x1, fx.y1);
+                ctx.lineTo(fx.x2, fx.y2);
                 ctx.stroke();
             } else if (fx.type === 'bladeArc') {
                 // 高能流光刀波弧线:贝塞尔弯曲流光刀芒,带高光发光外环
@@ -14345,10 +16283,84 @@ class Game {
         const talents = `<div class="st-card"><div class="st-title">天赋 <small>${(p.acquiredTalents || []).reduce((n, a) => n + a.count, 0)} 层</small></div>
             <div class="st-schools">${schools}</div>
             <div class="st-talents">${tal || '<div class="st-empty">升级时从三张天赋卡里选一张。</div>'}</div></div>`;
+        // 传说进化与超武觉醒配方图鉴
+        const codex = this._getEvolutionCodex(p);
+        const evoRecipes = codex.legendaries.map(item => {
+            const stText = item.unlocked ? '已习得 ★' : item.ready ? '可刷出 !' : `${item.metCount}/${item.totalCount} 达成`;
+            const stCls = item.unlocked ? 'unlocked' : item.ready ? 'ready' : item.metCount > 0 ? 'in-progress' : '';
+            const reqChips = item.reqs.map(r =>
+                `<span class="evo-req-chip${r.met ? ' met' : ''}" style="--rc:${r.color}">${A ? img(A.badgeURL(r.icon, r.color), 'st-tal-ic') : r.icon}${esc(r.name)} <b>${r.cur}/${r.need}${r.met ? ' ✓' : ''}</b></span>`
+            ).join('');
+            return `<div class="evo-recipe-item ${stCls}" style="--ec:${item.color}">
+                <div class="evo-recipe-head">
+                    <div class="evo-recipe-title">${A ? img(A.badgeURL(item.icon, item.color), 'st-tal-ic') : item.icon}<b>${esc(item.name)}</b></div>
+                    <span class="evo-recipe-status ${stCls}">${stText}</span>
+                </div>
+                <div class="evo-recipe-desc">${esc(item.desc)}</div>
+                <div class="evo-req-list">${reqChips}</div>
+            </div>`;
+        }).join('');
+        const gearRecipes = codex.gears.map(g => {
+            const stCls = g.awakened ? 'unlocked' : g.active ? 'ready' : '';
+            const stText = g.awakened ? '觉醒中 ★' : g.active ? '持有 Lv1' : '同名二连升阶';
+            return `<div class="evo-gear-item ${stCls}" style="--gc:${g.color}">
+                ${A ? img(A.itemURL('gear_' + g.type), 'st-item-ic') : ''}
+                <div class="evo-gear-info">
+                    <div class="evo-gear-line"><b>${esc(g.name)}</b> <span class="evo-arrow">→</span> <b class="evo-target">${esc(g.evoName)}</b> <span class="evo-recipe-status ${stCls}">${stText}</span></div>
+                    <small>${esc(g.evoDesc)}</small>
+                </div>
+            </div>`;
+        }).join('');
+        const evoCard = `<div class="st-card evo-codex-card">
+            <div class="st-title">传说进化图鉴 <small>集齐前置层数后升级卡池刷出</small></div>
+            <div class="evo-codex-grid">${evoRecipes}</div>
+            <div class="st-title" style="margin-top:10px">超武觉醒配方 <small>持有限时装备期间再次拾取同名装备升阶 Lv2</small></div>
+            <div class="evo-gear-grid">${gearRecipes}</div>
+        </div>`;
         // 本局
         const run = `<div class="st-card"><div class="st-title">本局</div><div class="st-run">${this._runSummaryRows().filter(([k]) => k !== '职业' && k !== '暗金遗物')
             .map(([k, v]) => `<div><small>${k}</small><b>${esc(v)}</b></div>`).join('')}</div></div>`;
-        document.getElementById('buildStats').innerHTML = head + `<div class="st-cols"><div>${attrs}${run}</div><div>${skills}${equip}${talents}</div></div>`;
+        document.getElementById('buildStats').innerHTML = head + `<div class="st-cols"><div>${attrs}${run}${evoCard}</div><div>${skills}${equip}${talents}</div></div>`;
+    }
+
+    _talentCount(id, p = this.player) {
+        const got = (p && p.acquiredTalents || []).find(a => a.id === id);
+        return got ? got.count : 0;
+    }
+
+    // 返回本局传说天赋进化配方与限时装备觉醒图鉴数据(供角色面板与单元测试共用)
+    _getEvolutionCodex(p = this.player) {
+        const legendaries = (this.talentDefs || []).filter(t => t.rarity === 'legendary').map(t => {
+            const unlocked = this._talentCount(t.id, p) > 0;
+            const reqEntries = Object.entries(t.requires || {});
+            const reqs = reqEntries.map(([id, need]) => {
+                const def = (this.talentDefs || []).find(x => x.id === id) || { id, name: id, icon: '⭐', color: '#90caf9' };
+                const cur = Math.min(need, this._talentCount(id, p));
+                return { id, name: def.name, icon: def.icon, color: def.color, cur, need, met: cur >= need };
+            });
+            const metCount = reqs.filter(r => r.met).length;
+            const totalCount = reqs.length;
+            const ready = !unlocked && this._talentReqMet(t, p);
+            return {
+                id: t.id, name: t.name, icon: t.icon, color: t.color, desc: t.desc,
+                unlocked, ready, metCount, totalCount, reqs
+            };
+        });
+        // 优先排已进化 > 可刷出 > 已有前置进度 > 未开始
+        legendaries.sort((a, b) => {
+            const score = x => (x.unlocked ? 100 : 0) + (x.ready ? 50 : 0) + (x.metCount * 10) + x.reqs.reduce((s, r) => s + r.cur, 0);
+            return score(b) - score(a);
+        });
+        const gears = GEAR_TYPES.map(type => {
+            const g = GEARS[type];
+            const active = !!(p && p.gear && p.gear.type === type);
+            const awakened = !!(active && p.gear.level === 2);
+            return {
+                type, name: g.name, evoName: g.evoName, icon: g.icon, color: g.color,
+                desc: g.desc, evoDesc: g.evoDesc, active, awakened
+            };
+        });
+        return { legendaries, gears };
     }
 
     _initBuildPanel() {
@@ -14490,6 +16502,32 @@ class Game {
             this._treeQuery = e.target.value;
             this._treeRefresh();
         });
+        const quickTagsEl = document.getElementById('treeQuickTags');
+        if (quickTagsEl) {
+            quickTagsEl.addEventListener('click', (e) => {
+                const btn = e.target.closest('.tree-qtag');
+                if (!btn) return;
+                const q = btn.dataset.q || '';
+                this._treeQuery = (this._treeQuery === q && q !== '') ? '' : q;
+                const sInput = document.getElementById('treeSearch');
+                if (sInput) sInput.value = this._treeQuery;
+                this._treeRefresh();
+            });
+        }
+        const presetsEl = document.getElementById('treePresets');
+        if (presetsEl) {
+            presetsEl.addEventListener('click', (e) => {
+                const saveBtn = e.target.closest('#treeSavePresetBtn');
+                if (saveBtn) {
+                    this._treeSaveCustomPreset();
+                    return;
+                }
+                const presetBtn = e.target.closest('[data-preset]');
+                if (presetBtn) {
+                    this._treeApplyPreset(presetBtn.dataset.preset);
+                }
+            });
+        }
         document.getElementById('treeInfo').addEventListener('click', (e) => {
             if (!e.target.closest('.ti-act') || !this._treeSel) return;
             const id = this._treeSel;
@@ -14497,9 +16535,19 @@ class Game {
             else if (!this._treeAllocate(id)) this._treeAllocPath(id);
             this._buildRefresh();
         });
-        document.getElementById('buildGems').addEventListener('click', (e) => this._gemClick(e));
+        const buildGemsEl = document.getElementById('buildGems');
+        buildGemsEl.addEventListener('click', (e) => this._gemClick(e));
+        buildGemsEl.addEventListener('dblclick', (e) => this._gemDblClick(e));
+        const gemAutoBtn = document.getElementById('gemAutoBtn');
+        if (gemAutoBtn) gemAutoBtn.addEventListener('click', () => this._autoSocketAllGems());
+        const gemClearBtn = document.getElementById('gemClearBtn');
+        if (gemClearBtn) gemClearBtn.addEventListener('click', () => this._clearAllGems());
         const brEl = document.getElementById('buildRelics');
         if (brEl) brEl.addEventListener('click', (e) => this._relicClick(e));
+        const reforgeBtn = document.getElementById('relicReforgeBtn');
+        if (reforgeBtn) reforgeBtn.addEventListener('click', () => this._reforgeRelicWithAsh());
+        const batchDismantleBtn = document.getElementById('relicBatchDismantleBtn');
+        if (batchDismantleBtn) batchDismantleBtn.addEventListener('click', () => this._dismantleUnempoweredBagRelics());
     }
 
     _treeApplyView() {
@@ -14575,6 +16623,10 @@ class Game {
         const hits = this._treeSearchHits(this._treeQuery);
         const searchEl = document.getElementById('treeSearchCount');
         if (searchEl) searchEl.textContent = hits ? (hits.size ? `匹配 ${hits.size} 个` : '没有匹配') : '';
+        const qTrim = String(this._treeQuery || '').trim();
+        document.querySelectorAll('#treeQuickTags .tree-qtag').forEach(btn => {
+            btn.classList.toggle('active', (btn.dataset.q || '') === qTrim);
+        });
         for (const n of TREE_NODES) {
             const g = this._treeNodeEls[n.id];
             g.classList.toggle('on', p.treeNodes.has(n.id));
@@ -14624,6 +16676,157 @@ class Game {
         }
         const sum = treeModLines(p.tree);
         document.getElementById('treeSummary').innerHTML = `<b>已点亮 ${pts.used} 个节点</b>${sum.length ? '<br>' + sum.join('<br>') : '<br>还没有点亮任何天赋'}`;
+        const loadPresetBtn = document.getElementById('treeLoadPresetBtn');
+        if (loadPresetBtn) {
+            const saved = Store.get('blockrun.savedTree', []);
+            loadPresetBtn.disabled = !Array.isArray(saved) || saved.length === 0;
+            loadPresetBtn.textContent = Array.isArray(saved) && saved.length > 0 ? `套用方案(${saved.length})` : '套用方案';
+        }
+    }
+
+    static TREE_PRESETS = {
+        str:     { name: '狂战壁垒', targets: ['sSk', 'sN2', 'sN1', 'sa3', 'sb3', 'rSk1', 'sa6', 'saK'] },
+        dex:     { name: '疾风暴击', targets: ['dSk', 'dN1', 'dN2', 'da3', 'db3', 'rSk2', 'da6', 'daK'] },
+        int:     { name: '奥术超载', targets: ['iSk', 'iN1', 'iN2', 'ib3', 'ia3', 'rSk1', 'ib6', 'iK'] },
+        sockets: { name: '满孔神龛', targets: ['sSk', 'dSk', 'iSk', 'rSk1', 'rSk2', 'sN2', 'dN1', 'iN1'] }
+    };
+
+    // 保存本局已点亮的节点序列为个人构筑方案
+    _treeSaveCustomPreset() {
+        const p = this.player;
+        const nodes = [...(p && p.treeNodes || [])].filter(id => id !== 'start');
+        Store.set('blockrun.savedTree', nodes);
+        Sound.play('cdReady');
+        if (this._treeNodeEls) this._treeRefresh();
+        return nodes;
+    }
+
+    // 一键流派导航/套用方案: 沿目标节点序列自动寻路并点亮当前可用天赋点, 同时聚焦到下一个目标节点
+    _treeApplyPreset(presetKey) {
+        const p = this.player;
+        if (!p) return 0;
+        const targets = presetKey === 'custom'
+            ? (Store.get('blockrun.savedTree', []) || [])
+            : (Game.TREE_PRESETS[presetKey] ? Game.TREE_PRESETS[presetKey].targets : []);
+        if (!targets.length) return 0;
+
+        let totalAllocated = 0;
+        let nextTarget = null;
+        for (const tid of targets) {
+            if (!TREE_BY_ID[tid]) continue;
+            if (!p.treeNodes.has(tid)) {
+                if (this._treePoints(p).free > 0) {
+                    totalAllocated += this._treeAllocPath(tid);
+                }
+                if (!p.treeNodes.has(tid) && !nextTarget) {
+                    nextTarget = tid;
+                }
+            }
+        }
+        this._treeSel = nextTarget || targets[targets.length - 1] || null;
+        if (this._treeNodeEls) {
+            this._treeFocus();
+            this._buildRefresh();
+        }
+        return totalAllocated;
+    }
+
+    static GEM_RESONANCE_RECIPES = [
+        { id: 'breaker',         name: '破阵之力', tier: 2, need: { r: 2, g: 0, b: 0 }, color: '#ff5252', desc: '无视25%防御 · 击退+40%' },
+        { id: 'galeCombo',       name: '疾风连击', tier: 2, need: { r: 0, g: 2, b: 0 }, color: '#69f0ae', desc: '后摇-40% · 20%免冷却' },
+        { id: 'elementOverload', name: '元素超载', tier: 2, need: { r: 0, g: 0, b: 2 }, color: '#40c4ff', desc: '异常时长与跳数+50%' },
+        { id: 'trinity',         name: '三位一体', tier: 3, need: { r: 1, g: 1, b: 1 }, color: '#e040fb', desc: '技伤×1.25 · 全穿透 · 三相星爆' },
+        { id: 'starCrush',       name: '碎星天罚', tier: 3, need: { r: 3, g: 0, b: 0 }, color: '#ff1744', desc: '无视40%防御 · 35%斩首重击' },
+        { id: 'phantomStep',     name: '幻影瞬息', tier: 3, need: { r: 0, g: 3, b: 0 }, color: '#00e676', desc: '施放后2次普攻必暴 · 冲刺+25%' },
+        { id: 'timeCollapse',    name: '时空湮灭', tier: 3, need: { r: 0, g: 0, b: 3 }, color: '#00b0ff', desc: '异常15%溅射 · 范围+25%' }
+    ];
+
+    // 计算当前拥有的宝石对 7 大符文共鸣的激活状态与可一键配装槽位
+    _getGemResonanceCodex(p = this.player) {
+        const counts = this._gemMap(p).counts || {};
+        const ownedIds = GEM_TYPES.filter(id => counts[id] > 0).sort((a, b) => counts[b] - counts[a]);
+        const slotOrder = !p.class ? ['a', 'q', 'e'] : p.class === 'mage' ? ['e', 'a', 'q'] : ['q', 'e', 'a'];
+        const colorKey = c => c === '#ff5252' ? 'r' : c === '#69f0ae' ? 'g' : c === '#40c4ff' ? 'b' : '';
+
+        return Game.GEM_RESONANCE_RECIPES.map(rec => {
+            const activeSlot = GEM_SLOTS.find(s => {
+                const res = this._gemResonance(p, s);
+                return res && res.id === rec.id;
+            }) || null;
+
+            let candidateSlot = null;
+            let candidateGems = null;
+            for (const s of slotOrder) {
+                if (this._socketCount(p, s) < rec.tier) continue;
+                const fitByColor = { r: [], g: [], b: [] };
+                for (const gid of ownedIds) {
+                    if (!gemCanPlace(gid, s, p.class) || gemMisfit(gid, s, p.class)) continue;
+                    const ck = colorKey(GEMS[gid].color);
+                    if (ck) fitByColor[ck].push(gid);
+                }
+                if (fitByColor.r.length >= rec.need.r && fitByColor.g.length >= rec.need.g && fitByColor.b.length >= rec.need.b) {
+                    candidateSlot = s;
+                    candidateGems = [
+                        ...fitByColor.r.slice(0, rec.need.r),
+                        ...fitByColor.g.slice(0, rec.need.g),
+                        ...fitByColor.b.slice(0, rec.need.b)
+                    ];
+                    break;
+                }
+            }
+            const maxUnlockedSockets = Math.max(...GEM_SLOTS.map(s => this._socketCount(p, s)));
+            return {
+                ...rec,
+                activeSlot,
+                candidateSlot,
+                candidateGems,
+                needMoreSockets: maxUnlockedSockets < rec.tier
+            };
+        });
+    }
+
+    // 一键将指定符文共鸣配方镶嵌到目标槽位(或自动优选槽位)
+    _applyGemResonanceRecipe(recipeId, preferredSlot = null) {
+        const p = this.player;
+        if (!p || !p.sockets) return false;
+        const codex = this._getGemResonanceCodex(p);
+        const item = codex.find(x => x.id === recipeId);
+        if (!item) return false;
+
+        let slot = preferredSlot || item.candidateSlot;
+        let gems = item.candidateGems;
+        if (preferredSlot && preferredSlot !== item.candidateSlot) {
+            const counts = this._gemMap(p).counts || {};
+            const ownedIds = GEM_TYPES.filter(id => counts[id] > 0).sort((a, b) => counts[b] - counts[a]);
+            const colorKey = c => c === '#ff5252' ? 'r' : c === '#69f0ae' ? 'g' : c === '#40c4ff' ? 'b' : '';
+            if (this._socketCount(p, preferredSlot) >= item.tier) {
+                const fit = { r: [], g: [], b: [] };
+                for (const gid of ownedIds) {
+                    if (!gemCanPlace(gid, preferredSlot, p.class) || gemMisfit(gid, preferredSlot, p.class)) continue;
+                    const ck = colorKey(GEMS[gid].color);
+                    if (ck) fit[ck].push(gid);
+                }
+                if (fit.r.length >= item.need.r && fit.g.length >= item.need.g && fit.b.length >= item.need.b) {
+                    slot = preferredSlot;
+                    gems = [...fit.r.slice(0, item.need.r), ...fit.g.slice(0, item.need.g), ...fit.b.slice(0, item.need.b)];
+                }
+            }
+        }
+        if (!slot || !gems || gems.length < item.tier) {
+            this._gemMsg = item.needMoreSockets ? `「${item.name}」需要先在天赋树点亮对应技能的连接孔(${item.tier}孔)` : `背包中缺少激活「${item.name}」所需的同系/三色技能石`;
+            this._buildRefresh();
+            return false;
+        }
+        // 清空目标槽位前 tier 个孔并依次镶入配方宝石
+        for (let i = 0; i < 3; i++) p.sockets[slot][i] = null;
+        for (let i = 0; i < gems.length; i++) {
+            this._socketGem(slot, i, gems[i]);
+        }
+        const slotName = slot === 'a' ? '普攻' : `${slot.toUpperCase()} 技能`;
+        this._gemSel = null;
+        this._gemMsg = `已为${slotName}一键配齐共鸣【${item.name}】!`;
+        this._buildRefresh();
+        return true;
     }
 
     _gemRefresh() {
@@ -14658,6 +16861,31 @@ class Game {
         });
         document.getElementById('gemSlots').innerHTML = rows.join('');
 
+        // 符文共鸣配方图鉴与一键激活栏
+        const resBarEl = document.getElementById('gemResonanceBar');
+        if (resBarEl) {
+            const resCodex = this._getGemResonanceCodex(p);
+            const dotsHTML = need => {
+                const dots = [];
+                for (let i = 0; i < need.r; i++) dots.push('<i class="res-dot" style="background:#ff5252"></i>');
+                for (let i = 0; i < need.g; i++) dots.push('<i class="res-dot" style="background:#69f0ae"></i>');
+                for (let i = 0; i < need.b; i++) dots.push('<i class="res-dot" style="background:#40c4ff"></i>');
+                return `<span class="res-dots">${dots.join('')}</span>`;
+            };
+            resBarEl.innerHTML = `<div class="res-bar-title">✨ 符文共鸣配方 <small>点击可湊齐的配方一键镶入对应槽位</small></div>
+                <div class="res-recipe-grid">${resCodex.map(r => {
+                    const slotLbl = s => s === 'a' ? '普攻' : s.toUpperCase();
+                    const stCls = r.activeSlot ? 'active' : r.candidateSlot ? 'ready' : '';
+                    const stTxt = r.activeSlot ? `已激活·${slotLbl(r.activeSlot)} ★`
+                        : r.candidateSlot ? `⚡ 配至${slotLbl(r.candidateSlot)}`
+                        : r.needMoreSockets ? `需${r.tier}孔` : '差同色宝石';
+                    return `<button type="button" class="res-recipe-chip ${stCls}" data-res-recipe="${r.id}" style="--rc:${r.color}" title="${r.desc}">
+                        <div class="res-chip-top">${dotsHTML(r.need)}<b>${r.name}</b><span class="res-chip-tag ${stCls}">${stTxt}</span></div>
+                        <small>${r.desc}</small>
+                    </button>`;
+                }).join('')}</div>`;
+        }
+
         const owned = GEM_TYPES.filter(id => counts[id]);
         const where = id => GEM_SLOTS.find(s => p.sockets[s].slice(0, this._socketCount(p, s)).includes(id));
         document.getElementById('gemBag').innerHTML = owned.length ? owned.map(id => {
@@ -14683,6 +16911,11 @@ class Game {
     }
 
     _gemClick(e) {
+        const resChip = e.target.closest('[data-res-recipe]');
+        if (resChip) {
+            this._applyGemResonanceRecipe(resChip.dataset.resRecipe);
+            return;
+        }
         const card = e.target.closest('.gem-card');
         const sock = e.target.closest('.sock');
         this._gemMsg = '';
@@ -14708,6 +16941,111 @@ class Game {
             }
         } else {
             return;
+        }
+        this._buildRefresh();
+    }
+
+    _gemDblClick(e) {
+        const card = e.target.closest('.gem-card');
+        if (!card || !card.dataset.gem) return;
+        const gemId = card.dataset.gem;
+        const p = this.player;
+        if (!p || !p.sockets) return;
+        this._gemMsg = '';
+        // 如果已镶嵌则直接卸下
+        for (const s of GEM_SLOTS) {
+            const n = this._socketCount(p, s);
+            for (let i = 0; i < n; i++) {
+                if (p.sockets[s][i] === gemId) {
+                    this._socketGem(s, i, null);
+                    this._gemSel = null;
+                    this._gemMsg = `已卸下「${GEMS[gemId].name}」`;
+                    this._buildRefresh();
+                    return;
+                }
+            }
+        }
+        // 寻找第一个可镶嵌且不冲突的空孔
+        for (const s of GEM_SLOTS) {
+            if (!gemCanPlace(gemId, s, p.class) || gemMisfit(gemId, s, p.class)) continue;
+            const n = this._socketCount(p, s);
+            for (let i = 0; i < n; i++) {
+                if (!p.sockets[s][i]) {
+                    this._socketGem(s, i, gemId);
+                    this._gemSel = null;
+                    this._buildRefresh();
+                    return;
+                }
+            }
+        }
+        this._gemMsg = `没有找到适合「${GEMS[gemId].name}」的空闲连接孔`;
+        this._buildRefresh();
+    }
+
+    _autoSocketAllGems() {
+        const p = this.player;
+        if (!p || !p.sockets) return;
+        const counts = this._gemMap(p).counts;
+        const owned = GEM_TYPES.filter(id => counts[id] > 0).sort((a, b) => counts[b] - counts[a]);
+        if (!owned.length) {
+            this._gemMsg = '背包里还没有技能石';
+            this._buildRefresh();
+            return;
+        }
+        // 先清理当前不匹配的插槽
+        for (const s of GEM_SLOTS) {
+            const n = this._socketCount(p, s);
+            for (let i = 0; i < n; i++) {
+                const cur = p.sockets[s][i];
+                if (cur && (!counts[cur] || gemMisfit(cur, s, p.class))) {
+                    p.sockets[s][i] = null;
+                }
+            }
+        }
+        const used = new Set();
+        for (const s of GEM_SLOTS) {
+            const n = this._socketCount(p, s);
+            for (let i = 0; i < n; i++) {
+                if (p.sockets[s][i]) used.add(p.sockets[s][i]);
+            }
+        }
+        let placed = 0;
+        for (const s of GEM_SLOTS) {
+            const n = this._socketCount(p, s);
+            for (let i = 0; i < n; i++) {
+                if (p.sockets[s][i]) continue;
+                const cand = owned.find(id => !used.has(id) && gemCanPlace(id, s, p.class) && !gemMisfit(id, s, p.class));
+                if (cand) {
+                    this._socketGem(s, i, cand);
+                    used.add(cand);
+                    placed++;
+                }
+            }
+        }
+        this._gemSel = null;
+        this._gemMsg = placed > 0 ? `已自动镶嵌 ${placed} 颗技能石` : '所有可用插槽均已处于最优镶嵌状态';
+        this._buildRefresh();
+    }
+
+    _clearAllGems() {
+        const p = this.player;
+        if (!p || !p.sockets) return;
+        let cleared = 0;
+        for (const s of GEM_SLOTS) {
+            for (let i = 0; i < 3; i++) {
+                if (p.sockets[s][i]) {
+                    p.sockets[s][i] = null;
+                    cleared++;
+                }
+            }
+        }
+        this._gemSel = null;
+        if (cleared > 0) {
+            p._buildVer++;
+            this._refreshSkillCds(p);
+            this._gemMsg = `已卸下 ${cleared} 颗技能石`;
+        } else {
+            this._gemMsg = '当前没有已镶嵌的技能石';
         }
         this._buildRefresh();
     }
@@ -14750,14 +17088,25 @@ class Game {
             slotsEl.innerHTML = items.join('');
         }
 
-        // 2. 行囊
+        // 2. 行囊与余烬熔炉
         const ashEl = document.getElementById('relicAshCount');
         if (ashEl) ashEl.textContent = `🔥 暗金余烬: ${p.relicAsh || 0}`;
+        const reforgeBtn = document.getElementById('relicReforgeBtn');
+        if (reforgeBtn) {
+            const canReforge = (p.relicAsh || 0) >= 2 && (p.relics.length < maxSlots || p.relicBag.length < 6);
+            reforgeBtn.disabled = !canReforge;
+        }
+        const batchDismantleBtn = document.getElementById('relicBatchDismantleBtn');
+        if (batchDismantleBtn) {
+            const unempoweredBagCount = (p.relicBag || []).filter(id => !(p.relicEmpowers && p.relicEmpowers[id])).length;
+            batchDismantleBtn.disabled = unempoweredBagCount === 0;
+            batchDismantleBtn.textContent = unempoweredBagCount > 0 ? `一键分解闲置 (+${unempoweredBagCount})` : '一键分解闲置';
+        }
 
         const bagEl = document.getElementById('relicBag');
         if (bagEl) {
             if (p.relicBag.length === 0) {
-                bagEl.innerHTML = '<div class="relic-empty">行囊空空如也。击败词缀精英、首领或虚空裂隙拾取暗金圣物。</div>';
+                bagEl.innerHTML = '<div class="relic-empty">行囊空空如也。击败词缀精英、首领或虚空裂隙拾取暗金圣物，也可消耗 2 点余烬重铸新圣物。</div>';
             } else {
                 bagEl.innerHTML = p.relicBag.map(id => {
                     const def = RELICS[id] || { name: id, color: '#ffd700', icon: '👑' };
@@ -14922,6 +17271,68 @@ class Game {
         Sound.play('levelUp');
         this._showFloatingText(mode === 'pros' ? '⚡ 赋能:增益强化+35%!' : '🛡️ 赋能:代价减半-50%!', this.width / 2, this.height * 0.45, '#ffd700');
         this._relicRefresh();
+    }
+
+    // 余烬熔炉重铸: 消耗 2 点暗金余烬, 锻造一件未持有的随机暗金圣物
+    _reforgeRelicWithAsh() {
+        const p = this.player;
+        if (!p) return null;
+        if ((p.relicAsh || 0) < 2) {
+            this._showFloatingText('余烬不足 (需 2 点)', this.width / 2, this.height * 0.45, '#ff5252');
+            return null;
+        }
+        const maxSlots = p.maxRelicSlots || 1;
+        if (!p.relics) p.relics = [];
+        if (!p.relicBag) p.relicBag = [];
+        if (p.relics.length >= maxSlots && p.relicBag.length >= 6) {
+            this._showFloatingText('装备栏与行囊均已满', this.width / 2, this.height * 0.45, '#ff5252');
+            return null;
+        }
+        const owned = new Set([...p.relics, ...p.relicBag]);
+        const pool = getAvailableRelicTypes().filter(id => !owned.has(id));
+        const candidates = pool.length ? pool : getAvailableRelicTypes();
+        if (!candidates.length) return null;
+
+        const picked = candidates[Math.floor(Math.random() * candidates.length)];
+        p.relicAsh -= 2;
+        let placedIn = 'bag';
+        if (p.relics.length < maxSlots) {
+            p.relics.push(picked);
+            placedIn = 'equip';
+        } else {
+            p.relicBag.push(picked);
+        }
+        this._syncRelicStats(p);
+        Sound.play('levelUp');
+        const def = RELICS[picked] || { name: picked, color: '#ffd700' };
+        this._showFloatingText(`🔥 重铸出【${def.name}】!`, this.width / 2, this.height * 0.45, def.color);
+        this._relicSel = { id: picked, from: placedIn };
+        this._buildRefresh();
+        return picked;
+    }
+
+    // 一键分解行囊内所有未赋能的闲置暗金圣物
+    _dismantleUnempoweredBagRelics() {
+        const p = this.player;
+        if (!p || !Array.isArray(p.relicBag) || !p.relicBag.length) return 0;
+        if (!p.relicEmpowers) p.relicEmpowers = {};
+        const keep = [];
+        let dismantled = 0;
+        for (const id of p.relicBag) {
+            if (p.relicEmpowers[id]) keep.push(id);
+            else dismantled++;
+        }
+        if (!dismantled) return 0;
+        p.relicBag = keep;
+        p.relicAsh = (p.relicAsh || 0) + dismantled;
+        if (this._relicSel && this._relicSel.from === 'bag' && !keep.includes(this._relicSel.id)) {
+            this._relicSel = null;
+        }
+        this._syncRelicStats(p);
+        Sound.play('bomb');
+        this._showFloatingText(`🔥 批量分解 +${dismantled} 余烬`, this.width / 2, this.height * 0.45, '#ffd54f');
+        this._buildRefresh();
+        return dismantled;
     }
 
     // HUD「构筑」按钮(冲刺键旁);有未用天赋点 / 新宝石时角标提醒
@@ -15092,6 +17503,7 @@ class Game {
             { skill: this.player.skillE, key: 'e', label: 'E', icon: (sp && sp.e) || eNames[cls] || 'E', art: skillArtKey(cls, this.player.spec, 'e'), color: eColors[cls] || '#fff', x: baseX + slotW + margin }
         ];
         // 职业 / 专精名牌:放在「构筑 / 冲」按钮行上方(技能槽正上方是冲刺键,放那里会和按钮、法师「-N/发」叠字)
+        const isCompactPortraitHud = hudW < 420;
         {
             const tag = sp ? `${sp.icon} ${sp.name}${this.player.awakened ? ' · 觉醒' : ''}` : CLASS_NAMES[cls];
             ctx.save();
@@ -15100,7 +17512,10 @@ class Game {
             ctx.textBaseline = 'bottom';
             ctx.fillStyle = this.player.awakened ? '#ffe082' : (CLASS_COLORS[cls] || '#ffffff');
             const tagX = isSwap ? ((this._hud.padLeft || 16) + 24) : (this._hud.w - 24);
-            ctx.fillText(tag, tagX, this._hud.h - 82 - 12 - 24 * 2 - 12 - 4);
+            const tagY = (isCompactPortraitHud && this.player.awakened)
+                ? (this._hud.h - 82 - 12 - 24 * 2 - 38)
+                : (this._hud.h - 82 - 12 - 24 * 2 - 12 - 4);
+            ctx.fillText(tag, tagX, tagY);
             ctx.restore();
         }
 
@@ -15219,10 +17634,11 @@ class Game {
             }
         }
 
-        // 觉醒状态下 R 奥义槽和资源条位置自适应
+        // 觉醒状态下 R 奥义槽和资源条位置自适应(竖屏紧凑模式下 R 移至上排构筑按钮旁,资源条紧贴 Q 槽,避免侵入摇杆区)
+        const ultInline = this.player.awakened && !isCompactPortraitHud;
         const resX = isSwap
-            ? ((this.player.awakened ? (baseX + (slotW + margin) * 3) : (baseX + (slotW + margin) * 2)) + 6)
-            : ((this.player.awakened ? (baseX - slotW - margin) : baseX) - 22);
+            ? ((ultInline ? (baseX + (slotW + margin) * 3) : (baseX + (slotW + margin) * 2)) + 6)
+            : ((ultInline ? (baseX - slotW - margin) : baseX) - 22);
         if (cls === 'mage') {
             this._renderResourceBar(resX, baseY, 14, slotH + 20, this.player.mana, this.player.maxMana, '#00ccff', '#0044aa', '法');
         } else if (cls === 'paladin') {
@@ -15300,8 +17716,12 @@ class Game {
 
         // 终极觉醒奥义 (R 技能, 角色达到 Lv7 觉醒后解锁)
         if (this.player.awakened) {
-            const ultX = isSwap ? (baseX + (slotW + margin) * 2) : (baseX - slotW - margin);
-            const ultY = baseY;
+            const ultX = isCompactPortraitHud
+                ? (isSwap ? (padL + 48 + 24 + 14 + 40 + 10) : (hudW - 48 - 24 - 14 - 40 - 10 - slotW))
+                : (isSwap ? (baseX + (slotW + margin) * 2) : (baseX - slotW - margin));
+            const ultY = isCompactPortraitHud
+                ? (hudH - 82 - 12 - 24 - 12 - slotH / 2 - 12)
+                : baseY;
             this._hudButton(ultX, ultY, slotW, slotH, 'ult');
 
             const ultNames = { warrior: '诸神黄昏', mage: '时空坍缩', assassin: '万刃影杀', archer: '箭雨风暴', paladin: '圣光降临' };
@@ -15868,8 +18288,9 @@ class Player {
         if (this.class === 'warrior') mult *= 1 - 0.3 * Math.min(1, this.rage / this.maxRage);
         // 战士终极奥义「诸神黄昏」:狂暴期间受到伤害额外减免 35%
         if (this.ultActiveTimer > 0 && this.class === 'warrior') mult *= 0.65;
-        // 贪婪诅咒【血契】:受到所有伤害增加 30%
+        // 贪婪诅咒【血契】:受到所有伤害增加 30%;【超载契】:受到所有伤害增加 25%
         if (this.greedContract === 'blood') mult *= 1.3;
+        if (this.greedContract === 'overload') mult *= 1.25;
         // 🌌 每日突变【死寂决斗】:受到的所有伤害增加 40%
         if (this.game && this.game.mutations && this.game.mutations.includes('glass_canon')) mult *= 1.4;
         // 守护者觉醒:神圣光环内减伤 50%
@@ -16132,7 +18553,12 @@ class Player {
 
         const healthBarWidth = this.size;
         const healthBarHeight = 5;
-        const healthPercentage = this.currentHealth / this.maxHealth;
+        const healthPercentage = Math.max(0, Math.min(1, this.currentHealth / this.maxHealth));
+        if (typeof this._hpTrail !== 'number' || this._hpTrail < healthPercentage) {
+            this._hpTrail = healthPercentage;
+        } else if (this._hpTrail > healthPercentage) {
+            this._hpTrail = Math.max(healthPercentage, this._hpTrail - 0.012);
+        }
         const bx = this.x;
         const by = this.y - 12;
 
@@ -16140,6 +18566,12 @@ class Player {
         ctx.fillStyle = 'rgba(0,0,0,0.5)';
         roundRect(ctx, bx, by, healthBarWidth, healthBarHeight, 3);
         ctx.fill();
+
+        if (this._hpTrail > healthPercentage + 0.01) {
+            ctx.fillStyle = 'rgba(255, 255, 255, 0.72)';
+            roundRect(ctx, bx, by, healthBarWidth * this._hpTrail, healthBarHeight, 3);
+            ctx.fill();
+        }
 
         const hpColor = healthPercentage > 0.5 ? '#00e676' : healthPercentage > 0.25 ? '#ffca28' : '#ff1744';
         ctx.fillStyle = hpColor;
@@ -16169,7 +18601,7 @@ class Player {
 class Enemy {
     static SPAWN_IN = 0.5;
     // 立绘外发光颜色(与原来方块的光晕一致)
-    static GLOW = { chaser: '#ff1744', patroller: '#2979ff', giant: '#d500f9', gunner: '#ff6f00', dasher: '#ffd600', bomber: '#ff4081', treasure: '#ffd740', healer: '#00e676', splitter: '#00e5ff', shard: '#18ffff', reaper: '#d500f9', burrower: '#ff9100' };
+    static GLOW = { chaser: '#ff1744', patroller: '#2979ff', giant: '#d500f9', gunner: '#ff6f00', dasher: '#ffd600', bomber: '#ff4081', treasure: '#ffd740', healer: '#00e676', splitter: '#00e5ff', shard: '#18ffff', reaper: '#d500f9', burrower: '#ff9100', prism: '#00e5ff' };
     static onDamage = null; // 伤害统计回调(Game._creditDmg),敌人和魔王共用
     static INTROS = {
         dasher: { text: '新敌人「冲」:蓄力后直线冲刺,看准路线侧身躲开', color: '#ffe57f' },
@@ -16177,7 +18609,8 @@ class Enemy {
         healer: { text: '新敌人「医」:躲在远处给周围敌人回血,优先打掉它', color: '#69f0ae' },
         splitter: { text: '新敌人「裂」:被打碎会裂成三块小碎片,别被包围', color: '#84ffff' },
         reaper: { text: '新敌人「蚀」:每次碰撞削去 12% 最大生命,无视防御,别让它贴身', color: '#ea80fc' },
-        burrower: { text: '新敌人「潜」:钻地时很难打,地面出现裂纹圈就快离开;破土后会愣一会儿,趁机集火(控制技能能把它震出地面)', color: '#ffcc80' }
+        burrower: { text: '新敌人「潜」:钻地时很难打,地面出现裂纹圈就快离开;破土后会愣一会儿,趁机集火(控制技能能把它震出地面)', color: '#ffcc80' },
+        prism: { text: '新敌人「棱」:折射护盾减伤,锁定瞄准后发射激光,发射后过热破防!', color: '#80d8ff' }
     };
 
     constructor(x, y, type, difficulty) {
@@ -16363,6 +18796,19 @@ class Enemy {
                 this.defense = 1 * this.difficulty;
                 this.color = '#4dd0e1';
                 break;
+            case 'prism': // 棱镜哨卫:state 0 折射护盾游走(减伤 30%)→ state 1 锁定瞄准玩家(0.85s 激光预警线,眩晕可打断)→ 发射穿透激光 → state 2 过热破防(1.4s 受到伤害 +35%)
+                this.size = 28;
+                this.speed = Math.min(3.4, 1.45 * this.difficulty);
+                this.maxHealth = 60 * this.difficulty;
+                this.currentHealth = this.maxHealth;
+                this.attack = 10 * this.difficulty;
+                this.defense = 3 * this.difficulty;
+                this.color = '#00e5ff';
+                this.beamDamage = 20 * this.difficulty;
+                this.prismCD = 1.6 + Math.random() * 0.8;
+                this.lockX = 0;
+                this.lockY = 0;
+                break;
             default: // 默认追击者
                 this.type = 'chaser';
                 this.size = 30;
@@ -16393,6 +18839,11 @@ class Enemy {
             }
             // 潜伏者被控:直接震出地面(不破土伤人),进入出土硬直
             if (this.type === 'burrower' && this.state !== 2) this._setState(2, 2.2);
+            // 棱镜哨卫蓄力锁定中被控:打断激光发射并直接进入过热破防窗口
+            if (this.type === 'prism' && this.state === 1) {
+                this.prismFire = false;
+                this._setState(2, 1.4);
+            }
             return;
         }
         switch (this.type) {
@@ -16419,6 +18870,9 @@ class Enemy {
                 break;
             case 'burrower':
                 this.updateBurrower(playerX, playerY, playerSize);
+                break;
+            case 'prism':
+                this.updatePrism(playerX, playerY, width, height, playerSize);
                 break;
             case 'treasure':
                 this.updateTreasure(playerX, playerY, width, height, playerSize);
@@ -16656,6 +19110,63 @@ class Enemy {
         }
     }
 
+    // 棱镜哨卫:0 折射护盾游走(170~240px 保持距离)→ 1 锁定瞄准(0.85s 激光预警)→ 触发 prismFire → 2 过热破防(1.4s 易伤)
+    updatePrism(playerX, playerY, width, height, playerSize) {
+        const inside = this.x > 0 && this.y > 0 && this.x < width - this.size && this.y < height - this.size;
+        if (!inside && this.state === 0) {
+            const cx = width / 2 - this.x, cy = height / 2 - this.y, d = Math.hypot(cx, cy) || 1;
+            this.x += cx / d * this.speed;
+            this.y += cy / d * this.speed;
+            return;
+        }
+        const { dx, dy, dist } = this._toTarget(playerX, playerY, playerSize);
+        if (this.state === 0) {
+            const d = dist || 1;
+            let ax = 0, ay = 0;
+            if (dist < 170) { ax = -dx / d; ay = -dy / d; }
+            else if (dist > 240) { ax = dx / d; ay = dy / d; }
+            else { ax = -dy / d * this.patrolDirection * 0.75; ay = dx / d * this.patrolDirection * 0.75; }
+            const m = 45;
+            if (this.x < m) ax += (m - this.x) / m * 1.4;
+            if (this.x > width - this.size - m) ax -= (this.x - (width - this.size - m)) / m * 1.4;
+            if (this.y < m) ay += (m - this.y) / m * 1.4;
+            if (this.y > height - this.size - m) ay -= (this.y - (height - this.size - m)) / m * 1.4;
+            const len = Math.hypot(ax, ay);
+            if (len >= 0.05) {
+                const sp = this.speed * Math.min(1, len);
+                this.x = Math.max(0, Math.min(width - this.size, this.x + ax / len * sp));
+                this.y = Math.max(0, Math.min(height - this.size, this.y + ay / len * sp));
+            }
+            this.prismCD -= DT;
+            if (this.prismCD <= 0 && dist < 340) {
+                this.lockX = playerX + playerSize / 2;
+                this.lockY = playerY + playerSize / 2;
+                this._setState(1, 0.85);
+            }
+        } else if (this.state === 1) {
+            // 前 35% 时间微幅追踪玩家位置,后 65% 完全锁死给玩家留出走位/冲刺窗口
+            if (this.stateTimer > this.stateDur * 0.65) {
+                this.lockX = playerX + playerSize / 2;
+                this.lockY = playerY + playerSize / 2;
+            }
+            this.stateTimer -= DT;
+            if (this.stateTimer <= 0) {
+                this.prismFire = true;
+                this._setState(2, 1.4);
+            }
+        } else {
+            if (dist > 0) {
+                this.x += (dx / dist) * this.speed * 0.25;
+                this.y += (dy / dist) * this.speed * 0.25;
+            }
+            this.stateTimer -= DT;
+            if (this.stateTimer <= 0) {
+                this._setState(0, 0);
+                this.prismCD = 2.0 + Math.random() * 0.8;
+            }
+        }
+    }
+
     // 接触伤害:冲刺中的冲锋者更疼
     contactDamage() {
         if (this.type === 'treasure') return 0;
@@ -16677,6 +19188,7 @@ class Enemy {
         this.attack *= am;
         if (this.blastDamage) this.blastDamage *= am;
         if (this.eruptDamage) this.eruptDamage *= am;
+        if (this.beamDamage) this.beamDamage *= am;
     }
 
     updateGunner(playerX, playerY) {
@@ -16812,21 +19324,31 @@ class Enemy {
         }
         // 潜伏者钻在地下时只吃三成伤害,破土后的硬直才是集火窗口
         if (this.type === 'burrower' && this.state !== 2) damage *= 0.3;
+        // 棱镜哨卫:state 0 折射护盾减伤 30%;state 2 激光发射后过热破防,受到伤害 +35%
+        if (this.type === 'prism') {
+            if (this.state === 0) damage *= 0.7;
+            else if (this.state === 2) damage *= 1.35;
+        }
         let actualDamage = Math.max(1, damage - this.defense);
         // 坚毅词缀:优先扣除坚毅护盾
         if (this.affix === 'tenacity' && this.tenacityShield > 0) {
             if (this.tenacityShield >= actualDamage) {
                 this.tenacityShield -= actualDamage;
+                this._totalDmgTaken = (this._totalDmgTaken || 0) + actualDamage;
+                if (this._dnCrit || this._lastHitCrit) this._hadCritHit = true;
                 this._dn = (this._dn || 0) + actualDamage;
                 this.flash(!!this._dnCrit);
                 return actualDamage;
             } else {
+                this._totalDmgTaken = (this._totalDmgTaken || 0) + this.tenacityShield;
                 actualDamage -= this.tenacityShield;
                 this.tenacityShield = 0;
             }
         }
         if (Enemy.onDamage) Enemy.onDamage(Math.min(actualDamage, this.currentHealth));
         this.currentHealth = Math.max(0, this.currentHealth - actualDamage);
+        this._totalDmgTaken = (this._totalDmgTaken || 0) + actualDamage;
+        if (this._dnCrit || this._lastHitCrit) this._hadCritHit = true;
         this._dn = (this._dn || 0) + actualDamage; // 伤害数字:本帧累计,由 Game._flushDmgNums 统一出数
         this.flash(!!this._dnCrit);
         return actualDamage;
@@ -16903,7 +19425,7 @@ class Enemy {
         // 本体(渐变 + 光晕 + 描边 + 文字)按类型缓存,避免每帧 shadowBlur
         SpriteCache.drawPx(ctx, Enemy.bodySprite(this.type, this.size), this.x, this.y, snap);
         if (this.type === 'gunner') this._renderGunnerTop(ctx, snap);
-        if (this.state === 1 && (this.type === 'bomber' || this.type === 'dasher' || this.type === 'healer')) this._renderChargePulse(ctx, snap);
+        if (this.state === 1 && (this.type === 'bomber' || this.type === 'dasher' || this.type === 'healer' || this.type === 'prism')) this._renderChargePulse(ctx, snap);
         this._renderHitFlash(ctx, snap);
     }
 
@@ -17016,6 +19538,27 @@ class Enemy {
                     ctx.restore();
                 }
             }
+            if (e.type === 'prism' && e.state === 0) {
+                const cx = e.x + e.size / 2, cy = e.y + e.size / 2;
+                ctx.save();
+                ctx.strokeStyle = 'rgba(0, 229, 255, 0.42)';
+                ctx.lineWidth = 1.5;
+                ctx.beginPath();
+                ctx.arc(cx, cy, e.size * 0.68, 0, Math.PI * 2);
+                ctx.stroke();
+                ctx.restore();
+            } else if (e.type === 'prism' && e.state === 2) {
+                const cx = e.x + e.size / 2, cy = e.y + e.size / 2;
+                ctx.save();
+                ctx.strokeStyle = 'rgba(255, 64, 129, 0.55)';
+                ctx.lineWidth = 1.5;
+                ctx.setLineDash([4, 4]);
+                ctx.beginPath();
+                ctx.arc(cx, cy, e.size * 0.72, 0, Math.PI * 2);
+                ctx.stroke();
+                ctx.setLineDash([]);
+                ctx.restore();
+            }
             if (e.state !== 1) continue;
             const cx = e.x + e.size / 2, cy = e.y + e.size / 2;
             const p = Math.max(0, Math.min(1, 1 - e.stateTimer / (e.stateDur || 1)));
@@ -17031,6 +19574,29 @@ class Enemy {
                 ctx.strokeStyle = 'rgba(255,241,118,0.75)';
                 ctx.lineWidth = 1.5;
                 ctx.strokeRect(0, -w / 2, len, w);
+                ctx.restore();
+            } else if (e.type === 'prism') {
+                // 棱镜哨卫激光锁定线:随前摇从宽光带收束为高亮细准星线
+                const lx = e.lockX != null ? e.lockX : cx + 100, ly = e.lockY != null ? e.lockY : cy;
+                const dx = lx - cx, dy = ly - cy, len = Math.hypot(dx, dy) || 1;
+                const endLen = Math.min(480, len + 85);
+                const bx = cx + (dx / len) * endLen, by = cy + (dy / len) * endLen;
+                ctx.save();
+                ctx.strokeStyle = `rgba(0, 229, 255, ${0.18 + 0.35 * p})`;
+                ctx.lineWidth = Math.max(2, 18 * (1 - p * 0.75));
+                ctx.beginPath();
+                ctx.moveTo(cx, cy);
+                ctx.lineTo(bx, by);
+                ctx.stroke();
+                ctx.strokeStyle = p > 0.75 ? '#ff4081' : '#e040fb';
+                ctx.lineWidth = 1.8;
+                ctx.beginPath();
+                ctx.moveTo(cx, cy);
+                ctx.lineTo(bx, by);
+                ctx.stroke();
+                ctx.beginPath();
+                ctx.arc(lx, ly, Math.max(5, 16 * (1 - p * 0.6)), 0, Math.PI * 2);
+                ctx.stroke();
                 ctx.restore();
             } else if (e.type === 'healer') {
                 // 治疗范围:绿色圈由内向外充满,打断它就不会回血
@@ -17259,10 +19825,10 @@ class Enemy {
                 g.stroke();
                 return;
             }
-            const glowColors = { chaser: '#ff1744', patroller: '#2979ff', giant: '#d500f9', dasher: '#ffd600', bomber: '#ff4081', treasure: '#ffd740', healer: '#00e676', splitter: '#00e5ff', shard: '#18ffff', reaper: '#d500f9', burrower: '#ff9100' };
-            const lightColors = { chaser: '#ff6b6b', patroller: '#64b5f6', giant: '#e040fb', dasher: '#fff59d', bomber: '#ff80ab', treasure: '#fffde7', healer: '#b9f6ca', splitter: '#84ffff', shard: '#b2ebf2', reaper: '#ce93d8', burrower: '#d7ccc8' };
-            const darkColors = { chaser: '#b71c1c', patroller: '#0d47a1', giant: '#6a0080', dasher: '#f57f17', bomber: '#880e4f', treasure: '#c79100', healer: '#00695c', splitter: '#006064', shard: '#00838f', reaper: '#1a0033', burrower: '#3e2723' };
-            const labels = { chaser: '追', patroller: '巡', giant: '巨', dasher: '冲', bomber: '爆', treasure: '宝', healer: '医', splitter: '裂', shard: '', reaper: '蚀', burrower: '潜' };
+            const glowColors = { chaser: '#ff1744', patroller: '#2979ff', giant: '#d500f9', dasher: '#ffd600', bomber: '#ff4081', treasure: '#ffd740', healer: '#00e676', splitter: '#00e5ff', shard: '#18ffff', reaper: '#d500f9', burrower: '#ff9100', prism: '#00e5ff' };
+            const lightColors = { chaser: '#ff6b6b', patroller: '#64b5f6', giant: '#e040fb', dasher: '#fff59d', bomber: '#ff80ab', treasure: '#fffde7', healer: '#b9f6ca', splitter: '#84ffff', shard: '#b2ebf2', reaper: '#ce93d8', burrower: '#d7ccc8', prism: '#80d8ff' };
+            const darkColors = { chaser: '#b71c1c', patroller: '#0d47a1', giant: '#6a0080', dasher: '#f57f17', bomber: '#880e4f', treasure: '#c79100', healer: '#00695c', splitter: '#006064', shard: '#00838f', reaper: '#1a0033', burrower: '#3e2723', prism: '#311b92' };
+            const labels = { chaser: '追', patroller: '巡', giant: '巨', dasher: '冲', bomber: '爆', treasure: '宝', healer: '医', splitter: '裂', shard: '', reaper: '蚀', burrower: '潜', prism: '棱' };
             const glow = glowColors[type] || '#ff1744';
             const r = type === 'giant' ? 10 : 6;
 
@@ -17852,7 +20418,8 @@ class BlockBoss {
     }
 
     get isVoid() { return this.form === 'void'; }
-    get title() { return this.isVoid ? '虚空魔王' : '方块大魔王'; }
+    get isFrost() { return this.form === 'frost'; }
+    get title() { return this.isVoid ? '虚空魔王' : this.isFrost ? '冰霜泰坦' : '方块大魔王'; }
 
     get slamRadius() { return this.enraged ? 160 : 140; }
 
@@ -18060,6 +20627,34 @@ class BlockBoss {
                     ctx.restore();
                 }
             }
+        } else if (this.atk === 'glacier') {
+            // 冰霜泰坦「冰河世纪」前摇:极寒新星扩散圈 + 多向冰棱轨迹线
+            const r = BlockBoss.GLACIER_R * (this.enraged ? 1.15 : 1);
+            const n = BlockBoss.GLACIER_SPIKES(this.enraged);
+            if (this.atkPhase === 0) {
+                ctx.fillStyle = 'rgba(0, 229, 255, 0.11)';
+                ctx.beginPath(); ctx.arc(cx, cy, r, 0, Math.PI * 2); ctx.fill();
+                ctx.fillStyle = `rgba(132, 255, 255, ${0.14 + 0.2 * t})`;
+                ctx.beginPath(); ctx.arc(cx, cy, r * t, 0, Math.PI * 2); ctx.fill();
+                ctx.strokeStyle = `rgba(0, 229, 255, ${0.45 + 0.5 * t})`;
+                ctx.lineWidth = 2.5;
+                ctx.setLineDash([8, 6]);
+                ctx.lineDashOffset = -this.phase * 25;
+                ctx.beginPath(); ctx.arc(cx, cy, r, 0, Math.PI * 2); ctx.stroke();
+                ctx.setLineDash([]);
+                // 冰枪射向预览尖刺
+                const r0 = this.size * 0.55, r1 = r0 + 35 + 95 * t;
+                ctx.strokeStyle = `rgba(224, 247, 250, ${0.35 + 0.55 * t})`;
+                ctx.lineWidth = 3;
+                ctx.beginPath();
+                for (let k = 0; k < n; k++) {
+                    const ang = (this.atkAngle || 0) + k * Math.PI * 2 / n;
+                    const c = Math.cos(ang), s = Math.sin(ang);
+                    ctx.moveTo(cx + c * r0, cy + s * r0);
+                    ctx.lineTo(cx + c * r1, cy + s * r1);
+                }
+                ctx.stroke();
+            }
         }
         ctx.restore();
     }
@@ -18089,6 +20684,8 @@ class BlockBoss {
         if (damage > 0) {
             this.currentHealth = Math.max(0, this.currentHealth - damage);
         }
+        this._totalDmgTaken = (this._totalDmgTaken || 0) + totalDmg;
+        if (this._dnCrit || this._lastHitCrit) this._hadCritHit = true;
         this._dn = (this._dn || 0) + totalDmg;
         this.flash();
         return totalDmg;
@@ -18137,20 +20734,20 @@ class BlockBoss {
             const t = Math.max(0, Math.min(1, 1 - this.atkTimer / this.atkDur));
             ctx.globalAlpha *= 1 - 0.65 * Math.max(0, (t - 0.4) / 0.6);
         }
-        const aura = this.isVoid ? '#d500f9' : '#ff1744';
+        const aura = this.isVoid ? '#d500f9' : this.isFrost ? '#00e5ff' : '#ff1744';
         ctx.shadowBlur = 40 * pulse;
         ctx.shadowColor = aura;
-        ctx.fillStyle = this.isVoid ? 'rgba(213, 0, 249, 0.16)' : 'rgba(255, 23, 68, 0.18)';
+        ctx.fillStyle = this.isVoid ? 'rgba(213, 0, 249, 0.16)' : this.isFrost ? 'rgba(0, 229, 255, 0.16)' : 'rgba(255, 23, 68, 0.18)';
         ctx.beginPath();
         ctx.arc(cx, cy, this.size * 0.95 * pulse, 0, Math.PI * 2);
         ctx.fill();
 
         // 立绘:皇冠 + 恶魔角 + 怒目;狂暴时换红色版本
-        const artKey = (this.isVoid ? 'boss|void' : 'boss') + (this.enraged ? '|enraged' : '');
+        const artKey = (this.isVoid ? 'boss|void' : this.isFrost ? 'boss|frost' : 'boss') + (this.enraged ? '|enraged' : '');
         const art = typeof ArtSVG !== 'undefined' ? artImg(artKey, () => ArtSVG.boss(this.enraged, this.form)) : null;
         if (art) {
             ctx.shadowBlur = 0;
-            const glow = this.isVoid ? (this.enraged ? '#ea80fc' : '#18ffff') : (this.enraged ? '#ff1744' : '#7c4dff');
+            const glow = this.isVoid ? (this.enraged ? '#ea80fc' : '#18ffff') : this.isFrost ? (this.enraged ? '#84ffff' : '#00e5ff') : (this.enraged ? '#ff1744' : '#7c4dff');
             SpriteCache.draw(ctx, Art.sprite(artKey, art, this.size, 16, glow), this.x, this.y, this.size, this.size);
             this._renderStatusRings(ctx, cx, cy);
             if (this.hitFlash > 0) {
@@ -18241,8 +20838,10 @@ class BlockBoss {
 BlockBoss.CHARGE_SPEED = 10;   // 冲撞速度(px/帧)
 BlockBoss.CHARGE_TIME = 0.55;  // 冲撞持续(秒)
 BlockBoss.ringCount = enraged => enraged ? 16 : 12;
-BlockBoss.ATK_CODES = [null, 'charge', 'ring', 'slam', 'laser', 'summon', 'cross', 'blink', 'rift'];
-BlockBoss.FORMS = [null, 'void']; // 快照里的形态编号
+BlockBoss.GLACIER_SPIKES = enraged => enraged ? 8 : 6;
+BlockBoss.GLACIER_R = 155;
+BlockBoss.ATK_CODES = [null, 'charge', 'ring', 'slam', 'laser', 'summon', 'cross', 'blink', 'rift', 'glacier'];
+BlockBoss.FORMS = [null, 'void', 'frost']; // 快照里的形态编号
 BlockBoss.BLINK_R = 92;           // 虚空闪现落点震击半径
 BlockBoss.LASER_HALF = 13;     // 激光半宽
 BlockBoss.LASER_LEN = 1100;    // 激光长度(足够射出 800×600 的场地)
@@ -18714,8 +21313,17 @@ window.addEventListener('load', () => {
     const renderMetaPanel = () => {
         if (!metaOverlay) return;
         const dustEl = document.getElementById('starDustCount');
+        const progEl = document.getElementById('metaProgressLabel');
+        const recBtn = document.getElementById('recommendMeta');
         const listEl = document.getElementById('constellationList');
-        if (dustEl) dustEl.textContent = Metagrowth.getAvailableStarCores();
+        const summary = Metagrowth.getProgressSummary();
+        if (dustEl) dustEl.textContent = summary.available;
+        if (progEl) progEl.textContent = `已点亮 ${summary.unlocked}/${summary.total}`;
+        if (recBtn) {
+            const state = Metagrowth.load();
+            const canAny = Object.entries(Metagrowth.BRANCHES).some(([k, d]) => !state[k] && summary.available >= d.cost);
+            recBtn.disabled = !canAny;
+        }
         if (!listEl) return;
 
         const state = Metagrowth.load();
@@ -18766,6 +21374,15 @@ window.addEventListener('load', () => {
     if (closeMetaBtn) {
         closeMetaBtn.addEventListener('click', () => {
             if (metaOverlay) metaOverlay.style.display = 'none';
+        });
+    }
+    const recommendMetaBtn = document.getElementById('recommendMeta');
+    if (recommendMetaBtn) {
+        recommendMetaBtn.addEventListener('click', () => {
+            if (Metagrowth.unlockRecommended()) {
+                Sound.play('levelUp');
+                renderMetaPanel();
+            }
         });
     }
     const resetMetaBtn = document.getElementById('resetMeta');
@@ -18938,6 +21555,54 @@ window.addEventListener('load', () => {
         setStatus(`难度:${dm.name} · ${dm.desc}`);
     });
 
+    // ── 🏰 随机地下城与秘境迷宫模式切换 ──
+    const dungeonToggleBtn = document.getElementById('dungeonToggle');
+    const updateDungeonUI = () => {
+        const el = document.getElementById('dungeonLabel');
+        if (!el) return;
+        const names = { dungeon: '随机地牢', maze: '秘境迷宫', off: '开放战场' };
+        el.textContent = names[game.dungeonMode] || '随机地牢';
+        if (dungeonToggleBtn) {
+            dungeonToggleBtn.style.color = game.dungeonMode === 'off' ? 'rgba(255,255,255,0.45)' : (game.dungeonMode === 'maze' ? '#ce93d8' : '#ffcc80');
+        }
+    };
+    if (dungeonToggleBtn) {
+        updateDungeonUI();
+        dungeonToggleBtn.addEventListener('click', () => {
+            const next = game.cycleDungeonMode();
+            updateDungeonUI();
+            const desc = {
+                dungeon: '随机地牢 · 四象限战术秘室、可击碎符文晶墙与地牢宝箱/神龛',
+                maze: '秘境迷宫 · 递归回溯环路迷宫、狭窄走廊掩体与秘境宝藏',
+                off: '开放战场 · 无障碍经典空旷竞技场'
+            };
+            setStatus(`地形已切换为: ${desc[next] || next}`);
+            Sound.play('cdReady');
+        });
+    }
+
+    // ── 🌫 动态战场迷雾浓度调节 ──
+    const fogToggleBtn = document.getElementById('fogToggle');
+    const updateFogUI = () => {
+        const el = document.getElementById('fogLabel');
+        if (!el) return;
+        const names = { off: '关闭', light: '轻微', normal: '标准', dense: '浓郁' };
+        el.textContent = names[game.fogDensity] || '标准';
+        if (fogToggleBtn) {
+            fogToggleBtn.style.color = game.fogDensity === 'off' ? 'rgba(255,255,255,0.45)' : '#80deea';
+        }
+    };
+    if (fogToggleBtn) {
+        updateFogUI();
+        fogToggleBtn.addEventListener('click', () => {
+            const next = game.cycleFogDensity();
+            updateFogUI();
+            const names = { off: '关闭', light: '轻微', normal: '标准', dense: '浓郁' };
+            setStatus(`战场迷雾浓度已调为: ${names[next]}`);
+            Sound.play('cdReady');
+        });
+    }
+
     const fsToggleBtn = document.getElementById('fullscreenToggle');
     if (fsToggleBtn) {
         fsToggleBtn.addEventListener('click', () => {
@@ -18961,6 +21626,15 @@ window.addEventListener('load', () => {
     const rotateFsBtn = document.getElementById('rotateFullscreen');
     if (Immersive.isIOS) rotateFsBtn.style.display = 'none'; // iOS 不进元素全屏,只靠旋转设备
     else rotateFsBtn.addEventListener('click', () => Immersive.enter());
+    const continuePortraitBtn = document.getElementById('continuePortraitBtn');
+    if (continuePortraitBtn) {
+        continuePortraitBtn.addEventListener('click', () => {
+            Immersive.setEnabled(false);
+            updateImmersiveLabel();
+            game._updateRotateHint();
+            if (game.isRunning && game.isPaused) game.togglePause();
+        });
+    }
 
     // ── 联机大厅按钮逻辑 ──
     const overlay      = document.getElementById('mpOverlay');
@@ -18973,8 +21647,11 @@ window.addEventListener('load', () => {
         statusEl.className = 'mp-status' + (isErr ? ' error' : ' success');
     }
 
-    // 读取服务器 URL（可在 URL hash 中指定，如 #ws://yourserver:8080）
-    const serverUrl = location.hash ? location.hash.slice(1) : 'ws://' + location.hostname + ':8080';
+    // 读取服务器 URL（可在 URL hash 中指定，如 #ws://yourserver:8080；若通过同源 HTTP 端口访问则默认走同源 WS）
+    const defaultWsUrl = (location.port && location.port !== '8080')
+        ? ((location.protocol === 'https:' ? 'wss://' : 'ws://') + location.host)
+        : ('ws://' + (location.hostname || 'localhost') + ':8080');
+    const serverUrl = location.hash ? location.hash.slice(1) : defaultWsUrl;
     game.mpServerUrl = serverUrl;
 
     // 创建房间(直接建立连接生成房间码,不再提前强弹操控弹窗与切全屏)
@@ -19039,6 +21716,7 @@ window.addEventListener('load', () => {
         mpLobby.style.display = 'none';
         if (game.mpWs) { game.mpWs.close(); game.mpWs = null; }
         game.mpMode = null;
+        game._syncBodyState();
     };
     game.onBackToLobby = backToLobby;   // 暂停面板「离开房间」也走这里
     const backBtn = document.getElementById('backToLobbyBtn');
@@ -19062,4 +21740,42 @@ window.addEventListener('load', () => {
             if (e.key === 'Enter') document.getElementById('mpJoin').click();
         });
     }
+
+    // 大厅键盘快捷键: Esc 关闭打开的子弹窗; Enter 快速开启单人游戏
+    document.addEventListener('keydown', (e) => {
+        if (game.isRunning || e.repeat) return;
+        const modals = [
+            [tipsOverlay, () => { tipsOverlay.style.display = 'none'; Store.set('blockrun.tutorialSeen', true); }],
+            [progressOverlay, () => { progressOverlay.style.display = 'none'; updateProgressLabel(); }],
+            [contractOverlay, () => { contractOverlay.style.display = 'none'; }],
+            [metaOverlay, () => { metaOverlay.style.display = 'none'; }],
+            [controlOverlay, () => { if (!controlThen) controlOverlay.style.display = 'none'; }]
+        ];
+        if (e.key === 'Escape') {
+            for (const [m, closeFn] of modals) {
+                if (m && m.style.display === 'flex') {
+                    closeFn();
+                    return;
+                }
+            }
+        } else if (e.key === 'Enter' && e.target.tagName !== 'INPUT') {
+            if (controlOverlay && controlOverlay.style.display === 'flex') {
+                document.getElementById('controlConfirm').click();
+                return;
+            }
+            const anyOpen = modals.some(([m]) => m && m.style.display === 'flex');
+            if (!anyOpen && overlay && overlay.style.display !== 'none' && (!mpLobby || mpLobby.style.display === 'none')) {
+                document.getElementById('mpSingle').click();
+            }
+        }
+    });
+
+    // 支持 ?autostart=1 参数直达对局
+    if (typeof URLSearchParams !== 'undefined' && new URLSearchParams(location.search).get('autostart') === '1') {
+        if (tipsOverlay) tipsOverlay.style.display = 'none';
+        if (controlOverlay) controlOverlay.style.display = 'none';
+        if (overlay) overlay.style.display = 'none';
+        game.startGame();
+    }
+    game._syncBodyState();
 });

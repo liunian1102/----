@@ -57,7 +57,7 @@ const newGame = () => { const g = new Game(); g.init(); g.startGame(); g.enemies
         g.spawnEnemies = Game.prototype.spawnEnemies.bind(g);
         g.enemies = []; g.gameTime = t; const out = new Set();
         const rnd = Math.random; let k = 0;
-        for (let i = 0; i < 3000; i++) { g.spawnEnemies(); for (const e of g.enemies) out.add(e.type); g.enemies.length = 0; }
+        for (let i = 0; i < 6000; i++) { g.spawnEnemies(); for (const e of g.enemies) out.add(e.type); g.enemies.length = 0; }
         return out.has('burrower');
     };
     const early = seen(60), late = seen(150);
