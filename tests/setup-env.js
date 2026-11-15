@@ -229,10 +229,14 @@ global.document = {
     addEventListener: () => {}
 };
 
-global.navigator = {
-    maxTouchPoints: 0,
-    vibrate: () => {}
-};
+// navigator 按 Web 规范 mock:vibrate 成功时返回 boolean true
+// (Node ≥21 的内置 navigator 是 getter-only,普通赋值被静默忽略,需 defineProperty 兜底)
+const navMock = { maxTouchPoints: 0, vibrate: () => true };
+let navInstalled = false;
+try { global.navigator = navMock; navInstalled = global.navigator === navMock; } catch (_) { /* 忽略 */ }
+if (!navInstalled) {
+    Object.defineProperty(globalThis, 'navigator', { value: navMock, configurable: true, writable: true });
+}
 
 global.AudioContext = class {
     constructor() { this.destination = {}; this.currentTime = 0; this.state = 'running'; }

@@ -50,7 +50,15 @@ function run(f) {
         const ok = r.status === 0;
         rows.push([ok ? 'PASS' : 'FAIL', f, Date.now() - t0]);
         console.log(`${ok ? 'PASS' : 'FAIL'}  ${f}  (${((Date.now() - t0) / 1000).toFixed(1)}s)`);
-        if (!ok) console.log(((r.stdout || '') + (r.stderr || '')).trim().split('\n').slice(-12).map(l => '      ' + l).join('\n'));
+        if (!ok) {
+            const out = ((r.stdout || '') + (r.stderr || '')).trim().split('\n');
+            // node:test 的 TAP 输出里失败详情紧跟在「not ok」行后,优先按块提取
+            const marks = out.map((l, i) => (/^\s*not ok\b/.test(l) ? i : -1)).filter(i => i >= 0);
+            const picked = marks.length
+                ? [...new Set(marks.flatMap(i => out.slice(i, i + 14)))]
+                : out.slice(-40);
+            console.log(picked.map(l => '      ' + l).join('\n'));
+        }
     }
     if (stop) stop();
     const n = k => rows.filter(r => r[0] === k).length;
