@@ -229,6 +229,11 @@ function createMiniGameEnv() {
     if (typeof raf !== 'function') {
         raf = cb => setTimeout(() => cb(Date.now()), 16);
         caf = id => clearTimeout(id);
+    } else {
+        // 小游戏的 rAF 回调不保证传时间戳;game.js 的循环用 (now - _lastFrameTime) 计算步进,
+        // 拿不到数值会变成 NaN 导致 update 永不执行。统一用 Date.now()(毫秒,与 elapsed 语义一致)。
+        const nativeRaf = raf;
+        raf = cb => nativeRaf(() => cb(Date.now()));
     }
 
     // ── window 自身(小游戏里 window 不是预置的,可以安全赋值) ──
