@@ -1,2 +1,7 @@
 node_modules/
 tests/output/
+# 小游戏打包产物(node tools/build-minigame.js 生成)
+minigame/bundle.js
+# 微信开发者工具的本地私有配置
+minigame/project.private.config.json
+spike/*/project.private.config.json

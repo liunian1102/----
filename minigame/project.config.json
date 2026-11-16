@@ -1,0 +1,12 @@
+{
+  "appid": "wxaf1ea2ffcc78a011",
+  "compileType": "game",
+  "libVersion": "3.18.0",
+  "projectname": "block-run-minigame",
+  "setting": {
+    "es6": true,
+    "enhance": true,
+    "minified": false,
+    "postcss": false
+  }
+}
