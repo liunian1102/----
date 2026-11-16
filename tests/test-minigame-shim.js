@@ -151,6 +151,22 @@ test('HUD 按安全区让位(window.__safeArea)', () => {
     assert.ok(Math.abs((inset.ox - base.ox) - 12 * pxPerCss / inset.s) < 0.01, '左侧让位量换算错误');
 });
 
+test('预烤美术资源完整(art-map 与 PNG 文件一致)', () => {
+    const mapSrc = fs.readFileSync(path.join(ROOT, 'minigame', 'art-map.js'), 'utf8');
+    const map = JSON.parse(mapSrc.slice(mapSrc.indexOf('{'), mapSrc.lastIndexOf('}') + 1));
+    const keys = Object.keys(map);
+    assert.ok(keys.length >= 70, '期望至少 70 张预烤图,实际 ' + keys.length);
+    for (const k of ['enemy|chaser', 'enemy|prism', 'boss', 'boss|void|enraged', 'player|jade', 'player|prism|180', 'item|potion']) {
+        assert.ok(map[k], '缺少关键键: ' + k);
+    }
+    for (const k of keys) {
+        const file = path.join(ROOT, 'minigame', map[k]);
+        assert.ok(fs.existsSync(file), 'PNG 缺失: ' + map[k]);
+        const head = fs.readFileSync(file).subarray(0, 8);
+        assert.equal(head.toString('hex'), '89504e470d0a1a0a', 'PNG 头不合法: ' + map[k]);
+    }
+});
+
 test('垫片把 localStorage 映射到 wx 同步存储', () => {
     // 前一个测试装载 bundle 时,垫片把环境挂在 __shimEnv 上供诊断
     const env = globalThis.__shimEnv;

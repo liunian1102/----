@@ -20,7 +20,10 @@ const Art = {
             this.imgs.set(key, r);
             img.onload = () => { r.ready = true; };
             img.onerror = () => { r.failed = true; };
-            img.src = 'data:image/svg+xml;charset=utf-8,' + encodeURIComponent(make());
+            // 小游戏真机不解码 SVG(2026-11-16 真机实测),打包时已预烤 PNG(minigame/art-map.js);
+            // web 端没有 ART_PNG 表,仍走 SVG
+            const baked = (typeof ART_PNG !== 'undefined' && ART_PNG[key]) ? ART_PNG[key] : null;
+            img.src = baked || ('data:image/svg+xml;charset=utf-8,' + encodeURIComponent(make()));
         }
         return r.ready ? r.img : null;
     },

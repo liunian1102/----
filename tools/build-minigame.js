@@ -39,6 +39,7 @@ if (__mgEnv) {
 
 const parts = [
     path.join(MG, 'shims.js'),
+    path.join(MG, 'art-map.js'),
     path.join(ROOT, 'art.js'),
     path.join(ROOT, 'game.js'),
     path.join(MG, 'boot.js')

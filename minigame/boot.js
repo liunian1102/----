@@ -85,6 +85,29 @@
         return false;
     };
     game.showingBuild = false;
+    // 图片能力自检:机型对 SVG / 位图、data-url / 包内文件的解码能力并不一致,
+    // 这行结果直接决定美术资源走哪条路(真机实测 SVG 失败时才会发现)
+    const imgTest = { pngData: '-', svgData: '-', pngFile: '-' };
+    (function probeImages() {
+        const PNG_DATA = 'data:image/png;base64,iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVR42mP8z8BQDwAEhQGAhKmMIQAAAABJRU5ErkJggg==';
+        const SVG_DATA = 'data:image/svg+xml;charset=utf-8,' + encodeURIComponent('<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 8 8"><rect width="8" height="8" fill="#0ff"/></svg>');
+        const check = (label, src) => {
+            try {
+                const im = wx.createImage();
+                let done = false;
+                const fin = v => { if (done) return; done = true; imgTest[label] = v; };
+                im.onload = () => fin('OK');
+                im.onerror = () => fin('X');
+                im.src = src;
+                setTimeout(() => fin('T'), 4000);
+            } catch (e) { imgTest[label] = 'E'; }
+        };
+        check('pngData', PNG_DATA);
+        check('svgData', SVG_DATA);
+        check('pngFile', 'art/probe.png');
+    })();
+
+    // 拦截结算:小游戏没有 DOM 结算面板,改为屏幕提示 + 点击重开
     const origShowGameOver = game._showGameOver.bind(game);
     game._showGameOver = function (time, score) {
         try { origShowGameOver(time, score); } catch (e) { console.error('[boot] gameOver 面板失败', e); }
@@ -151,6 +174,7 @@
                 } catch (e) { /* 忽略 */ }
                 const st = 'run ' + (game.isRunning ? 1 : 0) + ' pause ' + (game.isPaused ? 1 : 0) + ' t ' + (game.gameTime || 0).toFixed(1) + ' lv ' + (game.level || 0);
                 ctx.fillText('FPS ' + fps + ' | 敌 ' + (game.enemies ? game.enemies.length : 0) + ' | 弹 ' + (game.projectiles ? game.projectiles.length : 0) + ' | 粒 ' + (game.particles ? game.particles.length : 0) + ' | 绘 ' + artReady + '/' + artTotal + ' | ' + st, 8, cv.height - 10);
+                ctx.fillText('img pngData=' + imgTest.pngData + ' svgData=' + imgTest.svgData + ' pngFile=' + imgTest.pngFile + ' | ' + cv.width + '×' + cv.height, 8, cv.height - 10 - Math.round(cv.width / 45));
 
                 // 构筑面板拦截提示
                 if (buildBlockedAt && now - buildBlockedAt < 2600) {

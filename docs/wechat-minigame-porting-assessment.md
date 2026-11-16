@@ -38,21 +38,18 @@
 
 ## 三、阻塞项分级
 
-### P0-1 SVG 立绘解码 —— ✅ 已验证通过(2026-11-15)
+### P0-1 SVG 立绘解码 —— ❌ 真机不支持,已改用预烤 PNG(2026-11-16)
 
-`art.js:18-24` 全部角色/敌人/Boss/道具图都是 `data:image/svg+xml` → `new Image().src`。
+**模拟器结论(误导)**:开发者工具 3.18.0 实测 SVG data-url 解码成功、像素正确 → 曾判定"art.js 零改造"。
+**真机结论(决定性)**:真机运行 `绘 0/36`——36 张立绘全部登记、**0 张解码成功**。
+即小游戏真机图片解码器不支持 SVG,模拟器与真机能力不一致。
 
-**spike 实测结果**(`spike/wechat-svg-test/`,开发者工具 3.18.0,模拟 iOS):
-
-```
-[spike] PNG data-url [对照组]: LOAD OK 1x1 (4ms)
-[spike] SVG data-url [关键]: LOAD OK 150x150 (3ms)
-[spike] SVG 绘制像素 rgba(0,255,255,255) → 正常渲染 ✅
-```
-
-结论:小游戏 `wx.createImage` 支持 SVG data-url 且渲染正确,**art.js 无需预烤 PNG 管线**。
-注意:SVG 未声明 width/height 时解码器给出 150x150 默认尺寸,`Art.sprite` 用 `drawImage` 显式目标尺寸,不受影响。
-**遗留**:开发者工具与真机解码器实现可能不同,真机需复验同一测试(验证清单见第八节)。
+**已落地方案**:构建期预烤 PNG 管线。
+- `tools/bake-art.js`:用 `@resvg/resvg-js` 把 `ArtSVG.*` 模板渲染成 200px 宽 PNG,产出 `minigame/art/*.png` + `minigame/art-map.js`(键 → 包内路径)
+- 覆盖:13 种敌人、27 个道具、6 种 Boss 形态、6 个皮肤 + 无敌 + 24 档幻彩色相,共 **78 张**
+- `art.js Art.get`:优先读 `ART_PNG[key]`(包内文件),没有才回退 SVG data-url(web 端行为不变)
+- 包体:art 1.8MB + bundle 1.0MB ≈ 2.8MB(主包上限 4MB)
+- 未覆盖:`player|c|<任意色>`(联机远端玩家配色无上限)、emoji 图标(回退系统字体),联机开放前再处理
 
 ### P0-2 DOM UI 体系重写
 
