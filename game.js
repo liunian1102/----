@@ -15098,6 +15098,16 @@ class Game {
             h = { s: this.gameScale, ox: this.gameOffsetX, oy: this.gameOffsetY, w: this.width, h: this.height,
                   k, isPortrait: this.canvas.height > this.canvas.width, padLeft: 10, padRight: 10 };
         }
+        // 安全区让位(小游戏垫片提供 window.__safeArea,CSS px;web 端为 undefined,不生效)
+        const sa = (typeof window !== 'undefined') ? window.__safeArea : null;
+        if (sa && (sa.left || sa.top || sa.right || sa.bottom)) {
+            const pxPerCss = this.canvas.width / ((window.innerWidth || 0) || this.canvas.width);
+            const s = pxPerCss / h.s;
+            h.ox += sa.left * s;
+            h.oy += sa.top * s;
+            h.w -= (sa.left + sa.right) * s;
+            h.h -= (sa.top + sa.bottom) * s;
+        }
         this._hud = h;
         const ksOff = this._getKillShakeOffset();
         ctx.save();

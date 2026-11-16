@@ -125,6 +125,32 @@ test('打包产物已降级到小游戏可解析的语法(无类静态字段)', 
     assert.ok(code.length > 100 * 1024, 'bundle 体积异常');
 });
 
+test('HUD 按安全区让位(window.__safeArea)', () => {
+    const g = globalThis.__game;
+    assert.ok(g, '需要前一个测试已启动游戏');
+    // 先关掉安全区测基准
+    try { delete globalThis.__safeArea; } catch (e) { /* 忽略 */ }
+    let base = null;
+    g._withHud(() => { base = { ...g._hud }; });
+    assert.ok(base, '期望 _withHud 建立 HUD 坐标系');
+
+    Object.defineProperty(globalThis, '__safeArea', {
+        value: { left: 12, top: 24, right: 12, bottom: 36 },
+        configurable: true
+    });
+    let inset = null;
+    g._withHud(() => { inset = { ...g._hud }; });
+    try { delete globalThis.__safeArea; } catch (e) { /* 忽略 */ }
+
+    assert.ok(inset.ox > base.ox, '期望左侧安全区把 HUD 右移');
+    assert.ok(inset.oy > base.oy, '期望顶部安全区把 HUD 下移');
+    assert.ok(inset.w < base.w, '期望可用宽度减少');
+    assert.ok(inset.h < base.h, '期望可用高度减少');
+    // 缩换算:左移量应为 CSS px × (canvas.width/innerWidth) / hud.s
+    const pxPerCss = g.canvas.width / globalThis.innerWidth;
+    assert.ok(Math.abs((inset.ox - base.ox) - 12 * pxPerCss / inset.s) < 0.01, '左侧让位量换算错误');
+});
+
 test('垫片把 localStorage 映射到 wx 同步存储', () => {
     // 前一个测试装载 bundle 时,垫片把环境挂在 __shimEnv 上供诊断
     const env = globalThis.__shimEnv;

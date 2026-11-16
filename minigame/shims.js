@@ -210,12 +210,28 @@ function createMiniGameEnv() {
         return audioCtx;
     };
 
+    // ── 安全区(刘海/圆角/Home 指示条):供 game.js 的 HUD 让位 ──
+    const readInsets = () => {
+        try {
+            const si = (typeof wx.getWindowInfo === 'function' ? wx.getWindowInfo() : wx.getSystemInfoSync());
+            const sa = si.safeArea;
+            if (!sa || !si.windowWidth) return { left: 0, top: 0, right: 0, bottom: 0 };
+            return {
+                left: Math.round(sa.left || 0),
+                top: Math.round(sa.top || 0),
+                right: Math.round(Math.max(0, si.windowWidth - (sa.right !== undefined ? sa.right : si.windowWidth))),
+                bottom: Math.round(Math.max(0, si.windowHeight - (sa.bottom !== undefined ? sa.bottom : si.windowHeight)))
+            };
+        } catch (e) { return { left: 0, top: 0, right: 0, bottom: 0 }; }
+    };
+    let safeInsets = readInsets();
+    try { Object.defineProperty(G, '__safeArea', { get: () => safeInsets, configurable: true }); } catch (e) { /* 忽略 */ }
+
     // ── 其他全局 ──
     const screenObj = {
         width: winW, height: winH, availWidth: winW, availHeight: winH,
         orientation: { type: 'portrait-primary', angle: 0, lock() {}, unlock() {}, addEventListener() {}, removeEventListener() {} }
-    };
-    const matchMedia = q => ({
+    };    const matchMedia = q => ({
         matches: /pointer:\s*coarse|max-width|touch/.test(q),
         media: q,
         addEventListener() {}, removeEventListener() {}, addListener() {}, removeListener() {}
@@ -285,6 +301,7 @@ function createMiniGameEnv() {
             winW = res.windowWidth || winW;
             winH = res.windowHeight || winH;
             screenObj.width = winW; screenObj.height = winH;
+            safeInsets = readInsets();
             emitWin('resize', { type: 'resize' });
         });
     }
